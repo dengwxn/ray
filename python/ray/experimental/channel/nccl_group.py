@@ -123,19 +123,19 @@ class _NcclGroup:
         """
         return self._rank
 
-    def send(self, value: "torch.Tensor", peer_rank: int):
+    def send(self, buf: "torch.Tensor", peer_rank: int):
         """
         Send a torch.Tensor to a peer.
 
         This returns when the send kernel has been queued, but the kernel may
         not have completed. Therefore, the caller should ensure that there are
-        no concurrent writes to the sent `value` until the send has finished.
+        no concurrent writes to the sent `buf` until the send has finished.
         That is, either all writes should be submitted on the current stream
         (self._cuda_stream) or, if on a different stream, that stream should
         synchronize with the current stream.
 
         Args:
-            value: The torch.Tensor to send. It should already be on this
+            buf: The torch.Tensor to send. It should already be on this
                 actor's default device.
             peer_rank: The rank of the actor to send to.
         """
@@ -144,9 +144,9 @@ class _NcclGroup:
         # TODO(swang): Handle send/recv async NCCL errors such as network
         # failures.
         self._comm.send(
-            self.nccl_util.get_tensor_ptr(value),
-            value.numel(),
-            self.nccl_util.get_nccl_tensor_dtype(value),
+            self.nccl_util.get_tensor_ptr(buf),
+            buf.numel(),
+            self.nccl_util.get_nccl_tensor_dtype(buf),
             peer_rank,
             self._cuda_stream.ptr,
         )
@@ -177,6 +177,36 @@ class _NcclGroup:
         # need to synchronize here and check that the channel is still open to
         # ensure that the receive buffer is valid.
         # TODO(swang): Avoid CUDA synchronization.
+        self._cuda_stream.synchronize()
+        if self._closed:
+            raise RayChannelError("NCCL group has been destroyed.")
+
+    def allreduce(self, buf: "torch.Tensor"):
+        if self._closed:
+            raise RayChannelError("NCCL group has been destroyed.")
+
+        # allReduce(self, intptr_t sendbuf, intptr_t recvbuf, size_t count, int datatype, int op, intptr_t stream)
+
+        # class ReduceOp(Enum):
+        #     SUM = 0
+        #     PRODUCT = 1
+        #     MIN = 2
+        #     MAX = 3
+
+        self._comm.allReduce(
+            self.nccl_util.get_tensor_ptr(buf),
+            self.nccl_util.get_tensor_ptr(buf),
+            buf.numel(),
+            self.nccl_util.get_nccl_tensor_dtype(buf),
+            0,
+            self._cuda_stream.ptr,
+        )
+
+        # Buffer values are undefined if NCCL ops are aborted. Therefore, we
+        # need to synchronize here and check that the channel is still open to
+        # ensure that the receive buffer is valid.
+        # TODO(swang): Avoid CUDA synchronization.
+        # TODO(wxdeng): Maybe use check_async_error.
         self._cuda_stream.synchronize()
         if self._closed:
             raise RayChannelError("NCCL group has been destroyed.")

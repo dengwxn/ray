@@ -1,4 +1,5 @@
 """APIs exposed under the namespace ray.util.collective."""
+
 import logging
 import os
 from typing import List
@@ -255,7 +256,7 @@ def get_collective_group_size(group_name: str = "default") -> int:
     return g.world_size
 
 
-def allreduce(tensor, group_name: str = "default", op=types.ReduceOp.SUM):
+def _allreduce(tensor, group_name: str = "default", op=types.ReduceOp.SUM):
     """Collective allreduce the tensor across the group.
 
     Args:

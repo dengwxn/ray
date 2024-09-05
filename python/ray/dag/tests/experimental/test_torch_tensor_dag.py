@@ -3,21 +3,22 @@ import logging
 import os
 import re
 import sys
-import torch
 import time
 
 import pytest
-
-from ray.exceptions import RayChannelError
 import ray
-from ray.air._internal import torch_utils
 import ray.cluster_utils
-from ray.dag import InputNode
-from ray.tests.conftest import *  # noqa
 
-from ray.experimental.channel.torch_tensor_type import (
-    TorchTensorType,
-)
+import ray.util.collective as collective
+import torch
+from ray.air._internal import torch_utils
+from ray.dag import InputNode, MultiOutputNode
+from ray.exceptions import RayChannelError
+from ray.experimental.channel.torch_tensor_type import TorchTensorType
+from ray.tests.conftest import *  # noqa
+from ray.util.collective import types
+
+# [TODO] Format the imports.
 
 """
 [WATERFRONT]
@@ -77,6 +78,12 @@ class TorchTensorWorker:
         for i, tensor in tensor_dict.items():
             vals[i] = self.recv(tensor)
         return vals
+
+    def forward(self, tensor):
+        raise NotImplementedError
+
+    def sync(self, tensor):
+        raise NotImplementedError
 
     def ping(self):
         return
@@ -574,6 +581,60 @@ def test_torch_tensor_exceptions(ray_start_regular):
     assert result == (i, shape, dtype)
 
     compiled_dag.teardown()
+
+
+# [TODO:andy] Implement the following tests similar to the above.
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_torch_tensor_nccl_all_reduce(ray_start_regular):
+    # [TODO] Comments for this test.
+    if not USE_GPU:
+        pytest.skip("NCCL tests require GPUs")
+
+    assert (
+        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
+    ), "This test requires at least 2 GPUs"
+
+    actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
+
+    workers = [actor_cls.remote() for _ in range(2)]
+
+    with InputNode() as inp:
+        forwards = [worker.forward.bind(inp) for worker in workers]
+        collectives = collective.allreduce.bind(inp, workers, types.ReduceOp.SUM)
+        # [TODO] Assert with_type_hint(TorchTensorType(transport="nccl")) is set.
+        syncs = [worker.sync.bind(collectives) for worker in workers]
+        dag = MultiOutputNode(*syncs)
+
+    compiled_dag = dag.experimental_compile()
+
+    for i in range(3):
+        ref = compiled_dag.execute(i)
+        result = ray.get(ref)
+        # [TODO:andy] To confirm shape and dtype.
+        assert result == (i, shape, dtype)
+
+    compiled_dag.teardown()
+
+
+# [TODO]
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_torch_tensor_nccl_all_reduce_dynamic(ray_start_regular):
+    if not USE_GPU:
+        pytest.skip("NCCL tests require GPUs")
+
+
+# [TODO]
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_torch_tensor_nccl_all_reduce_wrong_shape(ray_start_regular):
+    if not USE_GPU:
+        pytest.skip("NCCL tests require GPUs")
+
+
+# [TODO]
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_torch_tensor_nccl_all_reduce_get_partial(ray_start_regular):
+    if not USE_GPU:
+        pytest.skip("NCCL tests require GPUs")
 
 
 if __name__ == "__main__":
