@@ -2,7 +2,7 @@ import logging
 from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 
 import ray
-from ray.experimental.channel import ChannelContext, ChannelOutputType
+from ray.experimental.channel import ChannelContext, ChannelInterface, ChannelOutputType
 from ray.util.annotations import PublicAPI
 
 if TYPE_CHECKING:
@@ -120,7 +120,7 @@ class TorchTensorType(ChannelOutputType):
         writer: Optional["ray.actor.ActorHandle"],
         reader_and_node_list: List[Tuple["ray.actor.ActorHandle", str]],
         _torch_tensor_allocator: Optional["TorchTensorAllocator"] = None,
-    ) -> type:
+    ) -> ChannelInterface:
         if self.requires_nccl():
             from ray.experimental.channel.torch_tensor_nccl_channel import (
                 TorchTensorNcclChannel,
