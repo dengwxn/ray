@@ -79,11 +79,16 @@ class TorchTensorWorker:
             vals[i] = self.recv(tensor)
         return vals
 
-    def forward(self, tensor):
-        raise NotImplementedError
+    def compute(self, shape, dtype, value: int):
+        return torch.ones(shape, dtype=dtype, device=self.device) * value
+
+    def compute_with_tuple_args(self, args):
+        shape, dtype, value = args
+        return torch.ones(shape, dtype=dtype, device=self.device) * value
 
     def sync(self, tensor):
-        raise NotImplementedError
+        assert tensor.device == self.device
+        return (tensor[0].item(), tensor.shape, tensor.dtype)
 
     def ping(self):
         return
@@ -583,10 +588,11 @@ def test_torch_tensor_exceptions(ray_start_regular):
     compiled_dag.teardown()
 
 
-# [TODO:andy] Implement the following tests similar to the above.
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
 def test_torch_tensor_nccl_all_reduce(ray_start_regular):
-    # [TODO] Comments for this test.
+    """
+    Test basic all-reduce.
+    """
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
 
@@ -596,46 +602,276 @@ def test_torch_tensor_nccl_all_reduce(ray_start_regular):
 
     actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
 
-    workers = [actor_cls.remote() for _ in range(2)]
+    num_workers = 2
+    workers = [actor_cls.remote() for _ in range(num_workers)]
+
+    shape = (10,)
+    dtype = torch.float16
 
     with InputNode() as inp:
-        forwards = [worker.forward.bind(inp) for worker in workers]
-        collectives = collective.allreduce.bind(inp, workers, types.ReduceOp.SUM)
+        computes = [
+            worker.compute.bind(shape, dtype, val) for worker, val in zip(workers, inp)
+        ]
+        # [TODO:andy] Confirm whether manual type-hint is needed for collectives
+        computes = [
+            compute.with_type_hint(TorchTensorType(shape, dtype, transport="nccl"))
+            for compute in computes
+        ]
+        collectives = collective.allreduce.bind(computes, workers, types.ReduceOp.SUM)
         # [TODO] Assert with_type_hint(TorchTensorType(transport="nccl")) is set.
-        syncs = [worker.sync.bind(collectives) for worker in workers]
-        dag = MultiOutputNode(*syncs)
+        syncs = [
+            worker.sync.bind(collective)
+            for worker, collective in zip(workers, collectives)
+        ]
+        dag = MultiOutputNode(syncs)
 
     compiled_dag = dag.experimental_compile()
 
+    base_sum = (1 + num_workers) * num_workers / 2
     for i in range(3):
-        ref = compiled_dag.execute(i)
+        ref = compiled_dag.execute([(idx + 1 + i) for idx in range(num_workers)])
         result = ray.get(ref)
-        # [TODO:andy] To confirm shape and dtype.
-        assert result == (i, shape, dtype)
+        reduced_val = base_sum + i * num_workers
+        assert result == [(reduced_val, shape, dtype) for _ in workers]
 
     compiled_dag.teardown()
 
 
-# [TODO]
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
 def test_torch_tensor_nccl_all_reduce_dynamic(ray_start_regular):
+    """
+    Test all-reduce dag works for tensors of dynamic shapes.
+    """
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
 
+    assert (
+        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
+    ), "This test requires at least 2 GPUs"
 
-# [TODO]
+    actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
+
+    num_workers = 2
+    workers = [actor_cls.remote() for _ in range(num_workers)]
+
+    with InputNode() as inp:
+        computes = [
+            worker.compute_with_tuple_args.bind(args)
+            for worker, args in zip(workers, inp)
+        ]
+        # [TODO:andy] Confirm whether manual type-hint is needed for collectives
+        computes = [
+            compute.with_type_hint(TorchTensorType(shape, dtype, transport="nccl"))
+            for compute in computes
+        ]
+        collectives = collective.allreduce.bind(computes, workers, types.ReduceOp.SUM)
+        # [TODO] Assert with_type_hint(TorchTensorType(transport="nccl")) is set.
+        syncs = [
+            worker.sync.bind(collective)
+            for worker, collective in zip(workers, collectives)
+        ]
+        dag = MultiOutputNode(syncs)
+
+    compiled_dag = dag.experimental_compile()
+
+    base_sum = (1 + num_workers) * num_workers / 2
+    for i in range(3):
+        i += 1
+        shape = (i * 10,)
+        dtype = torch.float16
+        ref = compiled_dag.execute(
+            [(shape, dtype, i + idx + 1) for idx in range(num_workers)]
+        )
+        result = ray.get(ref)
+        reduced_val = base_sum + num_workers * i
+        assert result == [(reduced_val, shape, dtype) for _ in workers]
+
+    compiled_dag.teardown()
+
+
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
 def test_torch_tensor_nccl_all_reduce_wrong_shape(ray_start_regular):
+    """
+    Test a dag containing all-reduce errors when given tensors of wrong shapes.
+    """
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
 
+    assert (
+        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
+    ), "This test requires at least 2 GPUs"
 
-# [TODO]
+    actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
+
+    num_workers = 2
+    workers = [actor_cls.remote() for _ in range(num_workers)]
+
+    dtype = torch.float16
+
+    with InputNode() as inp:
+        computes = [
+            worker.compute.bind(args.shape, args.dtype, args.value)
+            for worker, args in zip(workers, inp)
+        ]
+        # [TODO:andy] Confirm whether manual type-hint is needed for collectives
+        computes = [
+            compute.with_type_hint(
+                TorchTensorType(
+                    (20,),
+                    dtype,
+                    transport="nccl",
+                )
+            )
+            for compute in computes
+        ]
+        collectives = collective.allreduce.bind(computes, workers, types.ReduceOp.SUM)
+        # [TODO] Assert with_type_hint(TorchTensorType(transport="nccl")) is set.
+        syncs = [
+            worker.sync.bind(collective)
+            for worker, collective in zip(workers, collectives)
+        ]
+        dag = MultiOutputNode(syncs)
+
+    compiled_dag = dag.experimental_compile()
+
+    ref = compiled_dag.execute(
+        [
+            {"shape": (20,), "dtype": dtype, "value": idx + 1}
+            for idx in range(num_workers)
+        ]
+    )
+    reduced_val = (1 + num_workers) * num_workers / 2
+    assert ray.get(ref) == [(reduced_val, (20,), dtype)]
+
+    ref = compiled_dag.execute(
+        [
+            {"shape": (10,), "dtype": dtype, "value": idx + 1}
+            for idx in range(num_workers)
+        ]
+    )
+    with pytest.raises(RayChannelError):
+        ray.get(ref)
+
+    # [TODO:andy] Check if the following is expected behavior:
+    # For tensors where the shape is declared to be static, the DAG will be
+    # torn down after any task throws an application-level exception, such as
+    # when the task returns torch.Tensors of the wrong shape or dtype. Check
+    # that we can no longer submit to the DAG.
+    with pytest.raises(RayChannelError):
+        ref = compiled_dag.execute(
+            [{"shape": (20,), "dtype": dtype, "value": 1} for _ in workers]
+        )
+
+    compiled_dag.teardown()
+
+    # [TODO:andy] Check if this requires time.sleep to avoid some issue with
+    # following tests.
+    # time.sleep(3)
+
+
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
 def test_torch_tensor_nccl_all_reduce_get_partial(ray_start_regular):
+    """
+    Test only using part of the results of an all-reduce does not error.
+    """
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
 
+    assert (
+        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
+    ), "This test requires at least 2 GPUs"
+
+    actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
+
+    num_workers = 2
+    workers = [actor_cls.remote() for _ in range(num_workers)]
+
+    shape = (10,)
+    dtype = torch.float16
+
+    with InputNode() as inp:
+        computes = [
+            worker.compute.bind(shape, dtype, val) for worker, val in zip(workers, inp)
+        ]
+        # [TODO:andy] Confirm whether manual type-hint is needed for collectives
+        computes = [
+            compute.with_type_hint(TorchTensorType(shape, dtype, transport="nccl"))
+            for compute in computes
+        ]
+        collectives = collective.allreduce.bind(computes, workers, types.ReduceOp.SUM)
+        # [TODO] Assert with_type_hint(TorchTensorType(transport="nccl")) is set.
+        syncs = workers[0].sync.bind(collectives[0])
+        dag = MultiOutputNode(syncs)
+
+    compiled_dag = dag.experimental_compile()
+
+    for i in range(3):
+        ref = compiled_dag.execute([(idx + 1 + i) for idx in range(num_workers)])
+        result = ray.get(ref)
+        reduced_val = (num_workers + 1) * num_workers / 2 + i * num_workers
+        assert result == (reduced_val, shape, dtype)
+
+    compiled_dag.teardown()
+
+
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_torch_tensor_nccl_all_reduce_incompatible_tensor_shapes(ray_start_regular):
+    """
+    Test a dag containing all-reduce errors when user tries to all-reduce tensors of different shapes.
+    """
+    if not USE_GPU:
+        pytest.skip("NCCL tests require GPUs")
+
+    assert (
+        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
+    ), "This test requires at least 2 GPUs"
+
+    actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
+
+    num_workers = 2
+    workers = [actor_cls.remote() for _ in range(num_workers)]
+
+    dtype = torch.float16
+
+    with InputNode() as inp:
+        computes = [
+            worker.compute.bind(args.shape, dtype, args.value)
+            for worker, args in zip(workers, inp)
+        ]
+        # [TODO:andy] Confirm whether manual type-hint is needed for collectives
+        computes = [
+            compute.with_type_hint(TorchTensorType(args.shape, dtype, transport="nccl"))
+            for compute, args in zip(computes, inp)
+        ]
+        collectives = collective.allreduce.bind(computes, workers, types.ReduceOp.SUM)
+        # [TODO] Assert with_type_hint(TorchTensorType(transport="nccl")) is set.
+        syncs = [
+            worker.sync.bind(collective)
+            for worker, collective in zip(workers, collectives)
+        ]
+        dag = MultiOutputNode(syncs)
+
+    compiled_dag = dag.experimental_compile()
+
+    ref = compiled_dag.execute(
+        [{"shape": (10,), "value": idx + 1} for idx in range(num_workers)]
+    )
+    result = ray.get(ref)
+    reduced_val = (num_workers + 1) * num_workers / 2
+    assert result == [(reduced_val, (10,), dtype) for _ in workers]
+
+    ref = compiled_dag.execute(
+        [{"shape": (10 * (idx + 1),), "value": idx + 1} for idx in range(num_workers)]
+    )
+    with pytest.raises(RayChannelError):
+        ray.get(ref)
+
+    compiled_dag.teardown()
+
+
+# [TODO:andy]
+# Ideas for test cases:
+# 1. An all-reduce operation can hang if not all devices in a communicator participates. Test to check all-reduce does not hang or an error is detected when it hangs.
 
 if __name__ == "__main__":
     if os.environ.get("PARALLEL_CI"):
