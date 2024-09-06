@@ -22,7 +22,8 @@ from ray.util.collective import types
 
 """
 [WATERFRONT]
-- Read all TODO comments in the following files. Just to know what are the bugs that we should know ahead.
+- Read all TODO comments in the following files.
+  Just to know what are the bugs that we should know ahead.
   + python/ray/dag/tests/experimental/test_torch_tensor_dag.py
   + python/ray/experimental/channel/nccl_group.py
   + python/ray/experimental/channel/serialization_context.py
@@ -661,7 +662,9 @@ def test_torch_tensor_nccl_all_reduce_dynamic(ray_start_regular):
         ]
         # [TODO:andy] Confirm whether manual type-hint is needed for collectives
         computes = [
-            compute.with_type_hint(TorchTensorType(shape, dtype, transport="nccl"))
+            compute.with_type_hint(
+                TorchTensorType(transport="nccl", _direct_return=True)
+            )
             for compute in computes
         ]
         collectives = collective.allreduce.bind(computes, workers, types.ReduceOp.SUM)
@@ -817,7 +820,8 @@ def test_torch_tensor_nccl_all_reduce_get_partial(ray_start_regular):
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
 def test_torch_tensor_nccl_all_reduce_incompatible_tensor_shapes(ray_start_regular):
     """
-    Test a dag containing all-reduce errors when user tries to all-reduce tensors of different shapes.
+    Test a dag containing all-reduce errors when user tries to
+    all-reduce tensors of different shapes.
     """
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
@@ -871,7 +875,9 @@ def test_torch_tensor_nccl_all_reduce_incompatible_tensor_shapes(ray_start_regul
 
 # [TODO:andy]
 # Ideas for test cases:
-# 1. An all-reduce operation can hang if not all devices in a communicator participates. Test to check all-reduce does not hang or an error is detected when it hangs.
+# 1. An all-reduce operation can hang if not all devices in a communicator
+# participates. Test to check all-reduce does not hang or an error is detected
+# when it hangs.
 
 if __name__ == "__main__":
     if os.environ.get("PARALLEL_CI"):
