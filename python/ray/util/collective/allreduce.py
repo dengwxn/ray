@@ -3,7 +3,7 @@ from typing import List
 
 from ray.dag import (
     ClassMethodNode,
-    CollectiveNode,
+    CollectiveGroupNode,
     CollectiveOutputNode,
 )
 from ray.util.collective import types
@@ -18,24 +18,24 @@ class AllReduceWrapper:
     def bind(
         self, class_nodes: List[ClassMethodNode], op: types.ReduceOp
     ) -> List[ClassMethodNode]:
-        collective_node = CollectiveNode(
+        collective_group_node = CollectiveGroupNode(
             method_name="collective",
             method_args=tuple(class_nodes, op),
             method_kwargs=dict(),
             method_options=dict(),
             other_args_to_resolve=dict(),
         )
-        output_nodes: List[CollectiveOutputNode] = []
+        collective_output_nodes: List[CollectiveOutputNode] = []
         for class_node in class_nodes:
             output_node = CollectiveOutputNode(
                 method_name="collective_output",
-                method_args=tuple(class_node, collective_node),
+                method_args=tuple(class_node, collective_group_node),
                 method_kwargs=dict(),
                 method_options=dict(),
                 other_args_to_resolve=dict(),
             )
-            output_nodes.append(output_node)
-        return output_nodes
+            collective_output_nodes.append(output_node)
+        return collective_output_nodes
 
     def __call__(
         self,

@@ -4,7 +4,7 @@ from ray.dag.class_node import (
     ClassNode,
     ClassMethodNode,
 )
-from ray.dag.collective_node import CollectiveNode, CollectiveOutputNode
+from ray.dag.collective_node import CollectiveGroupNode, CollectiveOutputNode
 from ray.dag.input_node import (
     InputNode,
     InputAttributeNode,
@@ -24,7 +24,7 @@ from ray.dag.context import DAGContext
 __all__ = [
     "ClassNode",
     "ClassMethodNode",
-    "CollectiveNode",
+    "CollectiveGroupNode",
     "CollectiveOutputNode",
     "DAGNode",
     "FunctionNode",

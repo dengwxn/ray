@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Union, Tuple, Optional
 
 
 @DeveloperAPI
-class CollectiveNode(DAGNode):
+class CollectiveGroupNode(DAGNode):
     # [TODO] Comment.
     # [TODO] Pass collective function as a parameter: allreduce, allgather, etc.
 
@@ -63,7 +63,7 @@ class CollectiveNode(DAGNode):
         new_options: Dict[str, Any],
         new_other_args_to_resolve: Dict[str, Any],
     ):
-        return CollectiveNode(
+        return CollectiveGroupNode(
             self._method_name,
             new_args,
             new_kwargs,
@@ -100,7 +100,7 @@ class CollectiveOutputNode:
     def __init__(
         self,
         method_name: str,
-        method_args: Tuple[ClassMethodNode, CollectiveNode],
+        method_args: Tuple[ClassMethodNode, CollectiveGroupNode],
         method_kwargs: Dict[str, Any],
         method_options: Dict[str, Any],
         other_args_to_resolve: Dict[str, Any],
@@ -120,7 +120,7 @@ class CollectiveOutputNode:
 
         # [TODO] Comments.
         self._class_node = method_args[0]
-        self._collective_node = method_args[1]
+        self._collective_group_node = method_args[1]
 
         # The actor creation task dependency is encoded as the first argument,
         # and the ordering dependency as the second, which ensures they are
@@ -139,7 +139,7 @@ class CollectiveOutputNode:
         new_options: Dict[str, Any],
         new_other_args_to_resolve: Dict[str, Any],
     ):
-        return CollectiveNode(
+        return CollectiveGroupNode(
             self._method_name,
             new_args,
             new_kwargs,
