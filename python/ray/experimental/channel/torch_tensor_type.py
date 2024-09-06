@@ -23,6 +23,7 @@ TENSOR_METADATA_SIZE_BYTES = 100_000
 class TorchTensorType(ChannelOutputType):
     AUTO = "auto"
     NCCL = "nccl"
+    NCCL_ALLREDUCE = "nccl_allreduce"
 
     def __init__(
         self,
@@ -73,7 +74,8 @@ class TorchTensorType(ChannelOutputType):
         self._dtype = _dtype
         self._direct_return = _direct_return
 
-        if transport not in [self.AUTO, self.NCCL]:
+        if transport not in [self.AUTO, self.NCCL, self.NCCL_ALLREDUCE]:
+            # [TODO] Update error.
             raise ValueError(
                 "`transport` must be TorchTensorType.AUTO or TorchTensorType.NCCL"
             )

@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, List, Optional
 
 import ray
 from ray.exceptions import RayChannelError
+from ray.util.collective import types
 
 if TYPE_CHECKING:
     import cupy as cp
@@ -185,20 +186,12 @@ class _NcclGroup:
         if self._closed:
             raise RayChannelError("NCCL group has been destroyed.")
 
-        # allReduce(self, intptr_t sendbuf, intptr_t recvbuf, size_t count, int datatype, int op, intptr_t stream)
-
-        # class ReduceOp(Enum):
-        #     SUM = 0
-        #     PRODUCT = 1
-        #     MIN = 2
-        #     MAX = 3
-
         self._comm.allReduce(
             self.nccl_util.get_tensor_ptr(buf),
             self.nccl_util.get_tensor_ptr(buf),
             buf.numel(),
             self.nccl_util.get_nccl_tensor_dtype(buf),
-            0,
+            types.ReduceOp.SUM,
             self._cuda_stream.ptr,
         )
 

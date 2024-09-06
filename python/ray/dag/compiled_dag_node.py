@@ -624,9 +624,9 @@ class CompiledDAG:
         self.worker_task_refs: Dict["ray.actor.ActorHandle", "ray.ObjectRef"] = {}
         # Set of actors present in the DAG.
         self.actor_refs = set()
-        self.actor_to_tasks: Dict["ray.actor.ActorHandle", List["CompiledTask"]] = (
-            defaultdict(list)
-        )
+        self.actor_to_tasks: Dict[
+            "ray.actor.ActorHandle", List["CompiledTask"]
+        ] = defaultdict(list)
         self.actor_to_executable_tasks: Dict[
             "ray.actor.ActorHandle", List["ExecutableTask"]
         ] = {}
@@ -1795,9 +1795,9 @@ class CompiledDAG:
                 )
             self._max_execution_index += 1
             start_time = time.monotonic()
-            self._result_buffer[self._max_execution_index] = (
-                self._dag_output_fetcher.read(timeout)
-            )
+            self._result_buffer[
+                self._max_execution_index
+            ] = self._dag_output_fetcher.read(timeout)
             if timeout != -1:
                 timeout -= time.monotonic() - start_time
                 timeout = max(timeout, 0)

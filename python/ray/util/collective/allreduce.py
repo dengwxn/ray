@@ -1,30 +1,41 @@
 import logging
-from types import ModuleType
-from typing import TYPE_CHECKING, List, Optional
+from typing import List
 
-import ray
-from ray.dag import ClassMethodNode
-from ray.exceptions import RayChannelError
+from ray.dag import (
+    ClassMethodNode,
+    CollectiveNode,
+    CollectiveOutputNode,
+)
 from ray.util.collective import types
 
-if TYPE_CHECKING:
-    import cupy as cp
-    import torch
 
-
-# Logger for this module. It should be configured at the entry point
-# into the program using Ray. Ray provides a default configuration at
-# entry/init points.
 logger = logging.getLogger(__name__)
 
 
 class AllReduceWrapper:
     # [TODO] Comments for this class.
+
     def bind(
         self, class_nodes: List[ClassMethodNode], op: types.ReduceOp
     ) -> List[ClassMethodNode]:
-        logger.info("Binding all reduce")
-        # [TODO] Create CollectiveNode and CollectiveOutputNode.
+        collective_node = CollectiveNode(
+            method_name="collective",
+            method_args=tuple(class_nodes, op),
+            method_kwargs=dict(),
+            method_options=dict(),
+            other_args_to_resolve=dict(),
+        )
+        output_nodes: List[CollectiveOutputNode] = []
+        for class_node in class_nodes:
+            output_node = CollectiveOutputNode(
+                method_name="collective_output",
+                method_args=tuple(class_node, collective_node),
+                method_kwargs=dict(),
+                method_options=dict(),
+                other_args_to_resolve=dict(),
+            )
+            output_nodes.append(output_node)
+        return output_nodes
 
     def __call__(
         self,
