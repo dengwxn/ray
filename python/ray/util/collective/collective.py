@@ -256,7 +256,7 @@ def get_collective_group_size(group_name: str = "default") -> int:
     return g.world_size
 
 
-def _allreduce(tensor, group_name: str = "default", op=types.ReduceOp.SUM):
+def allreduce(tensor, group_name: str = "default", op=types.ReduceOp.SUM):
     """Collective allreduce the tensor across the group.
 
     Args:

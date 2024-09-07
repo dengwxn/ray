@@ -624,9 +624,9 @@ class CompiledDAG:
         self.worker_task_refs: Dict["ray.actor.ActorHandle", "ray.ObjectRef"] = {}
         # Set of actors present in the DAG.
         self.actor_refs = set()
-        self.actor_to_tasks: Dict[
-            "ray.actor.ActorHandle", List["CompiledTask"]
-        ] = defaultdict(list)
+        self.actor_to_tasks: Dict["ray.actor.ActorHandle", List["CompiledTask"]] = (
+            defaultdict(list)
+        )
         self.actor_to_executable_tasks: Dict[
             "ray.actor.ActorHandle", List["ExecutableTask"]
         ] = {}
@@ -806,6 +806,7 @@ class CompiledDAG:
 
                 if dag_node.type_hint.requires_nccl():
                     # [TODO] Add CollectiveNode and CollectiveOutputNode.
+
                     # Add all writers to the NCCL group.
                     nccl_actors.add(actor_handle)
             elif isinstance(dag_node, InputNode):
@@ -1399,6 +1400,7 @@ class CompiledDAG:
         for actor_handle, executable_tasks in self.actor_to_executable_tasks.items():
             for exec_task_idx, exec_task in enumerate(executable_tasks):
                 # [TODO] Should have added exec_op_tasks doing allreduce.
+
                 # Divide a DAG node into three _DAGOperationGraphNodes: READ, COMPUTE,
                 # and WRITE. Each _DAGOperationGraphNode has a _DAGNodeOperation.
                 task_index = exec_task.task_idx
@@ -1795,9 +1797,9 @@ class CompiledDAG:
                 )
             self._max_execution_index += 1
             start_time = time.monotonic()
-            self._result_buffer[
-                self._max_execution_index
-            ] = self._dag_output_fetcher.read(timeout)
+            self._result_buffer[self._max_execution_index] = (
+                self._dag_output_fetcher.read(timeout)
+            )
             if timeout != -1:
                 timeout -= time.monotonic() - start_time
                 timeout = max(timeout, 0)

@@ -7,6 +7,7 @@ from ray.util.collective.collective import (
     create_collective_group,
     get_rank,
     get_collective_group_size,
+    allreduce,
     # _allreduce, [TODO] Test.
     allreduce_multigpu,
     barrier,
@@ -24,7 +25,7 @@ from ray.util.collective.collective import (
     recv_multigpu,
 )
 
-from ray.util.collective.allreduce import allreduce
+# from ray.util.collective.allreduce import allreduce
 
 __all__ = [
     "nccl_available",
@@ -51,5 +52,4 @@ __all__ = [
     "send_multigpu",
     "recv",
     "recv_multigpu",
-    "allreduce",
 ]

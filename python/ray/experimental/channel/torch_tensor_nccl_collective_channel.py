@@ -42,17 +42,7 @@ class TorchTensorNcclCollectiveChannel(ChannelInterface):
         Create a channel for torch.Tensors transferred via NCCL.
 
         Args:
-            writer: The actor that may write to the channel. None signifies the driver.
-            reader_and_node_list: A list of tuples, where each tuple contains a reader
-                actor handle and the node ID where the actor is located.
             typ: Type information about the values passed through the channel.
-            _meta_channel: A channel used to send metadata for the tensors,
-                i.e. shape and dtype. If not provided, and if the typ does not
-                specify a static shape and dtype, then a metadata channel based
-                on shared memory will be created.
-            _torch_tensor_allocator: An optional allocator function for
-                allocating torch.Tensor buffers on receivers. By default,
-                torch.zeros will be used.
         """
         import torch
 
@@ -75,13 +65,7 @@ class TorchTensorNcclCollectiveChannel(ChannelInterface):
     def __reduce__(self):
         return (
             self.__class__,
-            (
-                self._writer,
-                self._reader_and_node_list,
-                self._typ,
-                self._meta_channel,
-                self._torch_tensor_allocator,
-            ),
+            (self._typ,),
         )
 
     def ensure_registered_as_writer(self):
@@ -123,6 +107,7 @@ class TorchTensorNcclCollectiveChannel(ChannelInterface):
     def read(
         self, timeout: Optional[float] = None
     ) -> Union["torch.Tensor", List["torch.Tensor"]]:
+        # [TODO] sync before read
         """[TODO] Simplify.
         if self._meta_channel is not None:
             meta = self._meta_channel.read()

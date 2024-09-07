@@ -9,7 +9,8 @@ import pytest
 import ray
 import ray.cluster_utils
 
-import ray.util.collective as collective
+import ray.experimental
+import ray.experimental.collective as collective
 import torch
 from ray.air._internal import torch_utils
 from ray.dag import InputNode, MultiOutputNode
@@ -618,7 +619,7 @@ def test_torch_tensor_nccl_all_reduce(ray_start_regular):
             compute.with_type_hint(TorchTensorType(shape, dtype, transport="nccl"))
             for compute in computes
         ]
-        collectives = collective.allreduce.bind(computes, workers, types.ReduceOp.SUM)
+        collectives = collective.allreduce.bind(computes, types.ReduceOp.SUM)
         # [TODO] Assert with_type_hint(TorchTensorType(transport="nccl")) is set.
         syncs = [
             worker.sync.bind(collective)
@@ -667,7 +668,7 @@ def test_torch_tensor_nccl_all_reduce_dynamic(ray_start_regular):
             )
             for compute in computes
         ]
-        collectives = collective.allreduce.bind(computes, workers, types.ReduceOp.SUM)
+        collectives = collective.allreduce.bind(computes, types.ReduceOp.SUM)
         # [TODO] Assert with_type_hint(TorchTensorType(transport="nccl")) is set.
         syncs = [
             worker.sync.bind(collective)
@@ -727,7 +728,7 @@ def test_torch_tensor_nccl_all_reduce_wrong_shape(ray_start_regular):
             )
             for compute in computes
         ]
-        collectives = collective.allreduce.bind(computes, workers, types.ReduceOp.SUM)
+        collectives = collective.allreduce.bind(computes, types.ReduceOp.SUM)
         # [TODO] Assert with_type_hint(TorchTensorType(transport="nccl")) is set.
         syncs = [
             worker.sync.bind(collective)
@@ -801,7 +802,7 @@ def test_torch_tensor_nccl_all_reduce_get_partial(ray_start_regular):
             compute.with_type_hint(TorchTensorType(shape, dtype, transport="nccl"))
             for compute in computes
         ]
-        collectives = collective.allreduce.bind(computes, workers, types.ReduceOp.SUM)
+        collectives = collective.allreduce.bind(computes, types.ReduceOp.SUM)
         # [TODO] Assert with_type_hint(TorchTensorType(transport="nccl")) is set.
         syncs = workers[0].sync.bind(collectives[0])
         dag = MultiOutputNode(syncs)
@@ -847,7 +848,7 @@ def test_torch_tensor_nccl_all_reduce_incompatible_tensor_shapes(ray_start_regul
             compute.with_type_hint(TorchTensorType(args.shape, dtype, transport="nccl"))
             for compute, args in zip(computes, inp)
         ]
-        collectives = collective.allreduce.bind(computes, workers, types.ReduceOp.SUM)
+        collectives = collective.allreduce.bind(computes, types.ReduceOp.SUM)
         # [TODO] Assert with_type_hint(TorchTensorType(transport="nccl")) is set.
         syncs = [
             worker.sync.bind(collective)

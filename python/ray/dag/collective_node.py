@@ -4,8 +4,14 @@ from ray.dag import (
     DAGNode,
     ClassMethodNode,
     ClassNode,
+)
+from ray.dag.constants import (
     PARENT_CLASS_NODE_KEY,
     BIND_INDEX_KEY,
+    COLLECTIVE_GROUP_INPUT_NODES_KEY,
+    REDUCE_OP_KEY,
+    COLLECTIVE_OUTPUT_INPUT_NODE_KEY,
+    COLLECTIVE_GROUP_NODE_KEY,
 )
 from ray.dag.format_utils import get_dag_node_str
 from ray.util.annotations import DeveloperAPI
@@ -19,11 +25,12 @@ from typing import Any, Dict, List, Union, Tuple, Optional
 class CollectiveGroupNode(DAGNode):
     # [TODO] Comment.
     # [TODO] Pass collective function as a parameter: allreduce, allgather, etc.
+    # For now, implement allreduce first.
 
     def __init__(
         self,
         method_name: str,
-        method_args: Tuple[List[ClassMethodNode], types.ReduceOp],
+        method_args: Tuple[Any],
         method_kwargs: Dict[str, Any],
         method_options: Dict[str, Any],
         other_args_to_resolve: Dict[str, Any],
@@ -32,6 +39,8 @@ class CollectiveGroupNode(DAGNode):
         self._bound_kwargs = method_kwargs or {}
         self._bound_options = method_options or {}
         self._method_name: str = method_name
+
+        # [TODO] Determine which other args are needed.
         # Parse other_args_to_resolve and assign to variables
         self._parent_class_node: Union[
             ClassNode, ReferenceType["ray._private.actor.ActorHandle"]
@@ -41,9 +50,17 @@ class CollectiveGroupNode(DAGNode):
             BIND_INDEX_KEY, None
         )
 
-        # [TODO] Comments.
-        self._class_nodes = method_args[0]
-        self._op = method_args[1]
+        # Get the input nodes for this collective operation and the reduce op.
+        # [TODO] Only allreduce is implemented for now.
+        # Enable other collective operations in the future.
+        self._inp_nodes: Optional[List[ClassMethodNode]] = other_args_to_resolve.get(
+            COLLECTIVE_GROUP_INPUT_NODES_KEY, None
+        )
+        if self._inps is None:
+            raise ValueError("CollectiveGroupNode needs at least 1 input node")
+        self._reduce_op: types.ReduceOp = other_args_to_resolve.get(
+            REDUCE_OP_KEY, types.ReduceOp.SUM
+        )
         self._type = TorchTensorType(transport=TorchTensorType.NCCL_ALLREDUCE)
 
         # The actor creation task dependency is encoded as the first argument,
@@ -100,7 +117,7 @@ class CollectiveOutputNode:
     def __init__(
         self,
         method_name: str,
-        method_args: Tuple[ClassMethodNode, CollectiveGroupNode],
+        method_args: Tuple[Any],
         method_kwargs: Dict[str, Any],
         method_options: Dict[str, Any],
         other_args_to_resolve: Dict[str, Any],
@@ -118,9 +135,19 @@ class CollectiveOutputNode:
             BIND_INDEX_KEY, None
         )
 
-        # [TODO] Comments.
-        self._class_node = method_args[0]
-        self._collective_group_node = method_args[1]
+        # Get the input node and the collective group node.
+        self._inp_node: Optional[ClassMethodNode] = other_args_to_resolve.get(
+            COLLECTIVE_OUTPUT_INPUT_NODE_KEY, None
+        )
+        if self._inp_node is None:
+            raise ValueError("CollectiveOutputNode must have an input node")
+        self._collective_group_node: Optional[CollectiveGroupNode] = (
+            other_args_to_resolve.get(COLLECTIVE_GROUP_NODE_KEY, None)
+        )
+        if self._collective_group_node is None:
+            raise ValueError(
+                "CollectiveOutputNode must be associated with a CollectiveGroupNode"
+            )
 
         # The actor creation task dependency is encoded as the first argument,
         # and the ordering dependency as the second, which ensures they are

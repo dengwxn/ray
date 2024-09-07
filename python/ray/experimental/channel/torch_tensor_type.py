@@ -75,9 +75,9 @@ class TorchTensorType(ChannelOutputType):
         self._direct_return = _direct_return
 
         if transport not in [self.AUTO, self.NCCL, self.NCCL_ALLREDUCE]:
-            # [TODO] Update error.
             raise ValueError(
-                "`transport` must be TorchTensorType.AUTO or TorchTensorType.NCCL"
+                "`transport` must be TorchTensorType.AUTO or TorchTensorType.NCCL "
+                "or TorchTensorType.NCCL_ALLREDUCE"
             )
         self.transport = transport
 

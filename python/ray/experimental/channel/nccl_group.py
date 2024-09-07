@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, List, Optional
 
 import ray
 from ray.exceptions import RayChannelError
-from ray.util.collective import types
+# from ray.util.collective import types
 
 if TYPE_CHECKING:
     import cupy as cp

@@ -1,11 +1,16 @@
 import logging
-from typing import List
+from typing import TYPE_CHECKING, List
 
 from ray.dag import (
     ClassMethodNode,
     CollectiveGroupNode,
     CollectiveOutputNode,
+    COLLECTIVE_GROUP_INPUT_NODES_KEY,
+    REDUCE_OP_KEY,
+    COLLECTIVE_OUTPUT_INPUT_NODE_KEY,
+    COLLECTIVE_GROUP_NODE_KEY,
 )
+
 from ray.util.collective import types
 
 
@@ -16,25 +21,33 @@ class AllReduceWrapper:
     # [TODO] Comments for this class.
 
     def bind(
-        self, class_nodes: List[ClassMethodNode], op: types.ReduceOp
-    ) -> List[ClassMethodNode]:
+        self, class_nodes: List["ClassMethodNode"], op: types.ReduceOp
+    ) -> List[CollectiveOutputNode]:
         collective_group_node = CollectiveGroupNode(
-            method_name="collective",
-            method_args=tuple(class_nodes, op),
+            method_name="collective_group",
+            method_args=tuple(),
             method_kwargs=dict(),
             method_options=dict(),
-            other_args_to_resolve=dict(),
+            other_args_to_resolve={
+                COLLECTIVE_GROUP_INPUT_NODES_KEY: class_nodes,
+                REDUCE_OP_KEY: op,
+            },
         )
+
         collective_output_nodes: List[CollectiveOutputNode] = []
         for class_node in class_nodes:
             output_node = CollectiveOutputNode(
                 method_name="collective_output",
-                method_args=tuple(class_node, collective_group_node),
+                method_args=tuple(),
                 method_kwargs=dict(),
                 method_options=dict(),
-                other_args_to_resolve=dict(),
+                other_args_to_resolve={
+                    COLLECTIVE_OUTPUT_INPUT_NODE_KEY: class_node,
+                    COLLECTIVE_GROUP_NODE_KEY: collective_group_node,
+                },
             )
             collective_output_nodes.append(output_node)
+
         return collective_output_nodes
 
     def __call__(
@@ -43,9 +56,9 @@ class AllReduceWrapper:
         group_name: str = "default",
         op: types.ReduceOp = types.ReduceOp.SUM,
     ):
-        from ray.util.collective.collective import _allreduce
+        from ray.util.collective.collective import allreduce
 
-        return _allreduce(tensor, group_name, op)
+        return allreduce(tensor, group_name, op)
 
 
 allreduce = AllReduceWrapper()
