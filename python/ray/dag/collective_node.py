@@ -56,7 +56,7 @@ class CollectiveGroupNode(DAGNode):
         self._inp_nodes: Optional[List[ClassMethodNode]] = other_args_to_resolve.get(
             COLLECTIVE_GROUP_INPUT_NODES_KEY, None
         )
-        if self._inps is None:
+        if self._inp_nodes is None:
             raise ValueError("CollectiveGroupNode needs at least 1 input node")
         self._reduce_op: types.ReduceOp = other_args_to_resolve.get(
             REDUCE_OP_KEY, types.ReduceOp.SUM
@@ -111,7 +111,7 @@ class CollectiveGroupNode(DAGNode):
 
 
 @DeveloperAPI
-class CollectiveOutputNode:
+class CollectiveOutputNode(DAGNode):
     # [TODO] Comment.
 
     def __init__(
@@ -141,9 +141,9 @@ class CollectiveOutputNode:
         )
         if self._inp_node is None:
             raise ValueError("CollectiveOutputNode must have an input node")
-        self._collective_group_node: Optional[CollectiveGroupNode] = (
-            other_args_to_resolve.get(COLLECTIVE_GROUP_NODE_KEY, None)
-        )
+        self._collective_group_node: Optional[
+            CollectiveGroupNode
+        ] = other_args_to_resolve.get(COLLECTIVE_GROUP_NODE_KEY, None)
         if self._collective_group_node is None:
             raise ValueError(
                 "CollectiveOutputNode must be associated with a CollectiveGroupNode"

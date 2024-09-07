@@ -10,7 +10,6 @@ from ray.util.annotations import DeveloperAPI
 if TYPE_CHECKING:
     import torch
 
-    from ray.experimental.channel.shared_memory_channel import Channel
     from ray.experimental.channel.torch_tensor_type import TorchTensorType
 
 

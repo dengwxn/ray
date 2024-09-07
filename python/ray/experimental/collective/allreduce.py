@@ -1,18 +1,16 @@
 import logging
-from typing import TYPE_CHECKING, List
+from typing import List
 
 from ray.dag import (
+    COLLECTIVE_GROUP_INPUT_NODES_KEY,
+    COLLECTIVE_GROUP_NODE_KEY,
+    COLLECTIVE_OUTPUT_INPUT_NODE_KEY,
+    REDUCE_OP_KEY,
     ClassMethodNode,
     CollectiveGroupNode,
     CollectiveOutputNode,
-    COLLECTIVE_GROUP_INPUT_NODES_KEY,
-    REDUCE_OP_KEY,
-    COLLECTIVE_OUTPUT_INPUT_NODE_KEY,
-    COLLECTIVE_GROUP_NODE_KEY,
 )
-
 from ray.util.collective import types
-
 
 logger = logging.getLogger(__name__)
 
