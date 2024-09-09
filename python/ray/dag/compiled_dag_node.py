@@ -727,7 +727,7 @@ class CompiledDAG:
             InputNode,
             MultiOutputNode,
         )
-        from ray.dag.collective_node import CollectiveGroupNode, CollectiveOutputNode
+        from ray.dag.collective_node import CollectiveOutputNode
 
         self.input_task_idx, self.output_task_idx = None, None
         self.actor_task_count.clear()
@@ -781,8 +781,6 @@ class CompiledDAG:
         # Also collect the set of tasks that produce torch.tensors.
         for task_idx, task in self.idx_to_task.items():
             dag_node = task.dag_node
-            if isinstance(dag_node, CollectiveGroupNode):
-                continue
             if not (
                 isinstance(dag_node, InputNode)
                 or isinstance(dag_node, InputAttributeNode)
@@ -987,7 +985,6 @@ class CompiledDAG:
             InputAttributeNode,
             MultiOutputNode,
             ClassMethodNode,
-            CollectiveGroupNode,
             CollectiveOutputNode,
         )
 
@@ -1196,7 +1193,6 @@ class CompiledDAG:
                 node_idx == self.input_task_idx
                 or node_idx == self.output_task_idx
                 or isinstance(task.dag_node, InputAttributeNode)
-                or isinstance(task.dag_node, CollectiveGroupNode)
                 # or isinstance(task.dag_node, CollectiveOutputNode)
             ):
                 continue
@@ -1824,9 +1820,9 @@ class CompiledDAG:
                 )
             self._max_execution_index += 1
             start_time = time.monotonic()
-            self._result_buffer[
-                self._max_execution_index
-            ] = self._dag_output_fetcher.read(timeout)
+            self._result_buffer[self._max_execution_index] = (
+                self._dag_output_fetcher.read(timeout)
+            )
             if timeout != -1:
                 timeout -= time.monotonic() - start_time
                 timeout = max(timeout, 0)

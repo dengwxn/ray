@@ -1,15 +1,9 @@
 import logging
 from typing import List
 
-from ray.dag import (
-    COLLECTIVE_GROUP_INPUT_NODES_KEY,
-    COLLECTIVE_GROUP_NODE_KEY,
-    COLLECTIVE_OUTPUT_INPUT_NODE_KEY,
-    REDUCE_OP_KEY,
-    ClassMethodNode,
-    CollectiveGroupNode,
-    CollectiveOutputNode,
-)
+from ray.dag.constants import COLLECTIVE_GROUP_KEY, COLLECTIVE_OUTPUT_INPUT_NODE_KEY
+from ray.dag.dag_node import DAGNode
+from ray.dag.collective_node import _CollectiveGroup, CollectiveOutputNode
 from ray.util.collective import types
 
 logger = logging.getLogger(__name__)
@@ -20,30 +14,22 @@ class AllReduceWrapper:
 
     # [TODO] Change to DAGNode.
     def bind(
-        self, class_nodes: List["ClassMethodNode"], op: types.ReduceOp
+        self, input_nodes: List["DAGNode"], op: types.ReduceOp
     ) -> List[CollectiveOutputNode]:
         # Rename `CollectiveGroupNode` to private `_CollectiveGroup` for now.
-        collective_group_node = CollectiveGroupNode(
-            method_name="collective_group",
-            method_args=tuple(),
-            method_kwargs=dict(),
-            method_options=dict(),
-            other_args_to_resolve={
-                COLLECTIVE_GROUP_INPUT_NODES_KEY: class_nodes,
-                REDUCE_OP_KEY: op,
-            },
-        )
+        collective_group = _CollectiveGroup(input_nodes, op)
 
         collective_output_nodes: List[CollectiveOutputNode] = []
-        for class_node in class_nodes:
+        for input_node in input_nodes:
             output_node = CollectiveOutputNode(
-                method_name="collective_output",
-                method_args=tuple(class_node), # TODO: Check upstream and downstream are correct.
+                method_name="__CollectiveOutputNode__",
+                method_args=tuple(input_node),
+                # [TODO] Check upstream and downstream are correct.
                 method_kwargs=dict(),
                 method_options=dict(),
                 other_args_to_resolve={
-                    COLLECTIVE_OUTPUT_INPUT_NODE_KEY: class_node,
-                    COLLECTIVE_GROUP_NODE_KEY: collective_group_node,
+                    COLLECTIVE_OUTPUT_INPUT_NODE_KEY: input_node,
+                    COLLECTIVE_GROUP_KEY: collective_group,
                 },
             )
             collective_output_nodes.append(output_node)
