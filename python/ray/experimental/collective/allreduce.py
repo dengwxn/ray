@@ -18,9 +18,11 @@ logger = logging.getLogger(__name__)
 class AllReduceWrapper:
     # [TODO] Comments for this class.
 
+    # [TODO] Change to DAGNode.
     def bind(
         self, class_nodes: List["ClassMethodNode"], op: types.ReduceOp
     ) -> List[CollectiveOutputNode]:
+        # Rename `CollectiveGroupNode` to private `_CollectiveGroup` for now.
         collective_group_node = CollectiveGroupNode(
             method_name="collective_group",
             method_args=tuple(),
@@ -36,7 +38,7 @@ class AllReduceWrapper:
         for class_node in class_nodes:
             output_node = CollectiveOutputNode(
                 method_name="collective_output",
-                method_args=tuple(),
+                method_args=tuple(class_node), # TODO: Check upstream and downstream are correct.
                 method_kwargs=dict(),
                 method_options=dict(),
                 other_args_to_resolve={

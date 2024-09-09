@@ -127,9 +127,9 @@ class CollectiveOutputNode(DAGNode):
         self._bound_options = method_options or {}
         self._method_name: str = method_name
         # Parse other_args_to_resolve and assign to variables
-        self._parent_class_node: Union[
-            ClassNode, ReferenceType["ray._private.actor.ActorHandle"]
-        ] = other_args_to_resolve.get(PARENT_CLASS_NODE_KEY)
+        self._parent_class_node: Optional[
+            Union[ClassNode, ReferenceType["ray._private.actor.ActorHandle"]]
+        ] = other_args_to_resolve.get(PARENT_CLASS_NODE_KEY, None)
         # The index/order when bind() is called on this class method
         self._bind_index: Optional[int] = other_args_to_resolve.get(
             BIND_INDEX_KEY, None
@@ -141,9 +141,11 @@ class CollectiveOutputNode(DAGNode):
         )
         if self._inp_node is None:
             raise ValueError("CollectiveOutputNode must have an input node")
-        self._collective_group_node: Optional[
-            CollectiveGroupNode
-        ] = other_args_to_resolve.get(COLLECTIVE_GROUP_NODE_KEY, None)
+        if self._parent_class_node is None:
+            self._parent_class_node = self._inp_node
+        self._collective_group_node: Optional[CollectiveGroupNode] = (
+            other_args_to_resolve.get(COLLECTIVE_GROUP_NODE_KEY, None)
+        )
         if self._collective_group_node is None:
             raise ValueError(
                 "CollectiveOutputNode must be associated with a CollectiveGroupNode"
@@ -191,6 +193,10 @@ class CollectiveOutputNode(DAGNode):
         return method_body
 
     def _get_actor_handle(self) -> Optional["ray.actor.ActorHandle"]:
-        if not isinstance(self._parent_class_node, ray.actor.ActorHandle):
+        if not isinstance(
+            self._parent_class_node, (ray.actor.ActorHandle, ClassMethodNode)
+        ):
             return None
-        return self._parent_class_node
+        if isinstance(self._parent_class_node, ray.actor.ActorHandle):
+            return self._parent_class_node
+        return self._parent_class_node._get_actor_handle()

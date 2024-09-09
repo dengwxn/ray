@@ -595,7 +595,7 @@ def test_torch_tensor_nccl_all_reduce(ray_start_regular):
     """
     Test basic all-reduce.
     """
-    USE_GPU = bool(os.environ.get("RAY_PYTEST_USE_GPU", 0))
+    # USE_GPU = bool(os.environ.get("RAY_PYTEST_USE_GPU", 0))
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
 

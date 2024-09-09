@@ -727,6 +727,7 @@ class CompiledDAG:
             InputNode,
             MultiOutputNode,
         )
+        from ray.dag.collective_node import CollectiveGroupNode, CollectiveOutputNode
 
         self.input_task_idx, self.output_task_idx = None, None
         self.actor_task_count.clear()
@@ -780,11 +781,14 @@ class CompiledDAG:
         # Also collect the set of tasks that produce torch.tensors.
         for task_idx, task in self.idx_to_task.items():
             dag_node = task.dag_node
+            if isinstance(dag_node, CollectiveGroupNode):
+                continue
             if not (
                 isinstance(dag_node, InputNode)
                 or isinstance(dag_node, InputAttributeNode)
                 or isinstance(dag_node, MultiOutputNode)
                 or isinstance(dag_node, ClassMethodNode)
+                or isinstance(dag_node, CollectiveOutputNode)
             ):
                 if isinstance(dag_node, FunctionNode):
                     # TODO(swang): Support non-actor tasks.
@@ -805,8 +809,6 @@ class CompiledDAG:
                 self.actor_task_count[actor_handle._actor_id] += 1
 
                 if dag_node.type_hint.requires_nccl():
-                    # [TODO] Add CollectiveNode and CollectiveOutputNode.
-
                     # Add all writers to the NCCL group.
                     nccl_actors.add(actor_handle)
             elif isinstance(dag_node, InputNode):
@@ -815,6 +817,19 @@ class CompiledDAG:
                         "DAG inputs cannot be transferred via NCCL because "
                         "the driver cannot participate in the NCCL group"
                     )
+            elif isinstance(dag_node, CollectiveOutputNode):
+                actor_handle = dag_node._get_actor_handle()
+                if actor_handle is None:
+                    raise ValueError(
+                        f"For node {dag_node}: "
+                        "Compiled DAGs can only bind NCCL collectives to an actor "
+                        "that is already created with Actor.remote()"
+                    )
+
+                self.actor_task_count[actor_handle._actor_id] += 1
+                # [TODO] For now, assume writers and readers of allreduce are
+                # the same group of actors.
+                nccl_actors.add(actor_handle)
 
             if type(dag_node.type_hint) == ChannelOutputType:
                 # No type hint specified by the user. Replace
@@ -972,6 +987,8 @@ class CompiledDAG:
             InputAttributeNode,
             MultiOutputNode,
             ClassMethodNode,
+            CollectiveGroupNode,
+            CollectiveOutputNode,
         )
 
         if self.input_task_idx is None:
@@ -1136,7 +1153,9 @@ class CompiledDAG:
                         task.output_channels.append(upstream_task.output_channels[i])
                         task.output_idxs.append(upstream_task.output_idxs[i])
                 assert len(task.output_channels) == 1
-            elif isinstance(task.dag_node, InputNode):
+            elif isinstance(task.dag_node, InputNode) or isinstance(
+                task.dag_node, CollectiveOutputNode
+            ):
                 reader_and_node_list: List[Tuple["ray.actor.ActorHandle", str]] = []
                 # TODO (kevin85421): Currently, the shared memory channel doesn't
                 # support multiple readers on the same actor. However, if the
@@ -1177,6 +1196,8 @@ class CompiledDAG:
                 node_idx == self.input_task_idx
                 or node_idx == self.output_task_idx
                 or isinstance(task.dag_node, InputAttributeNode)
+                or isinstance(task.dag_node, CollectiveGroupNode)
+                # or isinstance(task.dag_node, CollectiveOutputNode)
             ):
                 continue
             if node_idx not in visited:
@@ -1186,6 +1207,7 @@ class CompiledDAG:
                         has_at_least_one_channel_input = True
                 if not has_at_least_one_channel_input:
                     raise ValueError(
+                        f"for {task.dag_node}: "
                         "Compiled DAGs require each task to take a ray.dag.InputNode "
                         "or at least one other DAGNode as an input"
                     )
@@ -1333,7 +1355,9 @@ class CompiledDAG:
             assert isinstance(output, DAGNode)
             output_idx = self.dag_node_to_idx[output]
             task = self.idx_to_task[output_idx]
-            assert len(task.output_channels) == 1
+            assert (
+                len(task.output_channels) == 1
+            ), f"task {task}: {len(task.output_channels)} channels instead of 1"
             self.dag_output_channels.append(task.output_channels[0])
             # Register custom serializers for DAG outputs.
             output.type_hint.register_custom_serializer()
@@ -1407,6 +1431,9 @@ class CompiledDAG:
                 dag_node = self.idx_to_task[task_index].dag_node
                 actor_handle = dag_node._get_actor_handle()
                 requires_nccl = dag_node.type_hint.requires_nccl()
+
+                # [NOTE:andy] Using if-else for now.
+                # if isinstance(dag_node, CollectiveOutputNode)
 
                 read_node = _DAGOperationGraphNode(
                     _DAGNodeOperation(exec_task_idx, _DAGNodeOperationType.READ),
