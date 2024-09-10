@@ -27,6 +27,7 @@ from ray.experimental.channel import (
     AwaitableBackgroundReader,
     AwaitableBackgroundWriter,
 )
+from ray.experimental.channel.nccl_group import _NcclGroup
 from ray.util.annotations import DeveloperAPI
 
 from ray.experimental.channel.shared_memory_channel import (
@@ -353,6 +354,13 @@ class ExecutableTask:
         # and the result of a COMPUTE operation will be used by a WRITE operation.
         self._intermediate_buffer: Any = None
 
+        # If None, this task is not a nccl collective.
+        self._nccl_collective_op: Optional[str] = None
+        # _CollectiveGroup associated with this collective op.
+        self._nccl_collective_group = None
+        # _NcclGroup use to perform the collective op.
+        self._nccl_group = None
+
     def cancel(self):
         """
         Close all the input channels and the output channel. The exact behavior
@@ -428,6 +436,17 @@ class ExecutableTask:
             True if system error occurs and exit the loop; otherwise, False.
         """
         input_data = self.reset_intermediate_buffer()
+        if self._nccl_collective_op is not None:
+            self._set_nccl_group()
+            print(input_data)
+            try:
+                input_data = _process_return_vals(input_data, return_single_output=True)
+            except Exception as exc:
+                self.set_intermediate_buffer(exc)
+                return False
+            self._nccl_group.allreduce(input_data)
+            return False
+
         method = getattr(class_handle, self.method_name)
         try:
             _process_return_vals(input_data, return_single_output=False)
@@ -449,6 +468,18 @@ class ExecutableTask:
             output_val = _wrap_exception(exc)
         self.set_intermediate_buffer(output_val)
         return False
+
+    def _set_nccl_group(self) -> None:
+        if self._nccl_group is not None:
+            return
+
+        from ray.experimental.channel import ChannelContext
+
+        ctx = ChannelContext.get_current()
+        assert self._nccl_collective_group is not None, "No _CollectiveGroup specified"
+        nccl_group_id: str = self._nccl_collective_group._nccl_group_id
+        self._nccl_group: "_NcclGroup" = ctx.nccl_groups[nccl_group_id]
+        assert self._nccl_group is not None, f"No _NcclGroup with id {nccl_group_id}"
 
     def _write(self) -> bool:
         """
@@ -849,10 +880,14 @@ class CompiledDAG:
                 upstream_node_idx = self.dag_node_to_idx[arg]
                 upstream_task = self.idx_to_task[upstream_node_idx]
                 downstream_actor_handle = None
+                # [TODO:andy] Check if adding readers of CollectiveOutputNode to
+                # nccl_actors is necessary
                 if (
                     isinstance(dag_node, ClassMethodNode)
                     and dag_node.is_class_method_call
                 ):
+                    downstream_actor_handle = dag_node._get_actor_handle()
+                elif isinstance(dag_node, CollectiveOutputNode):
                     downstream_actor_handle = dag_node._get_actor_handle()
 
                 if isinstance(upstream_task.dag_node, InputAttributeNode):
@@ -920,7 +955,11 @@ class CompiledDAG:
                 upstream_task.downstream_task_idxs[task_idx] = downstream_actor_handle
                 task.arg_type_hints.append(upstream_task.dag_node.type_hint)
 
-                if upstream_task.dag_node.type_hint.requires_nccl():
+                # [TODO:andy] Check if it's necessary to add readers of
+                # CollectiveOuputNode to nccl_actors
+                if upstream_task.dag_node.type_hint.requires_nccl() or isinstance(
+                    upstream_task.dag_node, CollectiveOutputNode
+                ):
                     # Add all readers to the NCCL group.
                     nccl_actors.add(downstream_actor_handle)
 
@@ -1182,6 +1221,18 @@ class CompiledDAG:
                         typ=type_hint,
                     )
                 ]
+            elif isinstance(task.dag_node, CollectiveOutputNode):
+                # [TODO:andy] Allocate channels
+                # Using an empty list for reader_and_node_list
+                # b/c it's not used by collective channel.
+                task.output_channels = [do_allocate_channel(self, [], type_hint)]
+                task.output_idxs = [None]
+                # task.output_idxs = [task.dag_node._get_bind_index()]
+                # [TODO:andy] check
+                actor_handle = task.dag_node._get_actor_handle()
+                assert actor_handle is not None
+                self.actor_refs.add(actor_handle)
+                self.actor_to_tasks[actor_handle].append(task)
             else:
                 assert isinstance(task.dag_node, InputAttributeNode) or isinstance(
                     task.dag_node, MultiOutputNode
@@ -1432,7 +1483,11 @@ class CompiledDAG:
                 requires_nccl = dag_node.type_hint.requires_nccl()
 
                 # [NOTE:andy] Using if-else for now.
-                # if isinstance(dag_node, CollectiveOutputNode)
+                from ray.dag.collective_node import CollectiveOutputNode
+
+                if isinstance(dag_node, CollectiveOutputNode):
+                    exec_task._nccl_collective_op = "allreduce"
+                    exec_task._nccl_collective_group = dag_node._collective_group
 
                 read_node = _DAGOperationGraphNode(
                     _DAGNodeOperation(exec_task_idx, _DAGNodeOperationType.READ),

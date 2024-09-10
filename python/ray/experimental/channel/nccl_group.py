@@ -191,7 +191,7 @@ class _NcclGroup:
             self.nccl_util.get_tensor_ptr(buf),
             buf.numel(),
             self.nccl_util.get_nccl_tensor_dtype(buf),
-            types.ReduceOp.SUM,
+            types.ReduceOp.SUM.value,
             self._cuda_stream.ptr,
         )
 

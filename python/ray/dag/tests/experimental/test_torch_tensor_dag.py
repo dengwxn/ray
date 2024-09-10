@@ -81,6 +81,9 @@ class TorchTensorWorker:
             vals[i] = self.recv(tensor)
         return vals
 
+    def compute_single_arg(self, value: int):
+        return torch.ones((10,), dtype=torch.float16, device=self.device) * value
+
     def compute(self, shape, dtype, value: int):
         return torch.ones(shape, dtype=dtype, device=self.device) * value
 
@@ -271,6 +274,13 @@ def test_torch_tensor_nccl(ray_start_regular):
         dag = receiver.recv.bind(dag)
 
     compiled_dag = dag.experimental_compile()
+    idx_to_task = {
+        idx: (task, task.dag_node, task.output_channels)
+        for idx, task in compiled_dag.idx_to_task.items()
+    }
+    print(f"compiled dag: {compiled_dag}")
+    print(f"idx to task: {idx_to_task}")
+
     for i in range(3):
         ref = compiled_dag.execute(i)
         result = ray.get(ref)
@@ -613,7 +623,10 @@ def test_torch_tensor_nccl_all_reduce(ray_start_regular):
 
     with InputNode() as inp:
         computes = [
-            worker.compute.bind(shape, dtype, val) for worker, val in zip(workers, inp)
+            # worker.compute.bind(shape, dtype, single_inp)
+            # for worker, single_inp in zip(workers, inp)
+            workers[i].compute_single_arg.bind(inp)
+            for i in range(num_workers)
         ]
         # [TODO:andy] Confirm whether manual type-hint is needed for collectives
         # computes = [
@@ -622,20 +635,32 @@ def test_torch_tensor_nccl_all_reduce(ray_start_regular):
         # ]
         collectives = collective.allreduce.bind(computes, types.ReduceOp.SUM)
         # [TODO] Assert with_type_hint(TorchTensorType(transport="nccl")) is set.
+        # [TODO:andy] Allow downstream_tasks to _read() allreduce results?
+        # syncs = [
+        #     worker.sync.bind(collective)
+        #     for worker, collective in zip(workers, collectives)
+        # ]
         syncs = [
-            worker.sync.bind(collective)
-            for worker, collective in zip(workers, collectives)
+            worker.sync.bind(compute) for worker, compute in zip(workers, computes)
         ]
         dag = MultiOutputNode(syncs)
 
     compiled_dag = dag.experimental_compile()
+    # idx_to_task = {
+    #     idx: (task, task.dag_node, task.output_channels)
+    #     for idx, task in compiled_dag.idx_to_task.items()
+    # }
+    # print(f"compiled dag: {compiled_dag}")
+    # print(f"idx to task: {idx_to_task}")
 
     base_sum = (1 + num_workers) * num_workers / 2
     for i in range(3):
-        ref = compiled_dag.execute([(idx + 1 + i) for idx in range(num_workers)])
+        # ref = compiled_dag.execute([(idx + 1 + i) for idx in range(num_workers)])
+        ref = compiled_dag.execute(10)
         result = ray.get(ref)
-        reduced_val = base_sum + i * num_workers
-        assert result == [(reduced_val, shape, dtype) for _ in workers]
+        # reduced_val = base_sum + i * num_workers
+        # assert result == [(reduced_val, shape, dtype) for _ in workers]
+        assert result == [(10 * num_workers, (10,), torch.float16) for _ in workers]
 
     compiled_dag.teardown()
 

@@ -131,6 +131,9 @@ class CollectiveOutputNode(DAGNode):
                 "CollectiveOutputNode must be associated with a CollectiveGroupNode"
             )
 
+        # Cached actor handle.
+        self._actor_handle: Optional["ray.actor.ActorHandle"] = None
+
         # The actor creation task dependency is encoded as the first argument,
         # and the ordering dependency as the second, which ensures they are
         # executed prior to this node.
@@ -173,10 +176,14 @@ class CollectiveOutputNode(DAGNode):
         return method_body
 
     def _get_actor_handle(self) -> Optional["ray.actor.ActorHandle"]:
+        if self._actor_handle is not None:
+            return self._actor_handle
         if not isinstance(
             self._parent_class_node, (ray.actor.ActorHandle, ClassMethodNode)
         ):
             return None
         if isinstance(self._parent_class_node, ray.actor.ActorHandle):
-            return self._parent_class_node
-        return self._parent_class_node._get_actor_handle()
+            self._actor_handle = self._parent_class_node
+        else:  # ClassMethodNode
+            self._actor_handle = self._parent_class_node._get_actor_handle()
+        return self._actor_handle
