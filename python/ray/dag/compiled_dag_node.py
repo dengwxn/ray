@@ -727,13 +727,14 @@ class CompiledDAG:
             InputNode,
             MultiOutputNode,
         )
-        from ray.dag.collective_node import CollectiveOutputNode
+        from ray.dag.collective_node import _CollectiveGroup, CollectiveOutputNode
 
         self.input_task_idx, self.output_task_idx = None, None
         self.actor_task_count.clear()
         self._type_hints.clear()
 
         nccl_actors: Set["ray.actor.ActorHandle"] = set()
+        nccl_collective_groups: Set[_CollectiveGroup] = set()
 
         # Find the input node to the DAG.
         for idx, task in self.idx_to_task.items():
@@ -825,9 +826,9 @@ class CompiledDAG:
                     )
 
                 self.actor_task_count[actor_handle._actor_id] += 1
-                # [TODO] For now, assume writers and readers of allreduce are
-                # the same group of actors.
+                # [TODO] Check if it's necessary to add to nccl_actors.
                 nccl_actors.add(actor_handle)
+                nccl_collective_groups.add(dag_node._collective_group)
 
             if type(dag_node.type_hint) == ChannelOutputType:
                 # No type hint specified by the user. Replace
@@ -933,6 +934,10 @@ class CompiledDAG:
             raise ValueError("Driver cannot participate in the NCCL group.")
         if nccl_actors and self._nccl_group_id is None:
             self._nccl_group_id = _init_nccl_group(nccl_actors)
+
+        # Initialize all nccl collective groups.
+        for collective_group in nccl_collective_groups:
+            collective_group._init_nccl_collective_group()
 
         if direct_input:
             self._input_num_positional_args = 1
@@ -1150,9 +1155,7 @@ class CompiledDAG:
                         task.output_channels.append(upstream_task.output_channels[i])
                         task.output_idxs.append(upstream_task.output_idxs[i])
                 assert len(task.output_channels) == 1
-            elif isinstance(task.dag_node, InputNode) or isinstance(
-                task.dag_node, CollectiveOutputNode
-            ):
+            elif isinstance(task.dag_node, InputNode):
                 reader_and_node_list: List[Tuple["ray.actor.ActorHandle", str]] = []
                 # TODO (kevin85421): Currently, the shared memory channel doesn't
                 # support multiple readers on the same actor. However, if the
@@ -1820,9 +1823,9 @@ class CompiledDAG:
                 )
             self._max_execution_index += 1
             start_time = time.monotonic()
-            self._result_buffer[self._max_execution_index] = (
-                self._dag_output_fetcher.read(timeout)
-            )
+            self._result_buffer[
+                self._max_execution_index
+            ] = self._dag_output_fetcher.read(timeout)
             if timeout != -1:
                 timeout -= time.monotonic() - start_time
                 timeout = max(timeout, 0)

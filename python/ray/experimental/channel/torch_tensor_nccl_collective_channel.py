@@ -38,7 +38,7 @@ class TorchTensorNcclCollectiveChannel(ChannelInterface):
         typ: "TorchTensorType",
     ):
         """
-        Create a channel for torch.Tensors transferred via NCCL.
+        Create a channel for torch.Tensors transferred via NCCL collectives.
 
         Args:
             typ: Type information about the values passed through the channel.
@@ -94,7 +94,12 @@ class TorchTensorNcclCollectiveChannel(ChannelInterface):
                 (immediate success or timeout without blocking), -1 means
                 infinite timeout (block indefinitely).
         """
-        pass
+        import ray
+
+        if isinstance(value, ray.exceptions.RayTaskError):
+            raise value
+
+        # [TODO] Nothing to write if allreduce is performed in place.
 
     """[TODO] Simplify.
     def _read_single_tensor(self, typ: "TorchTensorType") -> "torch.Tensor":
@@ -106,7 +111,7 @@ class TorchTensorNcclCollectiveChannel(ChannelInterface):
     def read(
         self, timeout: Optional[float] = None
     ) -> Union["torch.Tensor", List["torch.Tensor"]]:
-        # [TODO] sync before read
+        # [TODO] sync before read?
         """[TODO] Simplify.
         if self._meta_channel is not None:
             meta = self._meta_channel.read()
@@ -117,14 +122,15 @@ class TorchTensorNcclCollectiveChannel(ChannelInterface):
             return self._read_single_tensor(meta)
         """
 
-        bufs: List["torch.Tensor"] = []
+        # bufs: List["torch.Tensor"] = []
         """[TODO] Simplify.
         for typ in meta:
             bufs.append(self._read_single_tensor(typ))
         """
         # TODO: Sync CUDA stream after receiving all tensors, instead of after
         # each tensor.
-        return bufs
+        # return bufs
+        pass
 
     def close(self) -> None:
         self._nccl_group.destroy()

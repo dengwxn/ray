@@ -132,6 +132,12 @@ class TorchTensorType(ChannelOutputType):
                 self,
                 _torch_tensor_allocator=_torch_tensor_allocator,
             )
+        elif self.requires_nccl_collective():
+            from ray.experimental.channel.torch_tensor_nccl_collective_channel import (
+                TorchTensorNcclCollectiveChannel,
+            )
+
+            return TorchTensorNcclCollectiveChannel(self)
 
         # Transfer via host memory using a shared-memory channel.
         import torch
@@ -171,6 +177,10 @@ class TorchTensorType(ChannelOutputType):
 
     def requires_nccl(self) -> bool:
         return self.transport == self.NCCL
+
+    # [TODO:andy] only supports allreduce for now
+    def requires_nccl_collective(self) -> bool:
+        return self.transport == self.NCCL_ALLREDUCE
 
     def set_nccl_group_id(self, group_id: str) -> None:
         self._nccl_group_id = group_id

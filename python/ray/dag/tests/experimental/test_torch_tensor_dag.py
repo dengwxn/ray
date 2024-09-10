@@ -616,10 +616,10 @@ def test_torch_tensor_nccl_all_reduce(ray_start_regular):
             worker.compute.bind(shape, dtype, val) for worker, val in zip(workers, inp)
         ]
         # [TODO:andy] Confirm whether manual type-hint is needed for collectives
-        computes = [
-            compute.with_type_hint(TorchTensorType(shape, dtype, transport="nccl"))
-            for compute in computes
-        ]
+        # computes = [
+        #     compute.with_type_hint(TorchTensorType(shape, dtype, transport="nccl"))
+        #     for compute in computes
+        # ]
         collectives = collective.allreduce.bind(computes, types.ReduceOp.SUM)
         # [TODO] Assert with_type_hint(TorchTensorType(transport="nccl")) is set.
         syncs = [

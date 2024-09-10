@@ -15,6 +15,8 @@ from ray.dag.format_utils import get_dag_node_str
 from ray.util.annotations import DeveloperAPI
 from ray.util.collective import types
 from ray.experimental.channel.torch_tensor_type import TorchTensorType
+from ray.experimental.channel.nccl_group import _NcclGroup
+from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
 
 from typing import Any, Dict, List, Union, Tuple, Optional
 
@@ -25,15 +27,33 @@ class _CollectiveGroup:
     # [TODO] Pass collective function as a parameter: allreduce, allgather, etc.
     # For now, implement allreduce first.
 
-    def __init__(self, input_nodes: List[DAGNode], reduce_op: types.ReduceOp):
-        # Get the input nodes for this collective operation and the reduce op.
+    def __init__(
+        self,
+        input_nodes: List[DAGNode],
+        reduce_op: types.ReduceOp,
+        count: Optional[int] = None,
+    ):
+        # Get the nodes for this collective operation and the reduce op.
         # [TODO] Only allreduce is implemented for now.
         # Enable other collective operations in the future.
-        self._inp_nodes = input_nodes
-        if len(self._inp_nodes) == 0:
+        self._nodes: List[Tuple[DAGNode, Optional[CollectiveOutputNode]]] = [
+            (input_node, None) for input_node in input_nodes
+        ]
+        if len(self._nodes) == 0:
             raise ValueError("CollectiveGroup needs at least 1 input node")
         self._reduce_op = reduce_op
-        self._type = TorchTensorType(transport=TorchTensorType.NCCL_ALLREDUCE)
+        if count is not None:
+            self._type = TorchTensorType(
+                _shape=count,
+                transport=TorchTensorType.NCCL_ALLREDUCE,
+                _direct_return=True,
+            )
+        else:
+            self._type = TorchTensorType(
+                transport=TorchTensorType.NCCL_ALLREDUCE,
+                _direct_return=True,
+            )
+        self._nccl_group_id: Optional["_NcclGroup"] = None
 
     def _copy_impl(
         self,
@@ -46,7 +66,28 @@ class _CollectiveGroup:
         raise NotImplementedError("CollectiveNode is only supported for aDAG")
 
     def __str__(self) -> str:
-        return f"CollectiveGroup(inputs={self._inp_nodes}, op={self._reduce_op}"
+        return f"CollectiveGroup(inputs={self._nodes}, op={self._reduce_op}"
+
+    def _set_output_node(self, idx: int, output_node: "CollectiveOutputNode") -> None:
+        input_node, prev_output = self._nodes[idx]
+        if prev_output is not None:
+            raise ValueError(
+                f"CollectiveOutputNode at index {idx} is already set for this group."
+            )
+        self._nodes[idx] = (input_node, output_node)
+
+    def _init_nccl_collective_group(self) -> None:
+        if self._nccl_group_id is not None:
+            return
+
+        actor_handles: List[Optional["ray.actor.ActorHandle"]] = [
+            output._get_actor_handle() for (_, output) in self._nodes
+        ]
+        if None in actor_handles:
+            raise ValueError("Each AllReduce participant needs an actor handle.")
+
+        self._nccl_group_id = _init_nccl_group(actor_handles)
+        self._type.set_nccl_group_id(self._nccl_group_id)
 
 
 @DeveloperAPI
@@ -82,10 +123,10 @@ class CollectiveOutputNode(DAGNode):
             raise ValueError("CollectiveOutputNode must have an input node")
         if self._parent_class_node is None:
             self._parent_class_node = self._inp_node
-        self._collective_group_node: Optional[_CollectiveGroup] = (
-            other_args_to_resolve.get(COLLECTIVE_GROUP_KEY, None)
+        self._collective_group: Optional[_CollectiveGroup] = other_args_to_resolve.get(
+            COLLECTIVE_GROUP_KEY, None
         )
-        if self._collective_group_node is None:
+        if self._collective_group is None:
             raise ValueError(
                 "CollectiveOutputNode must be associated with a CollectiveGroupNode"
             )
