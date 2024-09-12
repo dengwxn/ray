@@ -809,7 +809,9 @@ class CompiledDAG:
                 else:
                     raise ValueError(f"Found unsupported node of type {type(dag_node)}")
 
-            if isinstance(dag_node, ClassMethodNode) and dag_node.is_class_method_call:
+            if (
+                isinstance(dag_node, ClassMethodNode) and dag_node.is_class_method_call
+            ) or isinstance(dag_node, CollectiveOutputNode):
                 actor_handle = dag_node._get_actor_handle()
                 if actor_handle is None:
                     raise ValueError(
@@ -819,22 +821,14 @@ class CompiledDAG:
 
                 self.actor_task_count[actor_handle._actor_id] += 1
 
-                if dag_node.type_hint.requires_nccl():
+                if not isinstance(dag_node, CollectiveOutputNode):
                     # Add all writers to the NCCL group.
-                    nccl_actors.add(actor_handle)
-            elif isinstance(dag_node, CollectiveOutputNode):
-                actor_handle = dag_node._get_actor_handle()
-                if actor_handle is None:
-                    raise ValueError(
-                        "Compiled DAGs can only bind NCCL collectives to an actor "
-                        "that is already created with Actor.remote()"
-                    )
-
-                self.actor_task_count[actor_handle._actor_id] += 1
-
-                # Initialize the NCCL group on the participating actors
-                # for collective methods.
-                dag_node._init_nccl_group()
+                    if dag_node.type_hint.requires_nccl():
+                        nccl_actors.add(actor_handle)
+                elif isinstance(dag_node, CollectiveOutputNode):
+                    # Initialize the NCCL group on the participating actors
+                    # for collective methods.
+                    dag_node._init_nccl_group()
             elif isinstance(dag_node, InputNode):
                 if dag_node.type_hint.requires_nccl():
                     raise ValueError(
