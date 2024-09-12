@@ -23,7 +23,9 @@ TENSOR_METADATA_SIZE_BYTES = 100_000
 class TorchTensorType(ChannelOutputType):
     AUTO = "auto"
     NCCL = "nccl"
+    """[DEPRECATED]
     NCCL_ALLREDUCE = "nccl_allreduce"
+    """
 
     def __init__(
         self,
@@ -74,10 +76,9 @@ class TorchTensorType(ChannelOutputType):
         self._dtype = _dtype
         self._direct_return = _direct_return
 
-        if transport not in [self.AUTO, self.NCCL, self.NCCL_ALLREDUCE]:
+        if transport not in [self.AUTO, self.NCCL]:
             raise ValueError(
-                "`transport` must be TorchTensorType.AUTO or TorchTensorType.NCCL "
-                "or TorchTensorType.NCCL_ALLREDUCE"
+                "`transport` must be TorchTensorType.AUTO or TorchTensorType.NCCL"
             )
         self.transport = transport
 
@@ -178,13 +179,14 @@ class TorchTensorType(ChannelOutputType):
     def requires_nccl(self) -> bool:
         return self.transport == self.NCCL
 
-    # [TODO:andy] only supports allreduce for now
+    """[DEPRECATED]
     def requires_nccl_collective(self) -> bool:
         return self.transport == self.NCCL_ALLREDUCE
+    """
 
     def set_nccl_group_id(self, group_id: str) -> None:
         self._nccl_group_id = group_id
 
     @property
-    def nccl_group_id(self) -> str:
+    def nccl_group_id(self) -> Optional[str]:
         return self._nccl_group_id

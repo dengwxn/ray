@@ -37,6 +37,7 @@ class TorchTensorNcclCollectiveChannel(ChannelInterface):
         self,
         typ: "TorchTensorType",
     ):
+        raise ValueError("TorchTensorNcclCollectiveChannel is deprecated")
         """
         Create a channel for torch.Tensors transferred via NCCL collectives.
 

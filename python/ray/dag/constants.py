@@ -7,7 +7,7 @@ BIND_INDEX_KEY = "bind_index"
 IS_CLASS_METHOD_OUTPUT_KEY = "is_class_method_output"
 
 # Reserved keys used to handle CollectiveOutputNode in Ray DAG building.
-COLLECTIVE_OUTPUT_INPUT_NODE_KEY = "collective_output_input_node"
+COLLECTIVE_INPUT_NODE_KEY = "collective_input_node"
 COLLECTIVE_GROUP_KEY = "collective_group"
 
 # Reserved key to distinguish DAGNode type and avoid collision with user dict.
