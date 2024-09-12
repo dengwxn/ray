@@ -24,8 +24,6 @@ from ray.util.collective.collective import (
     recv_multigpu,
 )
 
-# from ray.util.collective.allreduce import allreduce
-
 __all__ = [
     "nccl_available",
     "gloo_available",
