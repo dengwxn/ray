@@ -832,7 +832,6 @@ class CompiledDAG:
                 actor_handle = dag_node._get_actor_handle()
                 if actor_handle is None:
                     raise ValueError(
-                        f"For node {dag_node}: "
                         "Compiled DAGs can only bind NCCL collectives to an actor "
                         "that is already created with Actor.remote()"
                     )
