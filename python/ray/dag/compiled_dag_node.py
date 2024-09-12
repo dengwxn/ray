@@ -936,6 +936,10 @@ class CompiledDAG:
                 upstream_task.downstream_task_idxs[task_idx] = downstream_actor_handle
                 task.arg_type_hints.append(upstream_task.dag_node.type_hint)
 
+                if upstream_task.dag_node.type_hint.requires_nccl():
+                    # Add all readers to the NCCL group.
+                    nccl_actors.add(downstream_actor_handle)
+
             if dag_node.type_hint is not None:
                 self._type_hints.append(dag_node.type_hint)
 
@@ -1215,7 +1219,6 @@ class CompiledDAG:
                         has_at_least_one_channel_input = True
                 if not has_at_least_one_channel_input:
                     raise ValueError(
-                        f"for {task.dag_node}: "
                         "Compiled DAGs require each task to take a ray.dag.InputNode "
                         "or at least one other DAGNode as an input"
                     )
@@ -1363,9 +1366,7 @@ class CompiledDAG:
             assert isinstance(output, DAGNode)
             output_idx = self.dag_node_to_idx[output]
             task = self.idx_to_task[output_idx]
-            assert (
-                len(task.output_channels) == 1
-            ), f"task {task}: {len(task.output_channels)} channels instead of 1"
+            assert len(task.output_channels) == 1
             self.dag_output_channels.append(task.output_channels[0])
             # Register custom serializers for DAG outputs.
             output.type_hint.register_custom_serializer()
