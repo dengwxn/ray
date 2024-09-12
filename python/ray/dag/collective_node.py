@@ -55,8 +55,13 @@ class _CollectiveGroup:
         raise NotImplementedError("CollectiveNode is only supported for aDAG")
 
     def __str__(self) -> str:
-        # [TODO] String representation.
-        return f"CollectiveGroup(input_nodes={self._input_nodes}, op={self._op}, type={self._type}, nccl_group_id={self._nccl_group_id})"
+        return (
+            f"_CollectiveGroup("
+            f"_input_nodes={self._input_nodes}, "
+            f"_op={self._op}, "
+            f"_type={self._type}, "
+            f"_nccl_group_id={self._nccl_group_id})"
+        )
 
     def _init_nccl_group(self) -> None:
         if self._nccl_group_id is not None:
