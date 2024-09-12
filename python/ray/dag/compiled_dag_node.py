@@ -837,7 +837,10 @@ class CompiledDAG:
                     )
 
                 self.actor_task_count[actor_handle._actor_id] += 1
-                dag_node.collective_group._init_nccl_group()
+
+                # Initialize the NCCL group on the participating actors
+                # for collectives.
+                dag_node._init_nccl_group()
             elif isinstance(dag_node, InputNode):
                 if dag_node.type_hint.requires_nccl():
                     raise ValueError(
@@ -1022,10 +1025,10 @@ class CompiledDAG:
             visited.add(cur_idx)
 
             task = self.idx_to_task[cur_idx]
-            type_hint = task.dag_node.type_hint
-            if type_hint.requires_nccl():
-                if type_hint.nccl_group_id is None:
-                    # Set the NCCL group ID for P2P communication.
+            if not isinstance(task.dag_node, CollectiveOutputNode):
+                # The NCCL group is already initialized for CollectiveOutputNode.
+                type_hint = task.dag_node.type_hint
+                if type_hint.requires_nccl():
                     type_hint.set_nccl_group_id(self._nccl_group_id)
 
             if (

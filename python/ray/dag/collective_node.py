@@ -30,52 +30,30 @@ class _CollectiveGroup:
         self._input_nodes: List[DAGNode] = input_nodes
         if len(self._input_nodes) == 0:
             raise ValueError("CollectiveGroup needs at least 1 input node")
+        self._actor_handles: List["ray.actor.ActorHandle"] = []
+        for input_node in self._input_nodes:
+            actor_handle = input_node._get_actor_handle()
+            assert actor_handle is not None, "Got an invalid actor handle"
+            self._actor_handles.append(actor_handle)
         self._op = op
-        if count is not None:
-            self._type = TorchTensorType(
-                _shape=count,
-                transport="nccl",
-                _direct_return=True,
-            )
-        else:
-            self._type = TorchTensorType(
-                transport="nccl",
-                _direct_return=True,
-            )
+        self._count = count
         self._nccl_group_id: Optional[str] = None
-
-    def _copy_impl(
-        self,
-        input_nodes: List[DAGNode],
-        reduce_op: types.ReduceOp,
-    ):
-        return _CollectiveGroup(input_nodes, reduce_op)
-
-    def _execute_impl(self, *args, **kwargs):
-        raise NotImplementedError("CollectiveNode is only supported for aDAG")
 
     def __str__(self) -> str:
         return (
             f"_CollectiveGroup("
             f"_input_nodes={self._input_nodes}, "
+            f"_actor_handles={self._actor_handles}, "
             f"_op={self._op}, "
-            f"_type={self._type}, "
+            f"_count={self._count}, "
             f"_nccl_group_id={self._nccl_group_id})"
         )
 
     def _init_nccl_group(self) -> None:
         if self._nccl_group_id is not None:
-            # If the NCCL group ID is already set, no need to reinitialize.
+            # The NCCL group has already been initialized.
             return
-
-        actor_handles: List[Optional["ray.actor.ActorHandle"]] = [
-            input_node._get_actor_handle() for input_node in self._input_nodes
-        ]
-        if None in actor_handles:
-            raise ValueError("Got an invalid actor handle from input nodes")
-
-        self._nccl_group_id = _init_nccl_group(actor_handles)
-        self._type.set_nccl_group_id(self._nccl_group_id)
+        self._nccl_group_id = _init_nccl_group(self._actor_handles)
 
 
 @DeveloperAPI
@@ -105,16 +83,18 @@ class CollectiveOutputNode(DAGNode):
             BIND_INDEX_KEY, None
         )
 
-        # Get the input node and the collective group node.
-        assert isinstance(method_args, tuple) and isinstance(
-            method_args[0], DAGNode
+        # Parse the input node.
+        assert (
+            isinstance(method_args, tuple)
+            and len(tuple) == 1
+            and isinstance(method_args[0], DAGNode)
         ), "Expected a single input node"
         self._input_node = method_args[0]
+        # Parse the collective group.
         self._collective_group: _CollectiveGroup = other_args_to_resolve.get(
             COLLECTIVE_GROUP_KEY, None
         )
-        if self._collective_group is None:
-            raise ValueError("Expected a collective group")
+        assert self._collective_group is not None, "Expected a collective group"
 
         # The actor creation task dependency is encoded as the first argument,
         # and the ordering dependency as the second, which ensures they are
@@ -162,6 +142,5 @@ class CollectiveOutputNode(DAGNode):
             return None
         return self._parent_class_node
 
-    @property
-    def collective_group(self) -> _CollectiveGroup:
-        return self._collective_group
+    def _init_nccl_group(self) -> None:
+        self._collective_group._init_nccl_group()

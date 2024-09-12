@@ -269,6 +269,7 @@ def test_torch_tensor_nccl(ray_start_regular):
         dag = dag.with_type_hint(TorchTensorType(shape, dtype, transport="nccl"))
         dag = receiver.recv.bind(dag)
 
+    compiled_dag = dag.experimental_compile()
     for i in range(3):
         ref = compiled_dag.execute(i)
         result = ray.get(ref)
