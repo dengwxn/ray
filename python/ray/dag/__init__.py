@@ -16,8 +16,8 @@ from ray.dag.constants import (
     PREV_CLASS_METHOD_CALL_KEY,
     BIND_INDEX_KEY,
     IS_CLASS_METHOD_OUTPUT_KEY,
-    DAGNODE_TYPE_KEY,
     COLLECTIVE_GROUP_KEY,
+    DAGNODE_TYPE_KEY,
 )
 from ray.dag.vis_utils import plot
 from ray.dag.context import DAGContext

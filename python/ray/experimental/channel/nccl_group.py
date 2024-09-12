@@ -199,7 +199,7 @@ class _NcclGroup:
         # need to synchronize here and check that the channel is still open to
         # ensure that the receive buffer is valid.
         # TODO(swang): Avoid CUDA synchronization.
-        # TODO(wxdeng): Maybe use check_async_error.
+        # TODO(wxdeng): Use check_async_error.
         self._cuda_stream.synchronize()
         if self._closed:
             raise RayChannelError("NCCL group has been destroyed.")

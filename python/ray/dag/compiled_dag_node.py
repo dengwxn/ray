@@ -838,7 +838,7 @@ class CompiledDAG:
                 self.actor_task_count[actor_handle._actor_id] += 1
 
                 # Initialize the NCCL group on the participating actors
-                # for collectives.
+                # for collective methods.
                 dag_node._init_nccl_group()
             elif isinstance(dag_node, InputNode):
                 if dag_node.type_hint.requires_nccl():
