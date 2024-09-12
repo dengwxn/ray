@@ -2,13 +2,11 @@ from weakref import ReferenceType
 import ray
 from ray.dag import (
     DAGNode,
-    ClassMethodNode,
     ClassNode,
 )
 from ray.dag.constants import (
     PARENT_CLASS_NODE_KEY,
     BIND_INDEX_KEY,
-    COLLECTIVE_INPUT_NODE_KEY,
     COLLECTIVE_GROUP_KEY,
 )
 from ray.dag.format_utils import get_dag_node_str
@@ -22,27 +20,17 @@ from typing import Any, Dict, List, Union, Tuple, Optional
 
 class _CollectiveGroup:
     # [TODO] Comment.
-    # [TODO] Pass collective function as a parameter: allreduce, allgather, etc.
-    # For now, implement allreduce first.
 
     def __init__(
         self,
         input_nodes: List[DAGNode],
-        reduce_op: types.ReduceOp,
+        op: types.ReduceOp,  # [TODO] General collective ops.
         count: Optional[int] = None,
     ):
-        # Get the nodes for this collective operation and the reduce op.
-        # [TODO] Only allreduce is implemented for now.
-        # Enable other collective operations in the future.
-        """[DEPRECATED]
-        self._nodes: List[Tuple[DAGNode, Optional[CollectiveOutputNode]]] = [
-            (input_node, None) for input_node in input_nodes
-        ]
-        """
         self._input_nodes: List[DAGNode] = input_nodes
         if len(self._input_nodes) == 0:
             raise ValueError("CollectiveGroup needs at least 1 input node")
-        self._reduce_op = reduce_op
+        self._op = op
         if count is not None:
             self._type = TorchTensorType(
                 _shape=count,
@@ -68,17 +56,7 @@ class _CollectiveGroup:
 
     def __str__(self) -> str:
         # [TODO] String representation.
-        return f"CollectiveGroup(input_nodes={self._input_nodes}, reduce_op={self._reduce_op}, type={self._type}, nccl_group_id={self._nccl_group_id})"
-
-    """[DEPRECATED]
-    def _set_output_node(self, idx: int, output_node: "CollectiveOutputNode") -> None:
-        input_node, prev_output = self._input_nodes[idx]
-        if prev_output is not None:
-            raise ValueError(
-                f"CollectiveOutputNode at index {idx} is already set for this group."
-            )
-        self._input_nodes[idx] = (input_node, output_node)
-    """
+        return f"CollectiveGroup(input_nodes={self._input_nodes}, op={self._op}, type={self._type}, nccl_group_id={self._nccl_group_id})"
 
     def _init_nccl_group(self) -> None:
         if self._nccl_group_id is not None:

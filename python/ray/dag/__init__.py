@@ -17,7 +17,6 @@ from ray.dag.constants import (
     BIND_INDEX_KEY,
     IS_CLASS_METHOD_OUTPUT_KEY,
     DAGNODE_TYPE_KEY,
-    COLLECTIVE_INPUT_NODE_KEY,
     COLLECTIVE_GROUP_KEY,
 )
 from ray.dag.vis_utils import plot
@@ -40,6 +39,5 @@ __all__ = [
     "plot",
     "MultiOutputNode",
     "DAGContext",
-    "COLLECTIVE_INPUT_NODE_KEY",
     "COLLECTIVE_GROUP_KEY",
 ]

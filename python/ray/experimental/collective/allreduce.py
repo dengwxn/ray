@@ -39,7 +39,6 @@ class AllReduceWrapper:
                 other_args_to_resolve={
                     PARENT_CLASS_NODE_KEY: actor_handle,
                     BIND_INDEX_KEY: actor_handle._ray_dag_bind_index,
-                    # COLLECTIVE_INPUT_NODE_KEY: input_node, # [TODO]
                     COLLECTIVE_GROUP_KEY: collective_group,
                 },
             )
