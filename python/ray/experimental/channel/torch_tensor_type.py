@@ -130,12 +130,6 @@ class TorchTensorType(ChannelOutputType):
                 self,
                 _torch_tensor_allocator=_torch_tensor_allocator,
             )
-        elif self.requires_nccl_collective():
-            from ray.experimental.channel.torch_tensor_nccl_collective_channel import (
-                TorchTensorNcclCollectiveChannel,
-            )
-
-            return TorchTensorNcclCollectiveChannel(self)
 
         # Transfer via host memory using a shared-memory channel.
         import torch
