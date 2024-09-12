@@ -152,15 +152,8 @@ class CompiledTask:
             idx: A unique index into the original DAG.
             dag_node: The original DAG node created by the user.
         """
-        from ray.dag import CollectiveOutputNode
-
         self.idx = idx
         self.dag_node = dag_node
-
-        # The collective group that runs a NCCL collective method.
-        self.collective_group: Optional["ray.dag.CollectiveGroup"] = None
-        if isinstance(dag_node, CollectiveOutputNode):
-            self.collective_group = dag_node.collective_group
 
         # Dict from task index to actor handle for immediate downstream tasks.
         self.downstream_task_idxs: Dict[int, "ray.actor.ActorHandle"] = {}
@@ -305,6 +298,8 @@ class ExecutableTask:
                 do not support binding kwargs to other DAG nodes, so the values
                 of the dictionary cannot be Channels.
         """
+        from ray.dag import CollectiveOutputNode
+
         self.method_name = task.dag_node.get_method_name()
         self.bind_index = task.dag_node._get_bind_index()
         self.output_channels = task.output_channels
@@ -313,9 +308,9 @@ class ExecutableTask:
         self.output_type_hint: ChannelOutputType = task.dag_node.type_hint
 
         # The collective group that runs a NCCL collective method.
-        self.collective_group: Optional[
-            "ray.dag.CollectiveGroup"
-        ] = task.collective_group
+        self.collective_group: Optional["ray.dag.CollectiveGroup"] = None
+        if isinstance(task.dag_node, CollectiveOutputNode):
+            self.collective_group = task.dag_node.collective_group
 
         self.input_channels: List[ChannelInterface] = []
         self.task_inputs: List[_ExecutableTaskInput] = []
