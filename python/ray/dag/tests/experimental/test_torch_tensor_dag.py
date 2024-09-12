@@ -17,14 +17,6 @@ from ray.experimental.channel.torch_tensor_type import TorchTensorType
 from ray.tests.conftest import *  # noqa
 from ray.util.collective import types
 
-"""
-[WATERFRONT]
-- Try to write tests for the all-reduce in this file.
-  + Use the APIs from pseusocode.
-  + Should raise a ValueError if there is a wrong shape.
-  + Should not hang when only one output is used.
-"""
-
 logger = logging.getLogger(__name__)
 
 if sys.platform != "linux" and sys.platform != "darwin":
@@ -71,11 +63,11 @@ class TorchTensorWorker:
             vals[i] = self.recv(tensor)
         return vals
 
-    def compute_single_arg(self, value: int):
-        return torch.ones((10,), dtype=torch.float16, device=self.device) * value
-
     def compute(self, shape, dtype, values, i: int):
         return torch.ones(shape, dtype=dtype, device=self.device) * values[i]
+
+    def compute_single_arg(self, value: int):
+        return torch.ones((10,), dtype=torch.float16, device=self.device) * value
 
     def compute_with_tuple_args(self, args, i: int):
         shape, dtype, value = args[i]
