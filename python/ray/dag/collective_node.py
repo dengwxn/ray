@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     import torch
 
 
-class _CollectiveGroup:
+class CollectiveGroup:
     # [TODO] Comment.
 
     def __init__(
@@ -45,7 +45,7 @@ class _CollectiveGroup:
 
     def __str__(self) -> str:
         return (
-            f"_CollectiveGroup("
+            f"CollectiveGroup("
             f"_input_nodes={self._input_nodes}, "
             f"_actor_handles={self._actor_handles}, "
             f"_op={self._op}, "
@@ -102,7 +102,7 @@ class CollectiveOutputNode(DAGNode):
         ), "Expected a single input node"
         self._input_node = method_args[0]
         # Parse the collective group.
-        self._collective_group: _CollectiveGroup = other_args_to_resolve.get(
+        self._collective_group: CollectiveGroup = other_args_to_resolve.get(
             COLLECTIVE_GROUP_KEY, None
         )
         assert self._collective_group is not None, "Expected a collective group"
@@ -124,7 +124,7 @@ class CollectiveOutputNode(DAGNode):
         new_options: Dict[str, Any],
         new_other_args_to_resolve: Dict[str, Any],
     ):
-        return _CollectiveGroup(
+        return CollectiveGroup(
             self._method_name,
             new_args,
             new_kwargs,
@@ -152,6 +152,10 @@ class CollectiveOutputNode(DAGNode):
         if not isinstance(self._parent_class_node, ray.actor.ActorHandle):
             return None
         return self._parent_class_node
+
+    @property
+    def collective_group(self) -> CollectiveGroup:
+        return self._collective_group
 
     def _init_nccl_group(self) -> None:
         self._collective_group.init_nccl_group()

@@ -152,13 +152,19 @@ class CompiledTask:
             idx: A unique index into the original DAG.
             dag_node: The original DAG node created by the user.
         """
+        from ray.dag import CollectiveOutputNode
+
         self.idx = idx
         self.dag_node = dag_node
-        # [TODO] Dag node should know doing allreduce.
-        # Relevant to polish ExecutableTask._nccl_collective_output_node.
+
+        # The collective group that runs a NCCL collective method.
+        self.collective_group: Optional["ray.dag.CollectiveGroup"] = None
+        if isinstance(dag_node, CollectiveOutputNode):
+            self.collective_group = dag_node.collective_group
 
         # Dict from task index to actor handle for immediate downstream tasks.
         self.downstream_task_idxs: Dict[int, "ray.actor.ActorHandle"] = {}
+
         # Multiple return values are written to separate `output_channels`.
         # `output_idxs` represents the tuple index of the output value for
         # multiple returns in a tuple. If an output index is None, it means
@@ -167,6 +173,7 @@ class CompiledTask:
         # to extract the value to be written to the output channel.
         self.output_channels: List[ChannelInterface] = []
         self.output_idxs: List[Optional[int]] = []
+
         self.arg_type_hints: List["ChannelOutputType"] = []
 
     @property
@@ -305,6 +312,11 @@ class ExecutableTask:
         self.input_type_hints: List[ChannelOutputType] = task.arg_type_hints
         self.output_type_hint: ChannelOutputType = task.dag_node.type_hint
 
+        # The collective group that runs a NCCL collective method.
+        self.collective_group: Optional[
+            "ray.dag.CollectiveGroup"
+        ] = task.collective_group
+
         self.input_channels: List[ChannelInterface] = []
         self.task_inputs: List[_ExecutableTaskInput] = []
         self.resolved_kwargs: Dict[str, Any] = resolved_kwargs
@@ -353,9 +365,6 @@ class ExecutableTask:
         # The result of a READ operation will be used by a COMPUTE operation,
         # and the result of a COMPUTE operation will be used by a WRITE operation.
         self._intermediate_buffer: Any = None
-
-        # [TODO] Polish.
-        self._collective_group: Optional["ray.dag._CollectiveGroup"] = None
 
     def cancel(self):
         """
@@ -446,9 +455,9 @@ class ExecutableTask:
         for task_input in self.task_inputs:
             resolved_inputs.append(task_input.resolve(input_data))
 
-        if self._collective_group is not None:
+        if self.collective_group is not None:
             # Run a NCCL collective method.
-            method = self._collective_group.method
+            method = self.collective_group.method
         else:
             # Run an actor method.
             method = getattr(class_handle, self.method_name)
@@ -1430,13 +1439,6 @@ class CompiledDAG:
                 dag_node = self.idx_to_task[task_index].dag_node
                 actor_handle = dag_node._get_actor_handle()
                 requires_nccl = dag_node.type_hint.requires_nccl()
-
-                # [TODO] Polish.
-                from ray.dag.collective_node import CollectiveOutputNode
-
-                if isinstance(dag_node, CollectiveOutputNode):
-                    # [TODO] Polish.
-                    exec_task._collective_group = dag_node._collective_group
 
                 read_node = _DAGOperationGraphNode(
                     _DAGNodeOperation(exec_task_idx, _DAGNodeOperationType.READ),
