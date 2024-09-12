@@ -156,6 +156,7 @@ class CompiledTask:
         self.idx = idx
         self.dag_node = dag_node
         # [TODO] Dag node should know doing allreduce.
+        # Relevant to polish ExecutableTask._nccl_collective_output_node.
 
         # Dict from task index to actor handle for immediate downstream tasks.
         self.downstream_task_idxs: Dict[int, "ray.actor.ActorHandle"] = {}
@@ -838,8 +839,7 @@ class CompiledDAG:
                     )
 
                 self.actor_task_count[actor_handle._actor_id] += 1
-                # [TODO] Use `collective_group` API.
-                dag_node._collective_group._init_nccl_group()
+                dag_node.collective_group._init_nccl_group()
             elif isinstance(dag_node, InputNode):
                 if dag_node.type_hint.requires_nccl():
                     raise ValueError(
@@ -1432,8 +1432,6 @@ class CompiledDAG:
 
         for actor_handle, executable_tasks in self.actor_to_executable_tasks.items():
             for exec_task_idx, exec_task in enumerate(executable_tasks):
-                # [TODO] Should have added exec_op_tasks doing allreduce.
-
                 # Divide a DAG node into three _DAGOperationGraphNodes: READ, COMPUTE,
                 # and WRITE. Each _DAGOperationGraphNode has a _DAGNodeOperation.
                 task_index = exec_task.task_idx

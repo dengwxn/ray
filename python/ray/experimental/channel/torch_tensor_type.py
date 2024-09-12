@@ -23,9 +23,6 @@ TENSOR_METADATA_SIZE_BYTES = 100_000
 class TorchTensorType(ChannelOutputType):
     AUTO = "auto"
     NCCL = "nccl"
-    """[DEPRECATED]
-    NCCL_ALLREDUCE = "nccl_allreduce"
-    """
 
     def __init__(
         self,
@@ -178,11 +175,6 @@ class TorchTensorType(ChannelOutputType):
 
     def requires_nccl(self) -> bool:
         return self.transport == self.NCCL
-
-    """[DEPRECATED]
-    def requires_nccl_collective(self) -> bool:
-        return self.transport == self.NCCL_ALLREDUCE
-    """
 
     def set_nccl_group_id(self, group_id: str) -> None:
         self._nccl_group_id = group_id

@@ -8,7 +8,6 @@ from ray.util.collective.collective import (
     get_rank,
     get_collective_group_size,
     allreduce,
-    # _allreduce, [TODO] Test.
     allreduce_multigpu,
     barrier,
     reduce,
@@ -36,7 +35,6 @@ __all__ = [
     "create_collective_group",
     "get_rank",
     "get_collective_group_size",
-    # "_allreduce", [TODO] Test.
     "allreduce",
     "allreduce_multigpu",
     "barrier",

@@ -8,9 +8,6 @@ import time
 import pytest
 import ray
 import ray.cluster_utils
-
-import ray.experimental
-import ray.experimental.collective as collective
 import torch
 from ray.air._internal import torch_utils
 from ray.dag import InputNode, MultiOutputNode
@@ -19,16 +16,8 @@ from ray.experimental.channel.torch_tensor_type import TorchTensorType
 from ray.tests.conftest import *  # noqa
 from ray.util.collective import types
 
-# [TODO] Format the imports.
-
 """
 [WATERFRONT]
-- Read all TODO comments in the following files.
-  Just to know what are the bugs that we should know ahead.
-  + python/ray/dag/tests/experimental/test_torch_tensor_dag.py
-  + python/ray/experimental/channel/nccl_group.py
-  + python/ray/experimental/channel/serialization_context.py
-  + python/ray/experimental/channel/torch_tensor_type.py
 - Try to write tests for the all-reduce in this file.
   + Use the APIs from pseusocode.
   + Should raise a ValueError if there is a wrong shape.

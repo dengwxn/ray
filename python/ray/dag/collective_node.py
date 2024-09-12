@@ -63,12 +63,11 @@ class _CollectiveGroup:
             # If the NCCL group ID is already set, no need to reinitialize.
             return
 
-        # [TODO] Polish.
         actor_handles: List[Optional["ray.actor.ActorHandle"]] = [
             input_node._get_actor_handle() for input_node in self._input_nodes
         ]
         if None in actor_handles:
-            raise ValueError("Each AllReduce participant needs an actor handle.")
+            raise ValueError("Got an invalid actor handle from input nodes")
 
         self._nccl_group_id = _init_nccl_group(actor_handles)
         self._type.set_nccl_group_id(self._nccl_group_id)
@@ -157,3 +156,7 @@ class CollectiveOutputNode(DAGNode):
         if not isinstance(self._parent_class_node, ray.actor.ActorHandle):
             return None
         return self._parent_class_node
+
+    @property
+    def collective_group(self) -> _CollectiveGroup:
+        return self._collective_group

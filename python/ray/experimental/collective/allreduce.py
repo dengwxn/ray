@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class AllReduceWrapper:
-    # [TODO] Comments for this class.
+    # [TODO] Comment.
 
     def bind(
         self,
