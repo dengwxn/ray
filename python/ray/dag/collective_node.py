@@ -1,4 +1,6 @@
 from weakref import ReferenceType
+from typing import Any, Dict, List, Union, Tuple, Optional, TYPE_CHECKING
+
 import ray
 from ray.dag import (
     DAGNode,
@@ -14,8 +16,10 @@ from ray.util.annotations import DeveloperAPI
 from ray.util.collective import types
 from ray.experimental.channel.torch_tensor_type import TorchTensorType
 from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
+from ray.experimental.channel import ChannelContext
 
-from typing import Any, Dict, List, Union, Tuple, Optional
+if TYPE_CHECKING:
+    import torch
 
 
 class _CollectiveGroup:
@@ -29,11 +33,11 @@ class _CollectiveGroup:
     ):
         self._input_nodes: List[DAGNode] = input_nodes
         if len(self._input_nodes) == 0:
-            raise ValueError("CollectiveGroup needs at least 1 input node")
+            raise ValueError("Expected input nodes for a collective group")
         self._actor_handles: List["ray.actor.ActorHandle"] = []
         for input_node in self._input_nodes:
             actor_handle = input_node._get_actor_handle()
-            assert actor_handle is not None, "Got an invalid actor handle"
+            assert actor_handle is not None, "Expected a actor handle"
             self._actor_handles.append(actor_handle)
         self._op = op
         self._count = count
@@ -49,11 +53,18 @@ class _CollectiveGroup:
             f"_nccl_group_id={self._nccl_group_id})"
         )
 
-    def _init_nccl_group(self) -> None:
+    def init_nccl_group(self) -> None:
         if self._nccl_group_id is not None:
             # The NCCL group has already been initialized.
             return
         self._nccl_group_id = _init_nccl_group(self._actor_handles)
+
+    def method(self, tensor: "torch.Tensor"):
+        assert self._nccl_group_id is not None, "Expected a NCCL group"
+        ctx = ChannelContext.get_current()
+        nccl_group = ctx.nccl_groups[self._nccl_group_id]
+        nccl_group.allreduce(tensor)
+        return tensor
 
 
 @DeveloperAPI
@@ -86,7 +97,7 @@ class CollectiveOutputNode(DAGNode):
         # Parse the input node.
         assert (
             isinstance(method_args, tuple)
-            and len(tuple) == 1
+            and len(method_args) == 1
             and isinstance(method_args[0], DAGNode)
         ), "Expected a single input node"
         self._input_node = method_args[0]
@@ -143,4 +154,4 @@ class CollectiveOutputNode(DAGNode):
         return self._parent_class_node
 
     def _init_nccl_group(self) -> None:
-        self._collective_group._init_nccl_group()
+        self._collective_group.init_nccl_group()

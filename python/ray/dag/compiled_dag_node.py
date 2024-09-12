@@ -302,8 +302,8 @@ class ExecutableTask:
         self.bind_index = task.dag_node._get_bind_index()
         self.output_channels = task.output_channels
         self.output_idxs = task.output_idxs
-        self.input_type_hints: List["ChannelOutputType"] = task.arg_type_hints
-        self.output_type_hint: "ChannelOutputType" = task.dag_node.type_hint
+        self.input_type_hints: List[ChannelOutputType] = task.arg_type_hints
+        self.output_type_hint: ChannelOutputType = task.dag_node.type_hint
 
         self.input_channels: List[ChannelInterface] = []
         self.task_inputs: List[_ExecutableTaskInput] = []
@@ -355,9 +355,7 @@ class ExecutableTask:
         self._intermediate_buffer: Any = None
 
         # [TODO] Polish.
-        self._nccl_collective_output_node: Optional[
-            "ray.dag.CollectiveOutputNode"
-        ] = None
+        self._collective_group: Optional["ray.dag._CollectiveGroup"] = None
 
     def cancel(self):
         """
@@ -448,24 +446,16 @@ class ExecutableTask:
         for task_input in self.task_inputs:
             resolved_inputs.append(task_input.resolve(input_data))
 
-        # [TODO] Polish.
-        if self._nccl_collective_output_node is not None:
-            nccl_group_id = (
-                self._nccl_collective_output_node._collective_group._nccl_group_id
-            )
-            from ray.experimental.channel import ChannelContext
-
-            ctx = ChannelContext.get_current()
-            nccl_group = ctx.nccl_groups[nccl_group_id]
-            tensor = resolved_inputs[0]
-            nccl_group.allreduce(tensor)
-            output_val = tensor
+        if self._collective_group is not None:
+            # Run a NCCL collective method.
+            method = self._collective_group.method
         else:
+            # Run an actor method.
             method = getattr(class_handle, self.method_name)
-            try:
-                output_val = method(*resolved_inputs, **self.resolved_kwargs)
-            except Exception as exc:
-                output_val = _wrap_exception(exc)
+        try:
+            output_val = method(*resolved_inputs, **self.resolved_kwargs)
+        except Exception as exc:
+            output_val = _wrap_exception(exc)
         self.set_intermediate_buffer(output_val)
         return False
 
@@ -1446,7 +1436,7 @@ class CompiledDAG:
 
                 if isinstance(dag_node, CollectiveOutputNode):
                     # [TODO] Polish.
-                    exec_task._nccl_collective_output_node = dag_node
+                    exec_task._collective_group = dag_node._collective_group
 
                 read_node = _DAGOperationGraphNode(
                     _DAGNodeOperation(exec_task_idx, _DAGNodeOperationType.READ),
