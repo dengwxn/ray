@@ -1,6 +1,6 @@
 import asyncio
 from collections import defaultdict, deque
-from typing import Any, Dict, List, Tuple, Union, Optional, Set
+from typing import Any, Dict, List, Tuple, Union, Optional, Set, FrozenSet
 import logging
 import threading
 import time
@@ -741,12 +741,21 @@ class CompiledDAG:
             InputNode,
             MultiOutputNode,
         )
+        from ray.dag.collective_node import CollectiveGroup
 
         self.input_task_idx, self.output_task_idx = None, None
         self.actor_task_count.clear()
         self._type_hints.clear()
 
         nccl_actors: Set["ray.actor.ActorHandle"] = set()
+        # actor handles -> NCCL group id
+        actors_to_nccl_groups: Dict[
+            FrozenSet["ray.actor.ActorHandle"], str
+        ] = defaultdict()
+        # actor handles -> collective groups
+        actors_to_collectives: Dict[
+            FrozenSet["ray.actor.ActorHandle"], Set["CollectiveGroup"]
+        ] = defaultdict()
 
         # Find the input node to the DAG.
         for idx, task in self.idx_to_task.items():
@@ -821,14 +830,31 @@ class CompiledDAG:
 
                 self.actor_task_count[actor_handle._actor_id] += 1
 
-                if not isinstance(dag_node, CollectiveOutputNode):
-                    # Add all writers to the NCCL group.
-                    if dag_node.type_hint.requires_nccl():
-                        nccl_actors.add(actor_handle)
-                elif isinstance(dag_node, CollectiveOutputNode):
-                    # Initialize the NCCL group on the participating actors
-                    # for collective methods.
-                    dag_node._init_nccl_group()
+                # Add all writers to the NCCL group.
+                if dag_node.type_hint.requires_nccl() or isinstance(
+                    dag_node, CollectiveOutputNode
+                ):
+                    nccl_actors.add(actor_handle)
+
+                if isinstance(dag_node, CollectiveOutputNode):
+                    # To maximally deduplicate NCCL groups, defer initialization
+                    # b/c there may be a user-provided NCCL group later on.
+
+                    # Associate the collective group of this collective output node
+                    # to the corresponding set of actors
+                    actor_handles = frozenset(dag_node.collective_group._actor_handles)
+                    if actor_handles not in actors_to_collectives:
+                        actors_to_collectives[actor_handles] = set()
+                    actors_to_collectives[actor_handles].add(dag_node.collective_group)
+
+                    # If user provided a custom communicator, use the communicator
+                    # for other collective calls that involve the same set of actors
+                    nccl_group_id = dag_node.collective_group._nccl_group_id
+                    if nccl_group_id is not None:
+                        if actor_handles not in actors_to_nccl_groups:
+                            actors_to_nccl_groups[actor_handles] = nccl_group_id
+                        # Otherwise there is more than 1 custom nccl group
+                        # for the same set of actors and we already picked one
             elif isinstance(dag_node, InputNode):
                 if dag_node.type_hint.requires_nccl():
                     raise ValueError(
@@ -933,13 +959,31 @@ class CompiledDAG:
             if dag_node.type_hint is not None:
                 self._type_hints.append(dag_node.type_hint)
 
+        # Initialize NCCL groups for NCCL collectives.
+        for actors, collectives in actors_to_collectives.items():
+            if actors in actors_to_nccl_groups:
+                nccl_group_id = actors_to_nccl_groups[actors]
+            else:
+                # A _NCCL group is created for each distinct set of actors
+                # that does not have a user-provided communicator.
+                nccl_group_id = _init_nccl_group(list(actors))
+                actors_to_nccl_groups[actors] = nccl_group_id
+            for collective in collectives:
+                collective.set_nccl_group(nccl_group_id)
+
         # If there were type hints indicating transport via NCCL, initialize
         # the NCCL group on the participating actors.
-        nccl_actors = list(nccl_actors)
         if None in nccl_actors:
             raise ValueError("Driver cannot participate in the NCCL group.")
         if nccl_actors and self._nccl_group_id is None:
-            self._nccl_group_id = _init_nccl_group(nccl_actors)
+            nccl_group_id = actors_to_nccl_groups.get(frozenset(nccl_actors))
+            if nccl_group_id is not None:
+                # Use the same NCCL group if there is one with same actors
+                # already created
+                self._nccl_group_id = nccl_group_id
+            else:
+                nccl_actors = list(nccl_actors)
+                self._nccl_group_id = _init_nccl_group(nccl_actors)
 
         if direct_input:
             self._input_num_positional_args = 1

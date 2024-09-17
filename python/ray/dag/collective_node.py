@@ -1,11 +1,9 @@
 from weakref import ReferenceType
-from typing import Any, Dict, List, Union, Tuple, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Set, Union, Tuple, Optional, TYPE_CHECKING
 
 import ray
-from ray.dag import (
-    DAGNode,
-    ClassNode,
-)
+from ray.dag.dag_node import DAGNode
+from ray.dag.class_node import ClassNode
 from ray.dag.constants import (
     PARENT_CLASS_NODE_KEY,
     BIND_INDEX_KEY,
@@ -14,8 +12,6 @@ from ray.dag.constants import (
 from ray.dag.format_utils import get_dag_node_str
 from ray.util.annotations import DeveloperAPI
 from ray.util.collective import types
-from ray.experimental.channel.torch_tensor_type import TorchTensorType
-from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
 from ray.experimental.channel import ChannelContext
 
 if TYPE_CHECKING:
@@ -23,24 +19,27 @@ if TYPE_CHECKING:
 
 
 class CollectiveGroup:
-    # [TODO] Comment.
+    """Contains a NCCL collective call's metadata"""
 
     def __init__(
         self,
         input_nodes: List[DAGNode],
-        op: types.ReduceOp,  # [TODO] General collective ops.
-        count: Optional[int] = None,
+        op: types.ReduceOp = types.ReduceOp.SUM,  # [TODO] General collective ops.
     ):
         self._input_nodes: List[DAGNode] = input_nodes
         if len(self._input_nodes) == 0:
             raise ValueError("Expected input nodes for a collective group")
-        self._actor_handles: List["ray.actor.ActorHandle"] = []
+        actor_handles: Set["ray.actor.ActorHandle"] = set()
         for input_node in self._input_nodes:
             actor_handle = input_node._get_actor_handle()
-            assert actor_handle is not None, "Expected a actor handle"
-            self._actor_handles.append(actor_handle)
+            assert actor_handle is not None, "Expected an actor handle"
+            if actor_handle in actor_handles:
+                raise ValueError(
+                    "NCCL all-reduce requires tensors to be on different actors"
+                )
+            actor_handles.add(actor_handle)
+        self._actor_handles: List["ray.actor.ActorHandle"] = list(actor_handles)
         self._op = op
-        self._count = count
         self._nccl_group_id: Optional[str] = None
 
     def __str__(self) -> str:
@@ -49,15 +48,14 @@ class CollectiveGroup:
             f"_input_nodes={self._input_nodes}, "
             f"_actor_handles={self._actor_handles}, "
             f"_op={self._op}, "
-            f"_count={self._count}, "
             f"_nccl_group_id={self._nccl_group_id})"
         )
 
-    def init_nccl_group(self) -> None:
+    def set_nccl_group(self, nccl_group_id) -> None:
         if self._nccl_group_id is not None:
-            # The NCCL group has already been initialized.
+            # The NCCL group has already been set.
             return
-        self._nccl_group_id = _init_nccl_group(self._actor_handles)
+        self._nccl_group_id = nccl_group_id
 
     def method(self, tensor: "torch.Tensor"):
         assert self._nccl_group_id is not None, "Expected a NCCL group"
@@ -69,7 +67,7 @@ class CollectiveGroup:
 
 @DeveloperAPI
 class CollectiveOutputNode(DAGNode):
-    # [TODO] Comment.
+    """Represents an output from a NCCL collective operation in a Ray DAG."""
 
     def __init__(
         self,
@@ -156,6 +154,3 @@ class CollectiveOutputNode(DAGNode):
     @property
     def collective_group(self) -> CollectiveGroup:
         return self._collective_group
-
-    def _init_nccl_group(self) -> None:
-        self._collective_group.init_nccl_group()
