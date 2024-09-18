@@ -9,6 +9,7 @@ from ray.dag.constants import (
     PARENT_CLASS_NODE_KEY,
 )
 from ray.dag.dag_node import DAGNode
+from ray.experimental.channel.torch_tensor_type import TorchTensorType
 from ray.util.collective import types
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,7 @@ class AllReduceWrapper:
         self,
         input_nodes: List["DAGNode"],
         op: types.ReduceOp,
-        count: Optional[int] = None,
+        type_hint: Optional[TorchTensorType] = None,
     ) -> List[CollectiveOutputNode]:
         # [TODO] Polish.
         """
@@ -41,7 +42,7 @@ class AllReduceWrapper:
         Returns:
             A list of output nodes of the all-reduce operation.
         """
-        collective_group = CollectiveGroup(input_nodes, op, count)
+        collective_group = CollectiveGroup(input_nodes, op, type_hint)
         collective_output_nodes: List[CollectiveOutputNode] = []
 
         for input_node in input_nodes:

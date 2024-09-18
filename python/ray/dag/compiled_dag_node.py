@@ -681,10 +681,10 @@ class CompiledDAG:
         # Mapping from the actor handle to the node ID that the actor is on.
         self.actor_to_node_id: Dict["ray.actor.ActorHandle", str] = {}
 
-        # This is set to true when type hint of `transport="nccl"`` is used
+        # This is set to true when type hint of `transport="nccl"` is used.
         self._use_default_nccl_group = False
         # This is set to the specified custom nccl group
-        # if there exists a type hint of `transport=nccl_group`
+        # if there exists a type hint of `transport=nccl_group`.
         self._custom_nccl_group: Optional[GPUCommunicator] = None
         # Uniquely identifies the NCCL communicator that will be used within
         # this DAG, if any.
@@ -832,7 +832,7 @@ class CompiledDAG:
                 self.actor_task_count[actor_handle._actor_id] += 1
 
                 if not isinstance(dag_node, CollectiveOutputNode):
-                    # Add all writers to the NCCL group.
+                    # Add all writers to the NCCL group for send and recv.
                     if dag_node.type_hint.requires_nccl():
                         nccl_actors.add(actor_handle)
                         custom_nccl_group = dag_node.type_hint.get_custom_nccl_group()

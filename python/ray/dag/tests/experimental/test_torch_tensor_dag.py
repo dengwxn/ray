@@ -17,7 +17,6 @@ import pytest
 import ray
 import ray.cluster_utils
 import ray.experimental.collective as collective
-import torch
 from ray.air._internal import torch_utils
 from ray.dag import InputNode, MultiOutputNode
 from ray.exceptions import RayChannelError

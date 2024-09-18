@@ -14,8 +14,13 @@ from ray.dag.constants import (
 from ray.dag.format_utils import get_dag_node_str
 from ray.util.annotations import DeveloperAPI
 from ray.util.collective import types
-from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
 from ray.experimental.channel import ChannelContext
+from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
+from ray.experimental.channel.torch_tensor_type import (
+    ChannelOutputType,
+    GPUCommunicator,
+    TorchTensorType,
+)
 
 if TYPE_CHECKING:
     import torch
@@ -28,7 +33,7 @@ class CollectiveGroup:
         self,
         input_nodes: List[DAGNode],
         op: types.ReduceOp,  # [TODO] General collective ops.
-        count: Optional[int] = None,
+        type_hint: Optional[TorchTensorType] = None,
     ):
         self._input_nodes: List[DAGNode] = input_nodes
         if len(self._input_nodes) == 0:
@@ -42,8 +47,11 @@ class CollectiveGroup:
             raise ValueError("Expected unique actor handles for a collective group")
         # [TODO] Validate they are compatible with user-defined collective group.
         self._op = op
-        self._count = count
-        self._nccl_group_id: Optional[str] = None
+        if type_hint is not None:
+            assert type_hint.requires_nccl()
+            self._type_hint = type_hint
+        else:
+            self._type_hint = TorchTensorType(transport=TorchTensorType.NCCL)
 
     def __str__(self) -> str:
         return (
@@ -51,20 +59,32 @@ class CollectiveGroup:
             f"_input_nodes={self._input_nodes}, "
             f"_actor_handles={self._actor_handles}, "
             f"_op={self._op}, "
-            f"_count={self._count}, "
-            f"_nccl_group_id={self._nccl_group_id})"
+            f"_type_hint={self._type_hint})"
         )
 
     def init_nccl_group(self) -> None:
-        if self._nccl_group_id is not None:
-            # The NCCL group has already been initialized.
+        if (
+            self._type_hint.nccl_group_id is not None
+            or self._type_hint.get_custom_nccl_group() is not None
+        ):
+            # A default NCCL group has already been initialized, or a custom NCCL
+            # group has been set.
             return
-        self._nccl_group_id = _init_nccl_group(self._actor_handles)
+        nccl_group_id = _init_nccl_group(self._actor_handles)
+        self._type_hint.set_nccl_group_id(nccl_group_id)
+
+    def get_nccl_group(self) -> GPUCommunicator:
+        if self._type_hint.nccl_group_id is not None:
+            ctx = ChannelContext.get_current()
+            nccl_group = ctx.nccl_groups[self._type_hint.nccl_group_id]
+        elif self._type_hint.get_custom_nccl_group() is not None:
+            nccl_group = self._type_hint.get_custom_nccl_group()
+        else:
+            raise ValueError("Expected a NCCL group")
+        return nccl_group
 
     def method(self, tensor: "torch.Tensor"):
-        assert self._nccl_group_id is not None, "Expected a NCCL group"
-        ctx = ChannelContext.get_current()
-        nccl_group = ctx.nccl_groups[self._nccl_group_id]
+        nccl_group = self.get_nccl_group()
         nccl_group.allreduce(tensor)
         return tensor
 
