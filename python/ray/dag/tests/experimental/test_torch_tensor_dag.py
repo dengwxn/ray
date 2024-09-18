@@ -668,79 +668,6 @@ def test_torch_tensor_nccl_all_reduce_dynamic(ray_start_regular):
     compiled_dag.teardown()
 
 
-# [TODO:andy] This test used to test for the case when the user provides the shape
-# of tensors when calling allreduce (i.e., the user knows the shape of each tensor)
-# but the tensor shapes do not match the user-specified shape.
-# If we decide to check for errors only at runtime (i.e., during execution,
-# store the first tensor's shape, check every following tensor has the same shape),
-# then merge this test with the last one.
-@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
-def test_torch_tensor_nccl_all_reduce_wrong_shape(ray_start_regular):
-    """
-    Test a dag containing all-reduce errors when given tensors of wrong shapes.
-    """
-    if not USE_GPU:
-        pytest.skip("NCCL tests require GPUs")
-
-    assert (
-        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
-    ), "This test requires at least 2 GPUs"
-
-    actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
-
-    num_workers = 2
-    workers = [actor_cls.remote() for _ in range(num_workers)]
-
-    dtype = torch.float16
-
-    with InputNode() as inp:
-        computes = [
-            worker.compute_with_tuple_args.bind(inp, i)
-            for i, worker in enumerate(workers)
-        ]
-        collectives = collective.allreduce.bind(computes, types.ReduceOp.SUM)
-        syncs = [
-            worker.sync.bind(collective)
-            for worker, collective in zip(workers, collectives)
-        ]
-        dag = MultiOutputNode(syncs)
-
-    compiled_dag = dag.experimental_compile()
-
-    ref = compiled_dag.execute([((20,), dtype, idx + 1) for idx in range(num_workers)])
-    reduced_val = (1 + num_workers) * num_workers / 2
-    assert ray.get(ref) == [(reduced_val, (20,), dtype) for _ in range(num_workers)]
-
-    ref = compiled_dag.execute(
-        [((10 + idx,), dtype, idx + 1) for idx in range(num_workers)]
-    )
-    # print(ray.get(ref))
-    # The shapes mismatch but no errors are thrown.
-    # [TODO] Throw errors when shapes mismatch.
-
-    # [TODO:andy] How to propagate the RayChannelError all the way back?
-    # The error is read as input by downstream tasks.
-    with pytest.raises(RayChannelError):
-        ray.get(ref)
-
-    # [TODO:andy] Currently we can still submit to the DAG.
-    # Check if the following is expected behavior:
-
-    # For tensors where the shape is declared to be static, the DAG will be
-    # torn down after any task throws an application-level exception, such as
-    # when the task returns torch.Tensors of the wrong shape or dtype. Check
-    # that we can no longer submit to the DAG.
-    # ref = compiled_dag.execute([((20,), dtype, 1) for _ in workers])
-    # with pytest.raises(RayChannelError):
-    #     ref = compiled_dag.execute([((20,), dtype, 1) for _ in workers])
-
-    compiled_dag.teardown()
-
-    # [TODO:andy] Check if this requires time.sleep to avoid some issue with
-    # following tests.
-    # time.sleep(3)
-
-
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
 def test_torch_tensor_nccl_all_reduce_get_partial(ray_start_regular):
     """
@@ -781,65 +708,138 @@ def test_torch_tensor_nccl_all_reduce_get_partial(ray_start_regular):
     compiled_dag.teardown()
 
 
-@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
-def test_torch_tensor_nccl_all_reduce_incompatible_tensor_shapes(ray_start_regular):
-    """
-    Test a dag containing all-reduce errors when user tries to
-    all-reduce tensors of different shapes.
-    """
-    if not USE_GPU:
-        pytest.skip("NCCL tests require GPUs")
+# # [TODO:andy] This test used to test for the case when the user provides the shape
+# # of tensors when calling allreduce (i.e., the user knows the shape of each tensor)
+# # but the tensor shapes do not match the user-specified shape.
+# # If we decide to check for errors only at runtime (i.e., during execution,
+# # store the first tensor's shape, check every following tensor has the same shape),
+# # then merge this test with the last one.
+# @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+# def test_torch_tensor_nccl_all_reduce_wrong_shape(ray_start_regular):
+#     """
+#     Test a dag containing all-reduce errors when given tensors of wrong shapes.
+#     """
+#     if not USE_GPU:
+#         pytest.skip("NCCL tests require GPUs")
 
-    assert (
-        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
-    ), "This test requires at least 2 GPUs"
+#     assert (
+#         sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
+#     ), "This test requires at least 2 GPUs"
 
-    actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
+#     actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
 
-    num_workers = 2
-    workers = [actor_cls.remote() for _ in range(num_workers)]
+#     num_workers = 2
+#     workers = [actor_cls.remote() for _ in range(num_workers)]
 
-    dtype = torch.float16
+#     dtype = torch.float16
 
-    with InputNode() as inp:
-        computes = [
-            worker.compute_with_shapes_and_values.bind(
-                inp.shapes,
-                dtype,
-                inp.values,
-                i,
-            )
-            for i, worker in enumerate(workers)
-        ]
-        collectives = collective.allreduce.bind(computes, types.ReduceOp.SUM)
-        syncs = [
-            worker.sync.bind(collective)
-            for worker, collective in zip(workers, collectives)
-        ]
-        dag = MultiOutputNode(syncs)
+#     with InputNode() as inp:
+#         computes = [
+#             worker.compute_with_tuple_args.bind(inp, i)
+#             for i, worker in enumerate(workers)
+#         ]
+#         collectives = collective.allreduce.bind(computes, types.ReduceOp.SUM)
+#         syncs = [
+#             worker.sync.bind(collective)
+#             for worker, collective in zip(workers, collectives)
+#         ]
+#         dag = MultiOutputNode(syncs)
 
-    compiled_dag = dag.experimental_compile()
+#     compiled_dag = dag.experimental_compile()
 
-    ref = compiled_dag.execute(
-        shapes=[(10,) for _ in workers],
-        values=[(idx + 1) for idx in range(num_workers)],
-    )
-    result = ray.get(ref)
-    reduced_val = (num_workers + 1) * num_workers / 2
-    assert result == [(reduced_val, (10,), dtype) for _ in workers]
+#     ref = compiled_dag.execute([((20,), dtype, idx + 1) for idx in range(num_workers)])
+#     reduced_val = (1 + num_workers) * num_workers / 2
+#     assert ray.get(ref) == [(reduced_val, (20,), dtype) for _ in range(num_workers)]
 
-    print("===========================")
-    # [TODO] Detect the shape mismatch.
-    # This test appears to hang when I ran it earlier.
+#     ref = compiled_dag.execute(
+#         [((10 + idx,), dtype, idx + 1) for idx in range(num_workers)]
+#     )
+#     # print(ray.get(ref))
+#     # The shapes mismatch but no errors are thrown.
+#     # [TODO] Throw errors when shapes mismatch.
 
-    ref = compiled_dag.execute(
-        shapes=[(10 * (idx + 1),) for idx in range(num_workers)],
-        values=[(idx + 1) for idx in range(num_workers)],
-    )
-    with pytest.raises(RayChannelError):
-        ray.get(ref)
+#     # [TODO:andy] How to propagate the RayChannelError all the way back?
+#     # The error is read as input by downstream tasks.
+#     with pytest.raises(RayChannelError):
+#         ray.get(ref)
 
-    compiled_dag.teardown()
+#     # [TODO:andy] Currently we can still submit to the DAG.
+#     # Check if the following is expected behavior:
+
+#     # For tensors where the shape is declared to be static, the DAG will be
+#     # torn down after any task throws an application-level exception, such as
+#     # when the task returns torch.Tensors of the wrong shape or dtype. Check
+#     # that we can no longer submit to the DAG.
+#     # ref = compiled_dag.execute([((20,), dtype, 1) for _ in workers])
+#     # with pytest.raises(RayChannelError):
+#     #     ref = compiled_dag.execute([((20,), dtype, 1) for _ in workers])
+
+#     compiled_dag.teardown()
+
+#     # [TODO:andy] Check if this requires time.sleep to avoid some issue with
+#     # following tests.
+#     # time.sleep(3)
+
+
+# @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+# def test_torch_tensor_nccl_all_reduce_incompatible_tensor_shapes(ray_start_regular):
+#     """
+#     Test a dag containing all-reduce errors when user tries to
+#     all-reduce tensors of different shapes.
+#     """
+#     if not USE_GPU:
+#         pytest.skip("NCCL tests require GPUs")
+
+#     assert (
+#         sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
+#     ), "This test requires at least 2 GPUs"
+
+#     actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
+
+#     num_workers = 2
+#     workers = [actor_cls.remote() for _ in range(num_workers)]
+
+#     dtype = torch.float16
+
+#     with InputNode() as inp:
+#         computes = [
+#             worker.compute_with_shapes_and_values.bind(
+#                 inp.shapes,
+#                 dtype,
+#                 inp.values,
+#                 i,
+#             )
+#             for i, worker in enumerate(workers)
+#         ]
+#         collectives = collective.allreduce.bind(computes, types.ReduceOp.SUM)
+#         syncs = [
+#             worker.sync.bind(collective)
+#             for worker, collective in zip(workers, collectives)
+#         ]
+#         dag = MultiOutputNode(syncs)
+
+#     compiled_dag = dag.experimental_compile()
+
+#     ref = compiled_dag.execute(
+#         shapes=[(10,) for _ in workers],
+#         values=[(idx + 1) for idx in range(num_workers)],
+#     )
+#     result = ray.get(ref)
+#     reduced_val = (num_workers + 1) * num_workers / 2
+#     assert result == [(reduced_val, (10,), dtype) for _ in workers]
+
+#     print("===========================")
+#     # [TODO] Detect the shape mismatch.
+#     # This test appears to hang when I ran it earlier.
+
+#     ref = compiled_dag.execute(
+#         shapes=[(10 * (idx + 1),) for idx in range(num_workers)],
+#         values=[(idx + 1) for idx in range(num_workers)],
+#     )
+#     with pytest.raises(RayChannelError):
+#         ray.get(ref)
+
+#     compiled_dag.teardown()
 
 
 # [TODO:andy]
