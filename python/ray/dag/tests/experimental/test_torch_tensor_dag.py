@@ -615,7 +615,7 @@ def test_torch_tensor_nccl_all_reduce(ray_start_regular):
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
 def test_torch_tensor_nccl_all_reduce_get_partial(ray_start_regular):
     """
-    Test only using part of the results of an all-reduce does not error.
+    Test getting partial results from all-reduce does not hang.
     """
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")

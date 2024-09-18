@@ -23,6 +23,7 @@ class AllReduceWrapper:
         op: types.ReduceOp,
         count: Optional[int] = None,
     ) -> List[CollectiveOutputNode]:
+        # [TODO] Polish.
         """
         Binds tensors extracted from the given DAGNodes to an all-reduce operation.
         Requirements:
