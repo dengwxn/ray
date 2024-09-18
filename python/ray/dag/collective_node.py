@@ -71,16 +71,20 @@ class CollectiveGroup:
             f"_type_hint={self._type_hint})"
         )
 
-    def init_nccl_group(self) -> None:
-        if (
-            self._type_hint.nccl_group_id is not None
-            or self._type_hint.get_custom_nccl_group() is not None
-        ):
-            # A default NCCL group has already been initialized, or a custom NCCL
-            # group has been set.
-            return
-        nccl_group_id = _init_nccl_group(self._actor_handles)
-        self._type_hint.set_nccl_group_id(nccl_group_id)
+    @property
+    def actor_handles(self) -> List["ray.actor.ActorHandle"]:
+        return self._actor_handles
+
+    def init_nccl_group(self) -> Optional[str]:
+        type_hint = self._type_hint
+        if type_hint.nccl_group_id is not None:
+            # The NCCL group has already been initialized.
+            return type_hint.nccl_group_id
+        nccl_group_id = _init_nccl_group(
+            self._actor_handles, type_hint.get_custom_nccl_group()
+        )
+        type_hint.set_nccl_group_id(nccl_group_id)
+        return nccl_group_id
 
     def get_nccl_group(self) -> GPUCommunicator:
         if self._type_hint.nccl_group_id is not None:
@@ -188,6 +192,3 @@ class CollectiveOutputNode(DAGNode):
     @property
     def collective_group(self) -> CollectiveGroup:
         return self._collective_group
-
-    def _init_nccl_group(self) -> None:
-        self._collective_group.init_nccl_group()

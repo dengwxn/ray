@@ -865,7 +865,7 @@ class CompiledDAG:
                 elif isinstance(dag_node, CollectiveOutputNode):
                     # Initialize the NCCL group on the participating actors
                     # for collective methods.
-                    dag_node._init_nccl_group()
+                    dag_node.collective_group.init_nccl_group()
             elif isinstance(dag_node, InputNode):
                 if dag_node.type_hint.requires_nccl():
                     raise ValueError(
