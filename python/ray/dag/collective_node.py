@@ -38,6 +38,9 @@ class CollectiveGroup:
         self._input_nodes: List[DAGNode] = input_nodes
         if len(self._input_nodes) == 0:
             raise ValueError("Expected input nodes for a collective group")
+        if len(set(self._input_nodes)) != len(self._input_nodes):
+            raise ValueError("Expected unique input nodes for a collective group")
+
         self._actor_handles: List["ray.actor.ActorHandle"] = []
         for input_node in self._input_nodes:
             actor_handle = input_node._get_actor_handle()
@@ -45,10 +48,16 @@ class CollectiveGroup:
             self._actor_handles.append(actor_handle)
         if len(set(self._actor_handles)) != len(self._actor_handles):
             raise ValueError("Expected unique actor handles for a collective group")
+
         # [TODO] Validate they are compatible with user-defined collective group.
         self._op = op
         if type_hint is not None:
             assert type_hint.requires_nccl()
+            custom_nccl_group = type_hint.get_custom_nccl_group()
+            if custom_nccl_group is not None:
+                assert set(custom_nccl_group.get_actor_handles()) == set(
+                    self._actor_handles
+                ), "Expected actor handles to match the custom NCCL group"
             self._type_hint = type_hint
         else:
             self._type_hint = TorchTensorType(transport=TorchTensorType.NCCL)
@@ -85,6 +94,7 @@ class CollectiveGroup:
 
     def method(self, tensor: "torch.Tensor"):
         nccl_group = self.get_nccl_group()
+        assert self.op == types.ReduceOp.SUM, f"Not implemented for {self.op}"
         nccl_group.allreduce(tensor)
         return tensor
 
