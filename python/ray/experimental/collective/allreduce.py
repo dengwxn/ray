@@ -15,35 +15,15 @@ logger = logging.getLogger(__name__)
 
 
 class AllReduceWrapper:
-    """Wrapper for NCCL all-reduce."""
+    # [TODO] Comment.
 
     def bind(
         self,
         input_nodes: List["DAGNode"],
-        op: types.ReduceOp = types.ReduceOp.SUM,
-        # [TODO] Add custom GPUCommunicator
+        op: types.ReduceOp,
+        count: Optional[int] = None,
     ) -> List[CollectiveOutputNode]:
-        """
-        Binds tensors extracted from the given DAGNodes to an all-reduce operation.
-
-        Requirements:
-        1. Each given input node must be resolved to a tensor during execution.
-        2. Each tensor must be on a different actor.
-        3. All tensors must have the same numel (from `torch.Tensor.numel()`).
-        4. If a custom `GPUCommunicator` is provided,
-           its actors (from `GPUCommunicator.get_actor_handles()`) must match
-           the actors of the input nodes (i.e., the actors of the tensors).
-
-        Args:
-            input_nodes: A list of DAGNodes.
-            op: The reduce operation, which can be SUM (default), PRODUCT, MIN, or MAX.
-            comm: GPU communicator to be used during the execution of all-reduce.
-                If None (default), a `_NCCLGroup` will be used.
-
-        Returns:
-            A list of output nodes of the all-reduce operation.
-        """
-        collective_group = CollectiveGroup(input_nodes, op)
+        collective_group = CollectiveGroup(input_nodes, op, count)
         collective_output_nodes: List[CollectiveOutputNode] = []
 
         for input_node in input_nodes:
