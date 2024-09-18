@@ -14,7 +14,6 @@ from ray.dag.constants import (
 from ray.dag.format_utils import get_dag_node_str
 from ray.util.annotations import DeveloperAPI
 from ray.util.collective import types
-from ray.experimental.channel.torch_tensor_type import TorchTensorType
 from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
 from ray.experimental.channel import ChannelContext
 
@@ -39,6 +38,9 @@ class CollectiveGroup:
             actor_handle = input_node._get_actor_handle()
             assert actor_handle is not None, "Expected a actor handle"
             self._actor_handles.append(actor_handle)
+        if len(set(self._actor_handles)) != len(self._actor_handles):
+            raise ValueError("Expected unique actor handles for a collective group")
+        # [TODO] Validate they are compatible with user-defined collective group.
         self._op = op
         self._count = count
         self._nccl_group_id: Optional[str] = None
