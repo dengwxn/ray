@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 class CollectiveGroup:
-    """Contains a NCCL collective call's metadata"""
+    """Represent metadata for a NCCL collective method."""
 
     def __init__(
         self,
@@ -71,7 +71,7 @@ class CollectiveGroup:
 
 @DeveloperAPI
 class CollectiveOutputNode(DAGNode):
-    """Represents an output from a NCCL collective operation in a Ray DAG."""
+    """Represent an output node from a NCCL collective method in a Ray DAG."""
 
     def __init__(
         self,
