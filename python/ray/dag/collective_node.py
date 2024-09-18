@@ -94,7 +94,7 @@ class CollectiveGroup:
 
     def method(self, tensor: "torch.Tensor"):
         nccl_group = self.get_nccl_group()
-        assert self.op == types.ReduceOp.SUM, f"Not implemented for {self.op}"
+        assert self._op == types.ReduceOp.SUM, f"Not implemented for {self._op}"
         nccl_group.allreduce(tensor)
         return tensor
 
