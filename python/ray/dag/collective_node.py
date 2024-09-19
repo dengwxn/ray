@@ -16,10 +16,7 @@ from ray.util.annotations import DeveloperAPI
 from ray.util.collective.nccl_types import ReduceOp
 from ray.experimental.channel import ChannelContext
 from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
-from ray.experimental.channel.torch_tensor_type import (
-    GPUCommunicator,
-    TorchTensorType,
-)
+from ray.experimental.channel.torch_tensor_type import GPUCommunicator, TorchTensorType
 
 if TYPE_CHECKING:
     import torch
@@ -32,7 +29,7 @@ class CollectiveGroup:
         self,
         input_nodes: List[DAGNode],
         op: ReduceOp,  # [TODO] General collective ops.
-        type_hint: Optional[TorchTensorType] = None,
+        transport: Union[str, GPUCommunicator] = TorchTensorType.AUTO,
     ):
         self._input_nodes: List[DAGNode] = input_nodes
         if len(self._input_nodes) == 0:
@@ -49,16 +46,11 @@ class CollectiveGroup:
             raise ValueError("Expected unique actor handles for a collective group")
 
         self._op = op
-        if type_hint is not None:
-            assert type_hint.requires_nccl()
-            custom_nccl_group = type_hint.get_custom_nccl_group()
-            if custom_nccl_group is not None:
-                assert set(custom_nccl_group.get_actor_handles()) == set(
-                    self._actor_handles
-                ), "Expected actor handles to match the custom NCCL group"
-            self._type_hint = type_hint
-        else:
-            self._type_hint = TorchTensorType(transport=TorchTensorType.NCCL)
+        self._type_hint = TorchTensorType(transport=transport, _direct_return=True)
+        if isinstance(transport, GPUCommunicator):
+            assert set(transport.get_actor_handles()) == set(
+                self._actor_handles
+            ), "Expected actor handles to match the custom NCCL group"
 
     def __str__(self) -> str:
         return (

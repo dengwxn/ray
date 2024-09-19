@@ -1,5 +1,5 @@
 import logging
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import ray
 from ray.dag.collective_node import CollectiveGroup, CollectiveOutputNode
@@ -9,7 +9,7 @@ from ray.dag.constants import (
     PARENT_CLASS_NODE_KEY,
 )
 from ray.dag.dag_node import DAGNode
-from ray.experimental.channel.torch_tensor_type import TorchTensorType
+from ray.experimental.channel.torch_tensor_type import GPUCommunicator, TorchTensorType
 from ray.util.collective import types as ray_types
 from ray.util.collective.nccl_types import ReduceOp
 
@@ -23,7 +23,7 @@ class AllReduceWrapper:
         self,
         input_nodes: List["DAGNode"],
         op: ReduceOp = ReduceOp.SUM,
-        type_hint: Optional[TorchTensorType] = None,
+        transport: Union[str, GPUCommunicator] = TorchTensorType.AUTO,
     ) -> List[CollectiveOutputNode]:
         # [TODO] Polish.
         """
@@ -43,7 +43,7 @@ class AllReduceWrapper:
         Returns:
             A list of output nodes of the all-reduce operation.
         """
-        collective_group = CollectiveGroup(input_nodes, op, type_hint)
+        collective_group = CollectiveGroup(input_nodes, op, transport)
         collective_output_nodes: List[CollectiveOutputNode] = []
 
         for input_node in input_nodes:
