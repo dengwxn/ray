@@ -1307,7 +1307,7 @@ def test_torch_tensor_nccl_all_reduce_duplicate_actors(ray_start_regular):
 
 
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
-def test_torch_tensor_nccl_comm_deduplication_same_collectives(ray_start_regular):
+def test_torch_tensor_nccl_comm_deduplicate_collectives(ray_start_regular):
     """
     Test communicators are deduplicated when all-reduce
     is called on the same group of actors more than once.
@@ -1365,7 +1365,7 @@ def test_torch_tensor_nccl_comm_deduplication_same_collectives(ray_start_regular
 
 
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
-def test_torch_tensor_nccl_comm_deduplication_collective_equals_p2p(ray_start_regular):
+def test_torch_tensor_nccl_comm_deduplicate_collective_and_p2p(ray_start_regular):
     """
     Test communicators are deduplicated when the collective and the p2p send/recv
     are on the same set of actors.
@@ -1425,14 +1425,14 @@ def test_torch_tensor_nccl_comm_deduplication_collective_equals_p2p(ray_start_re
 
     compiled_dag.teardown()
 
-    receiver = workers[1]
     with InputNode() as inp:
         computes = [
             worker.compute_with_tuple_args.bind(inp, i)
             for i, worker in enumerate(workers)
         ]
         collectives = collective.allreduce.bind(computes)
-        dag = receiver.recv.bind(
+        # Sender is workers[0] and receiver is workers[1].
+        dag = workers[1].recv.bind(
             collectives[0].with_type_hint(TorchTensorType(transport="nccl"))
         )
 
@@ -1472,8 +1472,8 @@ def test_torch_tensor_nccl_comm_deduplication_collective_equals_p2p(ray_start_re
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
 def test_torch_tensor_nccl_all_reduce_diff_comms(ray_start_regular):
     """
-    Test communicators are deduplicated when the collective and the p2p send/recv
-    are on the same set of actors.
+    Test that different communicators are used for
+    different all-reduce calls with distinct sets of actors.
     """
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
@@ -1494,6 +1494,8 @@ def test_torch_tensor_nccl_all_reduce_diff_comms(ray_start_regular):
         ]
         collectives = [collective.allreduce.bind([compute]) for compute in computes]
         recvs = [
+            # Note: There are 2 all-reduces, each on 1 actor.
+            # collective[0] is the only CollectiveOutputNode for each all-reduce.
             worker.recv.bind(collective[0])
             for worker, collective in zip(workers, collectives)
         ]
@@ -1513,7 +1515,7 @@ def test_torch_tensor_nccl_all_reduce_diff_comms(ray_start_regular):
                 assert nccl_group_id is not None
                 comms.add(nccl_group_id)
 
-    # Exactly 2 NCCL group should be created.
+    # Exactly 2 NCCL groups should be created.
     assert len(comms) == 2
     # Sanity check: No p2p communicator constructed.
     assert compiled_dag._nccl_group_id is None
