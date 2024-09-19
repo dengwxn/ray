@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
 import ray
 from ray.util.annotations import DeveloperAPI
+from ray.util.collective.nccl_types import ReduceOp
 
 if TYPE_CHECKING:
     import torch
@@ -108,7 +109,7 @@ class GPUCommunicator(ABC):
     def allreduce(
         self,
         buf: "torch.Tensor",
-        op: "ray.util.collective.nccl_types.ReduceOp",
+        op: ReduceOp,
     ):
         """
         Collectively allreduce the tensor across the group.
