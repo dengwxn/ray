@@ -1,7 +1,7 @@
 import asyncio
 from collections import defaultdict, deque
 from dataclasses import dataclass, asdict
-from typing import Any, Dict, List, Tuple, Union, Optional, Set
+from typing import Any, Dict, FrozenSet, List, Tuple, Union, Optional, Set
 import logging
 import threading
 import time
@@ -751,11 +751,13 @@ class CompiledDAG:
             InputNode,
             MultiOutputNode,
         )
+        from ray.dag.collective_node import CollectiveGroup
 
         self.input_task_idx, self.output_task_idx = None, None
         self.actor_task_count.clear()
 
         nccl_actors: Set["ray.actor.ActorHandle"] = set()
+        nccl_collective_groups: Set[CollectiveGroup] = set()
 
         # Find the input node to the DAG.
         for idx, task in self.idx_to_task.items():
@@ -832,7 +834,7 @@ class CompiledDAG:
                 self.actor_task_count[actor_handle._actor_id] += 1
 
                 if not isinstance(dag_node, CollectiveOutputNode):
-                    # Add all writers to the NCCL group for send and recv.
+                    # Add all writers to the NCCL group for send and recv methods.
                     if dag_node.type_hint.requires_nccl():
                         nccl_actors.add(actor_handle)
                         custom_nccl_group = dag_node.type_hint.get_custom_nccl_group()
@@ -863,9 +865,8 @@ class CompiledDAG:
                                     )
                             self._custom_nccl_group = custom_nccl_group
                 elif isinstance(dag_node, CollectiveOutputNode):
-                    # Initialize the NCCL group on the participating actors
-                    # for collective methods.
-                    dag_node.collective_group.init_nccl_group()
+                    # Collect all collective groups.
+                    nccl_collective_groups.add(dag_node.collective_group)
             elif isinstance(dag_node, InputNode):
                 if dag_node.type_hint.requires_nccl():
                     raise ValueError(
@@ -974,6 +975,26 @@ class CompiledDAG:
             raise ValueError("Driver cannot participate in the NCCL group.")
         if nccl_actors and self._nccl_group_id is None:
             self._nccl_group_id = _init_nccl_group(nccl_actors, self._custom_nccl_group)
+
+        # [TODO] Comments.
+        actors_to_nccl_group_id: Dict[FrozenSet["ray.actor.ActorHandle"], str] = {}
+        for collective_group in nccl_collective_groups:
+            type_hint = collective_group.type_hint
+            if type_hint.get_custom_nccl_group() is not None:
+                nccl_group_id = collective_group.init_nccl_group()
+                actors = frozenset(collective_group.actor_handles)
+                if actors not in actors_to_nccl_group_id:
+                    actors_to_nccl_group_id[actors] = nccl_group_id
+        for collective_group in nccl_collective_groups:
+            type_hint = collective_group.type_hint
+            if type_hint.nccl_group_id is None:
+                actors = frozenset(collective_group.actor_handles)
+                if actors in actors_to_nccl_group_id:
+                    nccl_group_id = actors_to_nccl_group_id[actors]
+                    type_hint.set_nccl_group_id(nccl_group_id)
+                else:
+                    nccl_group_id = collective_group.init_nccl_group()
+                    actors_to_nccl_group_id[actors] = nccl_group_id
 
         if direct_input:
             self._input_num_positional_args = 1
