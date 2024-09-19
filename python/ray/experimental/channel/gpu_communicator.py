@@ -108,7 +108,7 @@ class GPUCommunicator(ABC):
     def allreduce(
         self,
         buf: "torch.Tensor",
-        op: "ray.experimental.collective.types.ReduceOp",
+        op: "ray.util.collective.nccl_types.ReduceOp",
     ):
         """
         Collectively allreduce the tensor across the group.

@@ -10,8 +10,8 @@ from ray.dag.constants import (
 )
 from ray.dag.dag_node import DAGNode
 from ray.experimental.channel.torch_tensor_type import TorchTensorType
-from ray.util.collective import nccl_types
 from ray.util.collective import types as ray_types
+from ray.util.collective.nccl_types import ReduceOp
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class AllReduceWrapper:
     def bind(
         self,
         input_nodes: List["DAGNode"],
-        op: nccl_types.ReduceOp = nccl_types.ReduceOp.SUM,
+        op: ReduceOp = ReduceOp.SUM,
         type_hint: Optional[TorchTensorType] = None,
     ) -> List[CollectiveOutputNode]:
         # [TODO] Polish.
