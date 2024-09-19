@@ -49,7 +49,6 @@ class CollectiveGroup:
         if len(set(self._actor_handles)) != len(self._actor_handles):
             raise ValueError("Expected unique actor handles for a collective group")
 
-        # [TODO] Validate they are compatible with user-defined collective group.
         self._op = op
         if type_hint is not None:
             assert type_hint.requires_nccl()
