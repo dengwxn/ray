@@ -29,7 +29,7 @@ class CollectiveGroup:
         self,
         input_nodes: List[DAGNode],
         op: ReduceOp,  # [TODO] General collective ops.
-        transport: Union[str, GPUCommunicator] = TorchTensorType.AUTO,
+        transport: Union[str, GPUCommunicator] = TorchTensorType.NCCL,
     ):
         self._input_nodes: List[DAGNode] = input_nodes
         if len(self._input_nodes) == 0:

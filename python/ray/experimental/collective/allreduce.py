@@ -23,7 +23,7 @@ class AllReduceWrapper:
         self,
         input_nodes: List["DAGNode"],
         op: ReduceOp = ReduceOp.SUM,
-        transport: Union[str, GPUCommunicator] = TorchTensorType.AUTO,
+        transport: Union[str, GPUCommunicator] = TorchTensorType.NCCL,
     ) -> List[CollectiveOutputNode]:
         # [TODO] Polish.
         """
