@@ -8,7 +8,7 @@ from ray.experimental.channel.gpu_communicator import (
     GPUCommunicator,
     TorchTensorAllocator,
 )
-from ray.util.collective import types
+from ray.util.collective import nccl_types
 
 if TYPE_CHECKING:
     import cupy as cp
@@ -206,7 +206,11 @@ class _NcclGroup(GPUCommunicator):
             raise RayChannelError("NCCL group has been destroyed.")
         return buf
 
-    def allreduce(self, buf: "torch.Tensor"):
+    def allreduce(
+        self,
+        buf: "torch.Tensor",
+        op: "nccl_types.ReduceOp" = nccl_types.ReduceOp.SUM,
+    ):
         if self._closed:
             raise RayChannelError("NCCL group has been destroyed.")
 
@@ -215,7 +219,7 @@ class _NcclGroup(GPUCommunicator):
             self.nccl_util.get_tensor_ptr(buf),
             buf.numel(),
             self.nccl_util.get_nccl_tensor_dtype(buf),
-            types.ReduceOp.SUM.value,
+            op.value,
             self._cuda_stream.ptr,
         )
 

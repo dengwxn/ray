@@ -105,6 +105,24 @@ class GPUCommunicator(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def allreduce(
+        self,
+        buf: "torch.Tensor",
+        op: "ray.experimental.collective.types.ReduceOp",
+    ):
+        """
+        Collectively allreduce the tensor across the group.
+
+        Args:
+            tensor: the tensor to be all-reduced on this process.
+            op: The reduce operation.
+
+        Returns:
+            None
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def destroy() -> None:
         """
         Destroy the GPU communicator.

@@ -13,7 +13,7 @@ from ray.dag.constants import (
 )
 from ray.dag.format_utils import get_dag_node_str
 from ray.util.annotations import DeveloperAPI
-from ray.util.collective import types
+from ray.util.collective import nccl_types
 from ray.experimental.channel import ChannelContext
 from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
 from ray.experimental.channel.torch_tensor_type import (
@@ -32,7 +32,7 @@ class CollectiveGroup:
     def __init__(
         self,
         input_nodes: List[DAGNode],
-        op: types.ReduceOp,  # [TODO] General collective ops.
+        op: nccl_types.ReduceOp,  # [TODO] General collective ops.
         type_hint: Optional[TorchTensorType] = None,
     ):
         self._input_nodes: List[DAGNode] = input_nodes
@@ -98,8 +98,7 @@ class CollectiveGroup:
 
     def method(self, tensor: "torch.Tensor"):
         nccl_group = self.get_nccl_group()
-        assert self._op == types.ReduceOp.SUM, f"Not implemented for {self._op}"
-        nccl_group.allreduce(tensor)
+        nccl_group.allreduce(tensor, self._op)
         return tensor
 
 

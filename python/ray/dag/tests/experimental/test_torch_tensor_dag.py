@@ -22,7 +22,7 @@ from ray.dag import InputNode, MultiOutputNode
 from ray.exceptions import RayChannelError
 from ray.experimental.channel.torch_tensor_type import TorchTensorType
 from ray.tests.conftest import *  # noqa
-from ray.util.collective import types
+from ray.util.collective import nccl_types
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +75,18 @@ class TorchTensorWorker:
             vals[i] = self.recv(tensor)
         return vals
 
+    def recv_as_list(self, tensor: "torch.Tensor"):
+        assert tensor.device == self.device
+        return tensor.tolist()
+
     def compute_with_tuple_args(self, args, i: int):
         shape, dtype, value = args[i]
         tensor = torch.ones(shape, dtype=dtype, device=self.device) * value
+        return tensor
+
+    def arange(self, range_configs: List[Tuple[int, int, int]], i: int):
+        lo, hi, step = range_configs[i]
+        tensor = torch.arange(lo, hi, step, dtype=torch.float64, device=self.device)
         return tensor
 
     def ping(self):
@@ -374,6 +383,13 @@ def test_torch_tensor_custom_comm(ray_start_regular):
         ) -> "torch.Tensor":
             return self._inner.recv(shape, dtype, peer_rank, allocator=allocator)
 
+        def allreduce(
+            self,
+            tensor: "torch.Tensor",
+            op: "nccl_types.ReduceOp",
+        ):
+            raise NotImplementedError
+
         def destroy(self) -> None:
             return self._inner.destroy()
 
@@ -459,6 +475,13 @@ def test_torch_tensor_custom_comm_invalid(ray_start_regular):
             allocator: Optional[TorchTensorAllocator] = None,
         ) -> "torch.Tensor":
             return None
+
+        def allreduce(
+            self,
+            tensor: "torch.Tensor",
+            op: "nccl_types.ReduceOp",
+        ):
+            raise NotImplementedError
 
         def destroy(self) -> None:
             pass
@@ -592,6 +615,13 @@ def test_torch_tensor_custom_comm_inited(ray_start_regular):
             tensor = torch.empty(torch.Size(shape), dtype=dtype, device=self._device)
             torch.distributed.recv(tensor, peer_rank)
             return tensor
+
+        def allreduce(
+            self,
+            tensor: "torch.Tensor",
+            op: "nccl_types.ReduceOp",
+        ):
+            raise NotImplementedError
 
         def destroy(self) -> None:
             pass
@@ -910,7 +940,7 @@ def test_torch_tensor_nccl_all_reduce(ray_start_regular):
             worker.compute_with_tuple_args.bind(inp, i)
             for i, worker in enumerate(workers)
         ]
-        collectives = collective.allreduce.bind(computes, types.ReduceOp.SUM)
+        collectives = collective.allreduce.bind(computes, nccl_types.ReduceOp.SUM)
         recvs = [
             worker.recv.bind(collective)
             for worker, collective in zip(workers, collectives)
@@ -959,7 +989,7 @@ def test_torch_tensor_nccl_all_reduce_get_partial(ray_start_regular):
             worker.compute_with_tuple_args.bind(inp, i)
             for i, worker in enumerate(workers)
         ]
-        collectives = collective.allreduce.bind(computes, types.ReduceOp.SUM)
+        collectives = collective.allreduce.bind(computes, nccl_types.ReduceOp.SUM)
         dag = workers[0].recv.bind(collectives[0])
 
     compiled_dag = dag.experimental_compile()
@@ -999,7 +1029,7 @@ def test_torch_tensor_nccl_all_reduce_get_partial(ray_start_regular):
 #             worker.compute_with_tuple_args.bind(inp, i)
 #             for i, worker in enumerate(workers)
 #         ]
-#         collectives = collective.allreduce.bind(computes, types.ReduceOp.SUM)
+#         collectives = collective.allreduce.bind(computes, nccl_types.ReduceOp.SUM)
 #         recvs = [
 #             worker.recv.bind(collective)
 #             for worker, collective in zip(workers, collectives)
@@ -1032,6 +1062,190 @@ def test_torch_tensor_nccl_all_reduce_get_partial(ray_start_regular):
 #     # [TODO:andy] Check if this requires time.sleep to avoid some issue with
 #     # following tests.
 #     # time.sleep(3)
+
+
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_torch_tensor_nccl_all_reduce_custom_comm(ray_start_regular):
+    """
+    Test all-reduce works with a custom communicator.
+    """
+    if not USE_GPU:
+        pytest.skip("NCCL tests require GPUs")
+
+    assert (
+        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
+    ), "This test requires at least 2 GPUs"
+
+    actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
+
+    num_workers = 2
+    workers = [actor_cls.remote() for _ in range(num_workers)]
+
+    class TestNcclGroup(GPUCommunicator):
+        """
+        A custom NCCL group for testing. This is a simple wrapper around `_NcclGroup`.
+        """
+
+        def __init__(self, world_size, comm_id, actor_handles):
+            self._world_size = world_size
+            self._comm_id = comm_id
+            self._actor_handles = actor_handles
+            self._inner = None
+
+        def initialize(self, rank: int) -> None:
+            self._inner = _NcclGroup(
+                self._world_size,
+                self._comm_id,
+                rank,
+                self._actor_handles,
+                torch.cuda.current_stream().cuda_stream,
+            )
+
+        def get_rank(self, actor: ray.actor.ActorHandle) -> int:
+            # Implement this without forwarding to `_inner` to allow the method
+            # to be called before initialization.
+            actor_ids = [a._ray_actor_id for a in self._actor_handles]
+            try:
+                rank = actor_ids.index(actor._ray_actor_id)
+            except ValueError:
+                raise ValueError("Actor is not in the NCCL group.")
+            return rank
+
+        def get_world_size(self) -> int:
+            # Implement this without forwarding to `_inner` to allow the method
+            # to be called before initialization.
+            return self._world_size
+
+        def get_self_rank(self) -> Optional[int]:
+            if self._inner is None:
+                return None
+            return self._inner.get_self_rank()
+
+        def get_actor_handles(self) -> List["ray.actor.ActorHandle"]:
+            return self._actor_handles
+
+        def send(self, value: "torch.Tensor", peer_rank: int) -> None:
+            return self._inner.send(value, peer_rank)
+
+        def recv(
+            self,
+            shape: Tuple[int],
+            dtype: "torch.dtype",
+            peer_rank: int,
+            allocator: Optional[TorchTensorAllocator] = None,
+        ) -> "torch.Tensor":
+            return self._inner.recv(shape, dtype, peer_rank, allocator=allocator)
+
+        def allreduce(
+            self,
+            tensor: "torch.Tensor",
+            op: "nccl_types.ReduceOp" = nccl_types.ReduceOp.SUM,
+        ) -> None:
+            return self._inner.allreduce(tensor, op)
+
+        def destroy(self) -> None:
+            return self._inner.destroy()
+
+    from cupy.cuda import nccl
+
+    comm_id = nccl.get_unique_id()
+    nccl_group = TestNcclGroup(2, comm_id, workers)
+    with InputNode() as inp:
+        computes = [
+            worker.compute_with_tuple_args.bind(inp, i)
+            for i, worker in enumerate(workers)
+        ]
+        collectives = collective.allreduce.bind(
+            computes, type_hint=TorchTensorType(transport=nccl_group)
+        )
+        recvs = [
+            worker.recv.bind(collective)
+            for worker, collective in zip(workers, collectives)
+        ]
+        dag = MultiOutputNode(recvs)
+
+    compiled_dag = dag.experimental_compile()
+
+    shape = (10,)
+    dtype = torch.float16
+    for i in range(3):
+        ref = compiled_dag.execute(
+            [(shape, dtype, idx + 1 + i) for idx in range(num_workers)]
+        )
+        result = ray.get(ref)
+        reduced_val = (num_workers + 1) * num_workers / 2 + i * num_workers
+        assert result == [(reduced_val, shape, dtype) for _ in workers]
+
+    compiled_dag.teardown()
+
+
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_torch_tensor_nccl_all_reduce_diff_reduce_ops(ray_start_regular):
+    """
+    Test all-reduce works for all available ReduceOps.
+    """
+
+    if not USE_GPU:
+        pytest.skip("NCCL tests require GPUs")
+
+    assert (
+        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
+    ), "This test requires at least 2 GPUs"
+
+    actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
+
+    num_workers = 2
+    workers = [actor_cls.remote() for _ in range(num_workers)]
+
+    lo: int = 1
+    hi: int = 10
+    range_configs = [(i + lo, (hi + 1) * (i + lo), i + lo) for i in range(num_workers)]
+
+    for op in nccl_types.ReduceOp:
+        if op == nccl_types.ReduceOp.MIN:
+            continue
+        with InputNode() as inp:
+            tensors = [
+                worker.arange.bind(inp.ranges, i) for i, worker in enumerate(workers)
+            ]
+            collectives = collective.allreduce.bind(tensors, op)
+            recvs = [
+                worker.recv_as_list.bind(collective)
+                for worker, collective in zip(workers, collectives)
+            ]
+            dag = MultiOutputNode(recvs)
+
+        compiled_dag = dag.experimental_compile()
+
+        ref = compiled_dag.execute(ranges=range_configs)
+        result = ray.get(ref)
+        if op == nccl_types.ReduceOp.MAX:
+            expected = [
+                list(range(num_workers * lo, num_workers * (hi + 1), num_workers))
+                for _ in workers
+            ]
+        elif op == nccl_types.ReduceOp.MIN:
+            expected = [list(range(lo, hi + 1, 1)) for _ in workers]
+        elif op == nccl_types.ReduceOp.SUM:
+            base_sum = int((1 + num_workers) * num_workers / 2)
+            expected = [
+                list(range(base_sum * lo, base_sum * (hi + 1), base_sum))
+                for _ in workers
+            ]
+        elif op == nccl_types.ReduceOp.PRODUCT:
+            base = 1
+            for i in range(num_workers):
+                base *= i + 1
+            reduced = [(pow(i, num_workers) * base) for i in range(lo, hi + 1)]
+            expected = [reduced for _ in workers]
+        elif op == nccl_types.ReduceOp.AVG:
+            base_avg = (num_workers + 1) / 2
+            expected = [[i * base_avg for i in range(lo, hi + 1)] for _ in workers]
+        else:
+            raise NotImplementedError("Test not implemented for this ReduceOp")
+        assert result == expected
+
+        compiled_dag.teardown()
 
 
 if __name__ == "__main__":
