@@ -209,7 +209,7 @@ class _NcclGroup(GPUCommunicator):
     def allreduce(
         self,
         buf: "torch.Tensor",
-        op: "ReduceOp" = ReduceOp.SUM,
+        op: ReduceOp = ReduceOp.SUM,
     ):
         if self._closed:
             raise RayChannelError("NCCL group has been destroyed.")

@@ -377,7 +377,7 @@ def test_torch_tensor_custom_comm(ray_start_regular):
         def allreduce(
             self,
             tensor: "torch.Tensor",
-            op: "ReduceOp",
+            op: ReduceOp,
         ):
             raise NotImplementedError
 
@@ -470,7 +470,7 @@ def test_torch_tensor_custom_comm_invalid(ray_start_regular):
         def allreduce(
             self,
             tensor: "torch.Tensor",
-            op: "ReduceOp",
+            op: ReduceOp,
         ):
             raise NotImplementedError
 
@@ -610,7 +610,7 @@ def test_torch_tensor_custom_comm_inited(ray_start_regular):
         def allreduce(
             self,
             tensor: "torch.Tensor",
-            op: "ReduceOp",
+            op: ReduceOp,
         ):
             raise NotImplementedError
 
@@ -1130,7 +1130,7 @@ def test_torch_tensor_nccl_all_reduce_custom_comm(ray_start_regular):
         def allreduce(
             self,
             tensor: "torch.Tensor",
-            op: "ReduceOp" = ReduceOp.SUM,
+            op: ReduceOp = ReduceOp.SUM,
         ) -> None:
             return self._inner.allreduce(tensor, op)
 
