@@ -49,7 +49,6 @@ class CollectiveGroup:
         if len(set(self._actor_handles)) != len(self._actor_handles):
             raise ValueError("Expected unique actor handles for a collective group")
 
-        # [TODO] Validate they are compatible with user-defined collective group.
         self._op = op
         if type_hint is not None:
             assert type_hint.requires_nccl()
@@ -75,7 +74,11 @@ class CollectiveGroup:
     def actor_handles(self) -> List["ray.actor.ActorHandle"]:
         return self._actor_handles
 
-    def init_nccl_group(self) -> Optional[str]:
+    @property
+    def type_hint(self) -> TorchTensorType:
+        return self._type_hint
+
+    def init_nccl_group(self) -> str:
         type_hint = self._type_hint
         if type_hint.nccl_group_id is not None:
             # The NCCL group has already been initialized.
