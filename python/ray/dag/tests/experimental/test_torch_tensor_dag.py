@@ -525,7 +525,9 @@ def test_torch_tensor_custom_comm_inited(ray_start_regular):
     ), "This test requires at least 2 GPUs"
     runtime_env = {
         "env_vars": {
-            "MASTER_ADDR": socket.gethostbyname(socket.gethostname()),
+            # [NOTE] Local test only.
+            # "MASTER_ADDR": socket.gethostbyname(socket.gethostname()),
+            "MASTER_ADDR": "127.0.0.1",
             "MASTER_PORT": "8888",
         }
     }
