@@ -17,7 +17,6 @@ from ray.util.collective.nccl_types import ReduceOp
 from ray.experimental.channel import ChannelContext
 from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
 from ray.experimental.channel.torch_tensor_type import (
-    ChannelOutputType,
     GPUCommunicator,
     TorchTensorType,
 )

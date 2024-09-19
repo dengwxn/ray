@@ -1,6 +1,6 @@
 from functools import total_ordering
 from enum import Enum
-from typing import Set, Tuple, List, Dict
+from typing import Set, Tuple, List, Dict, Optional
 import ray
 import heapq
 from collections import defaultdict
@@ -135,7 +135,8 @@ def _add_edge(from_node: _DAGOperationGraphNode, to_node: _DAGOperationGraphNode
 def _select_next_nodes(
     actor_to_candidates: Dict["ray._raylet.ActorID", List[_DAGOperationGraphNode]],
     graph: Dict[int, Dict[_DAGNodeOperationType, _DAGOperationGraphNode]],
-):
+) -> Optional[List[_DAGOperationGraphNode]]:
+    # [TODO] Update comments.
     """
     This function selects the next nodes for topological sort to generate execution
     schedule. If there are multiple candidate _DAGOperationGraphNodes, select the node
@@ -175,32 +176,33 @@ def _select_next_nodes(
         execution schedules.
     """
     top_priority_node = None
-    next_nodes: List[_DAGOperationGraphNode] = []
     for _, candidates in actor_to_candidates.items():
         if len(candidates) == 0:
             continue
         if top_priority_node is None or candidates[0] < top_priority_node:
             top_priority_node = candidates[0]
-    assert top_priority_node is not None
-    next_nodes.append(
+    if top_priority_node is None:
+        return None
+
+    next_nodes: List[_DAGOperationGraphNode] = [
         heapq.heappop(actor_to_candidates[top_priority_node.actor_handle._actor_id])
-    )
+    ]
 
     if not (
         top_priority_node.operation.type == _DAGNodeOperationType.WRITE
         and top_priority_node.requires_nccl
     ):
         assert len(next_nodes) == 1
-        return next_nodes
+    else:
+        # An NCCL write node is picked. NCCL is a blocking operation, so we need to
+        # pick all the corresponding NCCL read nodes to avoid a deadlock.
+        for downstream_node_metadata in top_priority_node.out_edges:
+            task_idx, op_type = downstream_node_metadata[0], downstream_node_metadata[1]
+            downstream_node = graph[task_idx][op_type]
+            assert downstream_node.operation.type == _DAGNodeOperationType.READ
+            next_nodes.append(downstream_node)
+        assert len(next_nodes) == 1 + len(top_priority_node.out_edges)
 
-    # An NCCL write node is picked. NCCL is a blocking operation, so we need to pick all
-    # the corresponding NCCL read nodes to avoid a deadlock.
-    for downstream_node_metadata in top_priority_node.out_edges:
-        task_idx, op_type = downstream_node_metadata[0], downstream_node_metadata[1]
-        downstream_node = graph[task_idx][op_type]
-        assert downstream_node.operation.type == _DAGNodeOperationType.READ
-        next_nodes.append(downstream_node)
-    assert len(next_nodes) == 1 + len(top_priority_node.out_edges)
     return next_nodes
 
 
@@ -343,28 +345,34 @@ def _generate_actor_to_execution_schedule(
 
     visited_nodes = set()
 
+    # [TODO] Update comments.
     # Use topological sort algorithm to generate the execution schedule. Each iteration
     # pops a candidate node from `actor_to_candidates` and each DAG node consists of
     # three operations: READ, COMPUTE, and WRITE.
-    for _ in range(len(graph) * 3):
+    while True:
         # The function `_select_next_nodes` will pop a candidate node from
         # `actor_to_candidates` and return a list of nodes that can be executed
         # in the next step. If multiple nodes are returned, only the NCCL write
         # node is popped in this iteration.
         nodes = _select_next_nodes(actor_to_candidates, graph)
+        if nodes is None:
+            break
         for node in nodes:
             if node in visited_nodes:
                 continue
             actor_to_execution_schedule[node.actor_handle].append(node.operation)
             visited_nodes.add(node)
+        for node in nodes:
             for out_node_task_idx, out_node_type in node.out_edges:
                 out_node = graph[out_node_task_idx][out_node_type]
                 out_node.in_edges.remove((node.task_idx, node.operation.type))
-                if out_node.in_degree == 0:
+                if out_node.in_degree == 0 and out_node not in visited_nodes:
                     heapq.heappush(
                         actor_to_candidates[out_node.actor_handle._actor_id],
                         out_node,
                     )
+        for node in nodes:
+            assert node.in_degree == 0, f"Expected {node} to have in degree 0"
     for _, candidates in actor_to_candidates.items():
         assert len(candidates) == 0
     return actor_to_execution_schedule
