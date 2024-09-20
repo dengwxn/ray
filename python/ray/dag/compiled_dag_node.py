@@ -968,19 +968,19 @@ class CompiledDAG:
                     # Add all readers to the NCCL group.
                     nccl_actors.add(downstream_actor_handle)
 
+        # [TODO] Comments.
+        actors_to_nccl_group_id: Dict[FrozenSet["ray.actor.ActorHandle"], str] = {}
+
         # If there were type hints indicating transport via NCCL, initialize
         # the NCCL group on the participating actors.
         nccl_actors = list(nccl_actors)
         if None in nccl_actors:
             raise ValueError("Driver cannot participate in the NCCL group.")
 
-        # [TODO] Comments.
-        actors_to_nccl_group_id: Dict[FrozenSet["ray.actor.ActorHandle"], str] = {}
-        if self._nccl_group_id is not None:
-            actors_to_nccl_group_id[frozenset(nccl_actors)] = self._nccl_group_id
-        elif self._custom_nccl_group is not None:
+        if nccl_actors and self._custom_nccl_group is not None:
             self._nccl_group_id = _init_nccl_group(nccl_actors, self._custom_nccl_group)
-            actors_to_nccl_group_id[frozenset(nccl_actors)] = self._nccl_group_id
+            actors = frozenset(nccl_actors)
+            actors_to_nccl_group_id[actors] = self._nccl_group_id
 
         # [TODO] Comments.
         for collective_group in nccl_collective_groups:
@@ -991,6 +991,7 @@ class CompiledDAG:
                 if actors not in actors_to_nccl_group_id:
                     actors_to_nccl_group_id[actors] = nccl_group_id
 
+        # [TODO] Comments.
         if nccl_actors and self._nccl_group_id is None:
             actors = frozenset(nccl_actors)
             if actors in actors_to_nccl_group_id:
