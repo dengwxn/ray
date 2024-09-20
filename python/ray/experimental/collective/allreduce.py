@@ -10,7 +10,8 @@ from ray.dag.constants import (
 )
 from ray.dag.dag_node import DAGNode
 from ray.experimental.channel.torch_tensor_type import GPUCommunicator, TorchTensorType
-from ray.util.collective import types
+from ray.util.collective import types as ray_types
+from ray.util.collective.nccl_types import ReduceOp
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +22,8 @@ class AllReduceWrapper:
     def bind(
         self,
         input_nodes: List["DAGNode"],
-        op: types.ReduceOp,
-        transport: Union[str, GPUCommunicator] = TorchTensorType.AUTO,
+        op: ReduceOp = ReduceOp.SUM,
+        transport: Union[str, GPUCommunicator] = TorchTensorType.NCCL,
     ) -> List[CollectiveOutputNode]:
         # [TODO] Polish.
         """
@@ -70,7 +71,7 @@ class AllReduceWrapper:
         self,
         tensor,
         group_name: str = "default",
-        op: types.ReduceOp = types.ReduceOp.SUM,
+        op: ray_types.ReduceOp = ray_types.ReduceOp.SUM,
     ):
         from ray.util.collective.collective import allreduce
 
