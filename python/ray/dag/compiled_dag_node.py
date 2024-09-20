@@ -976,7 +976,9 @@ class CompiledDAG:
         nccl_actors = list(nccl_actors)
         if None in nccl_actors:
             raise ValueError("Driver cannot participate in the NCCL group.")
-        if nccl_actors and self._nccl_group_id is None:
+
+        # [TODO] Comments.
+        if nccl_actors and self._custom_nccl_group is not None:
             self._nccl_group_id = _init_nccl_group(nccl_actors, self._custom_nccl_group)
             actors = frozenset(nccl_actors)
             actors_to_nccl_group_id[actors] = self._nccl_group_id
@@ -989,6 +991,12 @@ class CompiledDAG:
                 actors = frozenset(collective_group.actor_handles)
                 if actors not in actors_to_nccl_group_id:
                     actors_to_nccl_group_id[actors] = nccl_group_id
+
+        # [TODO] Comments.
+        if nccl_actors and self._nccl_group_id is None:
+            self._nccl_group_id = _init_nccl_group(nccl_actors, self._custom_nccl_group)
+            actors = frozenset(nccl_actors)
+            actors_to_nccl_group_id[actors] = self._nccl_group_id
 
         # [TODO] Comments.
         for collective_group in nccl_collective_groups:
