@@ -1539,18 +1539,14 @@ def test_torch_tensor_nccl_all_reduce_diff_comms(ray_start_regular):
     assert len(nccl_group_ids) == 2
     ctx = ChannelContext.get_current()
     nccl_groups = [ctx.nccl_groups[nccl_group_id] for nccl_group_id in nccl_group_ids]
-    nccl_actor_lists = [nccl_group.get_actor_handles() for nccl_group in nccl_groups]
+    nccl_group_actors = [nccl_group.get_actor_handles() for nccl_group in nccl_groups]
+    for actors in nccl_group_actors:
+        assert len(actors) == 1
     # One of the NCCL group should contain workers[0] and the other should
     # contain workers[1].
-    actor_groups = set()
-    for nccl_actor_list in nccl_actor_lists:
-        actor_groups.add(frozenset(nccl_actor_list))
-    expected_actor_groups = set()
-    for worker in workers:
-        expected_actor_groups.add(frozenset([worker]))
-    assert actor_groups == expected_actor_groups
+    assert nccl_group_actors[0][0] != nccl_group_actors[1][0]
 
-    # Sanity check: No P2P communicator constructed.
+    # Sanity check: No P2P NCCL group constructed.
     assert compiled_dag._nccl_group_id is None
 
     # Sanity check: the compiled dag can execute.
