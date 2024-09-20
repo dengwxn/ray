@@ -977,6 +977,7 @@ class CompiledDAG:
         if None in nccl_actors:
             raise ValueError("Driver cannot participate in the NCCL group.")
 
+        # [TODO] Comments.
         if nccl_actors and self._custom_nccl_group is not None:
             self._nccl_group_id = _init_nccl_group(nccl_actors, self._custom_nccl_group)
             actors = frozenset(nccl_actors)
