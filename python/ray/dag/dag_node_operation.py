@@ -16,7 +16,6 @@ class _DAGNodeOperationType(Enum):
 
     READ = "READ"
     COMPUTE = "COMPUTE"
-    COLLECTIVE = "COLLECTIVE"
     WRITE = "WRITE"
 
 
@@ -73,8 +72,6 @@ class _DAGOperationGraphNode:
         # be READ, COMPUTE, or WRITE.
         self.in_edges: Set[Tuple[int, _DAGNodeOperationType]] = set()
         self.out_edges: Set[Tuple[int, _DAGNodeOperationType]] = set()
-        # [TODO] Comment.
-        self.collective_edges: Set[Tuple[int, _DAGNodeOperationType]] = set()
 
     @property
     def in_degree(self) -> int:
@@ -90,24 +87,20 @@ class _DAGOperationGraphNode:
         # the smaller `exec_task_idx`.
         if self.actor_handle == other.actor_handle:
             return self.operation.exec_task_idx < other.operation.exec_task_idx
-        # [TODO] Check comments.
-        # If two nodes belong to different actors and only one of them is either
-        # an NCCL write or an NCCL collective, select the one that is neither an
-        # NCCL write nor an NCCL collective.
-        is_nccl_write_or_nccl_collective = (
+        # If two nodes belong to different actors and one of them is an NCCL
+        # write node, select the one that is not an NCCL write node.
+        is_nccl_write = (
             self.operation.type == _DAGNodeOperationType.WRITE and self.requires_nccl
-        ) or self.operation.type == _DAGNodeOperationType.COLLECTIVE
-        other_is_nccl_write_or_nccl_collective = (
+        )
+        other_is_nccl_write = (
             other.operation.type == _DAGNodeOperationType.WRITE and other.requires_nccl
-        ) or other.operation.type == _DAGNodeOperationType.COLLECTIVE
-        if is_nccl_write_or_nccl_collective != other_is_nccl_write_or_nccl_collective:
-            return not is_nccl_write_or_nccl_collective
-        # [TODO] Check comments.
-        # If two nodes belong to different actors, as in one of the cases:
-        # (1) both are either NCCL write or NCCL collective;
-        # (2) neither are NCCL write or NCCL collective;
-        # Select the one with the smaller `exec_task_idx`. If they have the same
-        # `exec_task_idx`, select the one with the smaller `task_idx`.
+        )
+        if is_nccl_write != other_is_nccl_write:
+            return not is_nccl_write
+        # If two nodes belong to different actors and both are either NCCL write
+        # nodes or neither are NCCL write nodes, select the one with the smaller
+        # `exec_task_idx`. If they have the same `exec_task_idx`, select the one
+        # with the smaller `task_idx`.
         if self.operation.exec_task_idx != other.operation.exec_task_idx:
             return self.operation.exec_task_idx < other.operation.exec_task_idx
         return self.task_idx < other.task_idx
@@ -183,43 +176,32 @@ def _select_next_nodes(
         execution schedules.
     """
     top_priority_node = None
+    next_nodes: List[_DAGOperationGraphNode] = []
     for _, candidates in actor_to_candidates.items():
         if len(candidates) == 0:
             continue
         if top_priority_node is None or candidates[0] < top_priority_node:
             top_priority_node = candidates[0]
-    if top_priority_node is None:
-        return None
-
-    next_nodes: List[_DAGOperationGraphNode] = [
+    assert top_priority_node is not None
+    next_nodes.append(
         heapq.heappop(actor_to_candidates[top_priority_node.actor_handle._actor_id])
-    ]
+    )
 
-    has_nccl_write = (
+    if not (
         top_priority_node.operation.type == _DAGNodeOperationType.WRITE
         and top_priority_node.requires_nccl
-    )
-    has_nccl_collective = (
-        top_priority_node.operation.type == _DAGNodeOperationType.COLLECTIVE
-    )
-    if not (has_nccl_write or has_nccl_collective):
+    ):
         assert len(next_nodes) == 1
-    elif has_nccl_write:
-        # An NCCL write node is picked. NCCL is a blocking operation, so we need to
-        # pick all the corresponding NCCL read nodes to avoid a deadlock.
-        for downstream_node_metadata in top_priority_node.out_edges:
-            task_idx, op_type = downstream_node_metadata[0], downstream_node_metadata[1]
-            downstream_node = graph[task_idx][op_type]
-            assert downstream_node.operation.type == _DAGNodeOperationType.READ
-            next_nodes.append(downstream_node)
-        assert len(next_nodes) == 1 + len(top_priority_node.out_edges)
-    elif has_nccl_collective:
-        for collective_node_metadata in top_priority_node.collective_edges:
-            task_idx, op_type = collective_node_metadata[0], collective_node_metadata[1]
-            collective_node = graph[task_idx][op_type]
-            assert collective_node.operation.type == _DAGNodeOperationType.COLLECTIVE
-            next_nodes.append(collective_node)
+        return next_nodes
 
+    # An NCCL write node is picked. NCCL is a blocking operation, so we need to pick all
+    # the corresponding NCCL read nodes to avoid a deadlock.
+    for downstream_node_metadata in top_priority_node.out_edges:
+        task_idx, op_type = downstream_node_metadata[0], downstream_node_metadata[1]
+        downstream_node = graph[task_idx][op_type]
+        assert downstream_node.operation.type == _DAGNodeOperationType.READ
+        next_nodes.append(downstream_node)
+    assert len(next_nodes) == 1 + len(top_priority_node.out_edges)
     return next_nodes
 
 
@@ -365,34 +347,28 @@ def _generate_actor_to_execution_schedule(
 
     visited_nodes = set()
 
-    # [TODO] Update comments.
     # Use topological sort algorithm to generate the execution schedule. Each iteration
     # pops a candidate node from `actor_to_candidates` and each DAG node consists of
     # three operations: READ, COMPUTE, and WRITE.
-    while True:
+    for _ in range(len(graph) * 3):
         # The function `_select_next_nodes` will pop a candidate node from
         # `actor_to_candidates` and return a list of nodes that can be executed
         # in the next step. If multiple nodes are returned, only the NCCL write
         # node is popped in this iteration.
         nodes = _select_next_nodes(actor_to_candidates, graph)
-        if nodes is None:
-            break
         for node in nodes:
             if node in visited_nodes:
                 continue
             actor_to_execution_schedule[node.actor_handle].append(node.operation)
             visited_nodes.add(node)
-        for node in nodes:
             for out_node_task_idx, out_node_type in node.out_edges:
                 out_node = graph[out_node_task_idx][out_node_type]
                 out_node.in_edges.remove((node.task_idx, node.operation.type))
-                if out_node.in_degree == 0 and out_node not in visited_nodes:
+                if out_node.in_degree == 0:
                     heapq.heappush(
                         actor_to_candidates[out_node.actor_handle._actor_id],
                         out_node,
                     )
-        for node in nodes:
-            assert node.in_degree == 0, f"Expected {node} to have in degree 0"
     for _, candidates in actor_to_candidates.items():
         assert len(candidates) == 0
     return actor_to_execution_schedule
