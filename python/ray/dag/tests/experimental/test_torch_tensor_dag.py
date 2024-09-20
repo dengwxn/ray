@@ -1338,7 +1338,7 @@ def test_torch_tensor_nccl_comm_deduplicate_collectives(ray_start_regular):
     from ray.dag.collective_node import CollectiveOutputNode
     from ray.experimental.channel import ChannelContext
 
-    comm_ids = set()
+    nccl_group_ids = set()
     for _, exec_tasks in compiled_dag.actor_to_executable_tasks.items():
         for exec_task in exec_tasks:
             dag_node = compiled_dag.idx_to_task[exec_task.task_idx].dag_node
@@ -1346,16 +1346,16 @@ def test_torch_tensor_nccl_comm_deduplicate_collectives(ray_start_regular):
                 assert exec_task.collective_group is not None
                 nccl_group_id = exec_task.collective_group._type_hint._nccl_group_id
                 assert nccl_group_id is not None
-                comm_ids.add(nccl_group_id)
+                nccl_group_ids.add(nccl_group_id)
     # Only 1 NCCL group should be created.
-    assert len(comm_ids) == 1
-    comm_id = list(comm_ids)[0]
+    assert len(nccl_group_ids) == 1
+    nccl_group_id = list(nccl_group_ids)[0]
     ctx = ChannelContext.get_current()
-    comm = ctx.nccl_groups[comm_id]
-    comm_actors = comm.get_actor_handles()
+    nccl_group = ctx.nccl_groups[nccl_group_id]
+    nccl_actors = nccl_group.get_actor_handles()
     # The NCCL group should contain both workers.
-    assert set(comm_actors) == set(workers)
-    # p2p NCCL group should be None b/c no tensors are sent via NCCL.
+    assert set(nccl_actors) == set(workers)
+    # P2P NCCL group should be None since NCCL transport is not used.
     assert compiled_dag._nccl_group_id is None
 
     # Sanity check: the compiled dag can execute.
@@ -1394,7 +1394,7 @@ def test_torch_tensor_nccl_comm_deduplicate_collective_and_p2p(ray_start_regular
         ]
         collectives = collective.allreduce.bind(computes)
         recvs = [
-            # Each of the 2 worker recvs from the other.
+            # Each of the 2 workers recvs from the other.
             workers[0].recv.bind(
                 collectives[1].with_type_hint(TorchTensorType(transport="nccl"))
             ),
@@ -1409,25 +1409,25 @@ def test_torch_tensor_nccl_comm_deduplicate_collective_and_p2p(ray_start_regular
     from ray.dag.collective_node import CollectiveOutputNode
     from ray.experimental.channel import ChannelContext
 
-    comm_ids = set()
+    nccl_group_ids = set()
     for _, exec_tasks in compiled_dag.actor_to_executable_tasks.items():
         for exec_task in exec_tasks:
             dag_node = compiled_dag.idx_to_task[exec_task.task_idx].dag_node
             if isinstance(dag_node, CollectiveOutputNode):
                 assert exec_task.collective_group is not None
-                nccl_group_id = exec_task.collective_group._type_hint._nccl_group_id
+                nccl_group_id = exec_task.collective_group.type_hint.nccl_group_id
                 assert nccl_group_id is not None
-                comm_ids.add(nccl_group_id)
+                nccl_group_ids.add(nccl_group_id)
     # Only 1 NCCL group should be created.
-    assert len(comm_ids) == 1
-    comm_id = list(comm_ids)[0]
+    assert len(nccl_group_ids) == 1
+    nccl_group_id = list(nccl_group_ids)[0]
     ctx = ChannelContext.get_current()
-    comm = ctx.nccl_groups[comm_id]
-    comm_actors = comm.get_actor_handles()
+    nccl_group = ctx.nccl_groups[nccl_group_id]
+    nccl_actors = nccl_group.get_actor_handles()
     # The NCCL group should contain both workers.
-    assert set(comm_actors) == set(workers)
-    # The comm for all-reduce should be the same as the p2p send/recv comm.
-    assert comm_id == compiled_dag._nccl_group_id
+    assert set(nccl_actors) == set(workers)
+    # The nccl_group for all-reduce should be the same as the p2p send/recv nccl_group.
+    assert nccl_group_id == compiled_dag._nccl_group_id
 
     # Without scheduling, the following execution hangs.
     # # Sanity check: the compiled dag can execute.
@@ -1453,7 +1453,7 @@ def test_torch_tensor_nccl_comm_deduplicate_collective_and_p2p(ray_start_regular
 
     compiled_dag = dag.experimental_compile()
 
-    comm_ids = set()
+    nccl_group_ids = set()
     for _, exec_tasks in compiled_dag.actor_to_executable_tasks.items():
         for exec_task in exec_tasks:
             dag_node = compiled_dag.idx_to_task[exec_task.task_idx].dag_node
@@ -1461,21 +1461,21 @@ def test_torch_tensor_nccl_comm_deduplicate_collective_and_p2p(ray_start_regular
                 assert exec_task.collective_group is not None
                 nccl_group_id = exec_task.collective_group._type_hint._nccl_group_id
                 assert nccl_group_id is not None
-                comm_ids.add(nccl_group_id)
+                nccl_group_ids.add(nccl_group_id)
 
     # Both workers participated in the all-reduce;
     # one of them is the sender and the other is the receiver in p2p.
     # So only 1 NCCL group should be created.
-    assert len(comm_ids) == 1
-    comm_id = list(comm_ids)[0]
+    assert len(nccl_group_ids) == 1
+    nccl_group_id = list(nccl_group_ids)[0]
     ctx = ChannelContext.get_current()
-    comm = ctx.nccl_groups[comm_id]
-    comm_actors = comm.get_actor_handles()
+    nccl_group = ctx.nccl_groups[nccl_group_id]
+    nccl_actors = nccl_group.get_actor_handles()
     # The NCCL group should contain both workers.
-    assert set(comm_actors) == set(workers)
+    assert set(nccl_actors) == set(workers)
 
-    # The comm for all-reduce should be the same as the p2p send/recv comm.
-    assert comm_id == compiled_dag._nccl_group_id
+    # The nccl_group for all-reduce should be the same as the p2p send/recv nccl_group.
+    assert nccl_group_id == compiled_dag._nccl_group_id
 
     # Sanity check: the compiled dag can execute.
     shape = (10,)
@@ -1525,7 +1525,7 @@ def test_torch_tensor_nccl_all_reduce_diff_comms(ray_start_regular):
     from ray.dag.collective_node import CollectiveOutputNode
     from ray.experimental.channel import ChannelContext
 
-    comm_ids = set()
+    nccl_group_ids = set()
     for _, exec_tasks in compiled_dag.actor_to_executable_tasks.items():
         for exec_task in exec_tasks:
             dag_node = compiled_dag.idx_to_task[exec_task.task_idx].dag_node
@@ -1533,20 +1533,24 @@ def test_torch_tensor_nccl_all_reduce_diff_comms(ray_start_regular):
                 assert exec_task.collective_group is not None
                 nccl_group_id = exec_task.collective_group._type_hint._nccl_group_id
                 assert nccl_group_id is not None
-                comm_ids.add(nccl_group_id)
+                nccl_group_ids.add(nccl_group_id)
 
     # Exactly 2 NCCL groups should be created.
-    assert len(comm_ids) == 2
+    assert len(nccl_group_ids) == 2
     ctx = ChannelContext.get_current()
-    comms = [ctx.nccl_groups[comm_id] for comm_id in comm_ids]
-    comm_actors = [comm.get_actor_handles() for comm in comms]
-    # One of the NCCL group should contain workers[0] and
-    # the other should contain workers[1]
-    assert {frozenset(comm_actor) for comm_actor in comm_actors} == {
-        frozenset([worker]) for worker in workers
-    }
+    nccl_groups = [ctx.nccl_groups[nccl_group_id] for nccl_group_id in nccl_group_ids]
+    nccl_actor_lists = [nccl_group.get_actor_handles() for nccl_group in nccl_groups]
+    # One of the NCCL group should contain workers[0] and the other should
+    # contain workers[1].
+    actor_groups = set()
+    for nccl_actor_list in nccl_actor_lists:
+        actor_groups.add(frozenset(nccl_actor_list))
+    expected_actor_groups = set()
+    for worker in workers:
+        expected_actor_groups.add(frozenset([worker]))
+    assert actor_groups == expected_actor_groups
 
-    # Sanity check: No p2p communicator constructed.
+    # Sanity check: No P2P communicator constructed.
     assert compiled_dag._nccl_group_id is None
 
     # Sanity check: the compiled dag can execute.
