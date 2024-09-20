@@ -1694,7 +1694,6 @@ def test_torch_tensor_nccl_deduplicate_custom_comm(ray_start_regular):
 
     comm_id = nccl.get_unique_id()
     comm = TestNcclGroup(num_workers, comm_id, workers)
-    print("original custom group", comm)
     with InputNode() as inp:
         computes = [
             worker.compute_with_tuple_args.bind(inp, i)
@@ -1726,7 +1725,6 @@ def test_torch_tensor_nccl_deduplicate_custom_comm(ray_start_regular):
     ctx = ChannelContext.get_current()
     nccl_group_id = list(nccl_group_ids)[0]
     nccl_group = ctx.nccl_groups[nccl_group_id]
-    print(ctx.nccl_groups)
     assert set(nccl_group.get_actor_handles()) == set(workers)
     # The following assertion fails because TorchTensorType is deep-copied as a whole.
     # assert nccl_group == comm

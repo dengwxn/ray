@@ -977,10 +977,8 @@ class CompiledDAG:
         # [TODO] Comments.
         actors_to_nccl_group_id: Dict[FrozenSet["ray.actor.ActorHandle"], str] = {}
         if self._nccl_group_id is not None:
-            print("nccl group already set")
             actors_to_nccl_group_id[frozenset(nccl_actors)] = self._nccl_group_id
         elif self._custom_nccl_group is not None:
-            print("init with custom group", self._custom_nccl_group)
             self._nccl_group_id = _init_nccl_group(nccl_actors, self._custom_nccl_group)
             actors_to_nccl_group_id[frozenset(nccl_actors)] = self._nccl_group_id
 
