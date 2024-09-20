@@ -1546,7 +1546,7 @@ def test_torch_tensor_nccl_all_reduce_diff_comms(ray_start_regular):
     # contain workers[1].
     assert nccl_group_actors[0][0] != nccl_group_actors[1][0]
 
-    # Sanity check: No P2P NCCL group constructed.
+    # Sanity check: No P2P NCCL group created.
     assert compiled_dag._nccl_group_id is None
 
     # Sanity check: the compiled dag can execute.
