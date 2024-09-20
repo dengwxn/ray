@@ -16,6 +16,7 @@ class _DAGNodeOperationType(Enum):
 
     READ = "READ"
     COMPUTE = "COMPUTE"
+    COLLECTIVE = "COLLECTIVE"
     WRITE = "WRITE"
 
 
@@ -72,6 +73,8 @@ class _DAGOperationGraphNode:
         # be READ, COMPUTE, or WRITE.
         self.in_edges: Set[Tuple[int, _DAGNodeOperationType]] = set()
         self.out_edges: Set[Tuple[int, _DAGNodeOperationType]] = set()
+        # [TODO] Comment.
+        self.collective_edges: Set[Tuple[int, _DAGNodeOperationType]] = set()
 
     @property
     def in_degree(self) -> int:
@@ -87,20 +90,24 @@ class _DAGOperationGraphNode:
         # the smaller `exec_task_idx`.
         if self.actor_handle == other.actor_handle:
             return self.operation.exec_task_idx < other.operation.exec_task_idx
-        # If two nodes belong to different actors and one of them is an NCCL
-        # write node, select the one that is not an NCCL write node.
-        is_nccl_write = (
+        # [TODO] Check comments.
+        # If two nodes belong to different actors and only one of them is either
+        # an NCCL write or an NCCL collective, select the one that is neither an
+        # NCCL write nor an NCCL collective.
+        is_nccl_write_or_nccl_collective = (
             self.operation.type == _DAGNodeOperationType.WRITE and self.requires_nccl
-        )
-        other_is_nccl_write = (
+        ) or self.operation.type == _DAGNodeOperationType.COLLECTIVE
+        other_is_nccl_write_or_nccl_collective = (
             other.operation.type == _DAGNodeOperationType.WRITE and other.requires_nccl
-        )
-        if is_nccl_write != other_is_nccl_write:
-            return not is_nccl_write
-        # If two nodes belong to different actors and both are either NCCL write
-        # nodes or neither are NCCL write nodes, select the one with the smaller
-        # `exec_task_idx`. If they have the same `exec_task_idx`, select the one
-        # with the smaller `task_idx`.
+        ) or other.operation.type == _DAGNodeOperationType.COLLECTIVE
+        if is_nccl_write_or_nccl_collective != other_is_nccl_write_or_nccl_collective:
+            return not is_nccl_write_or_nccl_collective
+        # [TODO] Check comments.
+        # If two nodes belong to different actors, as in one of the cases:
+        # (1) both are either NCCL write or NCCL collective;
+        # (2) neither are NCCL write or NCCL collective;
+        # Select the one with the smaller `exec_task_idx`. If they have the same
+        # `exec_task_idx`, select the one with the smaller `task_idx`.
         if self.operation.exec_task_idx != other.operation.exec_task_idx:
             return self.operation.exec_task_idx < other.operation.exec_task_idx
         return self.task_idx < other.task_idx
@@ -188,12 +195,16 @@ def _select_next_nodes(
         heapq.heappop(actor_to_candidates[top_priority_node.actor_handle._actor_id])
     ]
 
-    if not (
+    has_nccl_write = (
         top_priority_node.operation.type == _DAGNodeOperationType.WRITE
         and top_priority_node.requires_nccl
-    ):
+    )
+    has_nccl_collective = (
+        top_priority_node.operation.type == _DAGNodeOperationType.COLLECTIVE
+    )
+    if not (has_nccl_write or has_nccl_collective):
         assert len(next_nodes) == 1
-    else:
+    elif has_nccl_write:
         # An NCCL write node is picked. NCCL is a blocking operation, so we need to
         # pick all the corresponding NCCL read nodes to avoid a deadlock.
         for downstream_node_metadata in top_priority_node.out_edges:
@@ -202,6 +213,12 @@ def _select_next_nodes(
             assert downstream_node.operation.type == _DAGNodeOperationType.READ
             next_nodes.append(downstream_node)
         assert len(next_nodes) == 1 + len(top_priority_node.out_edges)
+    elif has_nccl_collective:
+        for collective_node_metadata in top_priority_node.collective_edges:
+            task_idx, op_type = collective_node_metadata[0], collective_node_metadata[1]
+            collective_node = graph[task_idx][op_type]
+            assert collective_node.operation.type == _DAGNodeOperationType.COLLECTIVE
+            next_nodes.append(collective_node)
 
     return next_nodes
 
@@ -274,16 +291,16 @@ def _build_dag_node_operation_graph(
 
     # Add an edge from WRITE of the writer task to READ of the reader task.
     for task_idx, task in idx_to_task.items():
+        if not isinstance(task.dag_node, ClassMethodNode):
+            # The graph is used to generate an execution schedule for each actor.
+            # The edge from the InputNode has no impact on the final execution
+            # schedule.
+            continue
         if (
             isinstance(task.dag_node, ClassMethodNode)
             and task.dag_node.is_class_method_output
         ):
             # TODO(wxdeng): Handle the case where the task is a class method output.
-            continue
-        if not isinstance(task.dag_node, ClassMethodNode):
-            # The graph is used to generate an execution schedule for each actor.
-            # The edge from the InputNode has no impact on the final execution
-            # schedule.
             continue
         for downstream_task_idx in task.downstream_task_idxs:
             downstream_dag_node = idx_to_task[downstream_task_idx].dag_node
@@ -300,6 +317,9 @@ def _build_dag_node_operation_graph(
                 graph[task_idx][_DAGNodeOperationType.WRITE],
                 graph[downstream_task_idx][_DAGNodeOperationType.READ],
             )
+
+    # [TODO] Set collective edges between all COLLECTIVE.
+
     return graph
 
 
