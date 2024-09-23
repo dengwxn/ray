@@ -51,7 +51,7 @@ class AllReduceWrapper:
                 "ray.actor.ActorHandle"
             ] = input_node._get_actor_handle()
             assert actor_handle
-            output_node = CollectiveOutputNode(
+            collective_output_node = CollectiveOutputNode(
                 method_name="allreduce",  # [TODO] From op.
                 method_args=(input_node,),
                 method_kwargs=dict(),
@@ -63,7 +63,7 @@ class AllReduceWrapper:
                 },
             )
             actor_handle._ray_dag_bind_index += 1
-            collective_output_nodes.append(output_node)
+            collective_output_nodes.append(collective_output_node)
 
         return collective_output_nodes
 
