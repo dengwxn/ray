@@ -148,8 +148,12 @@ class _DAGOperationGraphNode:
             if is_nccl_write and other_is_nccl_write:
                 return tie_breaker(self, other)
             elif is_nccl_compute and other_is_nccl_compute:
-                return tie_breaker(self, other)
+                if self.task_idx != other.task_idx:
+                    return self.task_idx < other.task_idx
+                return self.operation.exec_task_idx < other.operation.exec_task_idx
             else:
+                # [TODO] Comment. Prioritize NCCL writes and reads before
+                # NCCL collectives.
                 return is_nccl_write
 
     def __eq__(self, other: "_DAGOperationGraphNode"):
