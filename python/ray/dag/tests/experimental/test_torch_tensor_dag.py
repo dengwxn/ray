@@ -541,8 +541,9 @@ def test_torch_tensor_custom_comm_inited(ray_start_regular):
         "env_vars": {
             # [NOTE] Local test only.
             # "MASTER_ADDR": socket.gethostbyname(socket.gethostname()),
+            # "MASTER_PORT": "8888",
             "MASTER_ADDR": "127.0.0.1",
-            "MASTER_PORT": "8888",
+            "MASTER_PORT": "13667",
         }
     }
     actor_cls = TorchTensorWorker.options(
@@ -620,6 +621,7 @@ def test_torch_tensor_custom_comm_inited(ray_start_regular):
             pass
 
     nccl_group = InitedNcclGroup(2, [sender, receiver])
+
     with InputNode() as inp:
         dag = sender.send_with_tuple_args.bind(inp)
         dag = dag.with_type_hint(TorchTensorType(transport=nccl_group))
@@ -1429,14 +1431,13 @@ def test_torch_tensor_nccl_comm_deduplicate_collective_and_p2p(ray_start_regular
     # The nccl_group for all-reduce should be the same as the p2p send/recv nccl_group.
     assert nccl_group_id == compiled_dag._nccl_group_id
 
-    # Without scheduling, the following execution hangs.
-    # # Sanity check: the compiled dag can execute.
-    # shape = (10,)
-    # dtype = torch.float16
-    # ref = compiled_dag.execute([(shape, dtype, i + 1) for i in range(num_workers)])
-    # result = ray.get(ref)
-    # reduced_val = (num_workers + 1) * num_workers / 2
-    # assert result == [(reduced_val, shape, dtype) for _ in workers]
+    # Sanity check: the compiled dag can execute.
+    shape = (10,)
+    dtype = torch.float16
+    ref = compiled_dag.execute([(shape, dtype, i + 1) for i in range(num_workers)])
+    result = ray.get(ref)
+    reduced_val = (num_workers + 1) * num_workers / 2
+    assert result == [(reduced_val, shape, dtype) for _ in workers]
 
     compiled_dag.teardown()
 

@@ -1474,6 +1474,8 @@ class CompiledDAG:
                 ]
             }
         """
+        from ray.dag.collective_node import CollectiveOutputNode
+
         assert self.idx_to_task
         assert self.actor_to_executable_tasks
 
@@ -1500,7 +1502,7 @@ class CompiledDAG:
                     _DAGNodeOperation(exec_task_idx, _DAGNodeOperationType.COMPUTE),
                     task_index,
                     actor_handle,
-                    requires_nccl,
+                    requires_nccl or isinstance(dag_node, CollectiveOutputNode),
                 )
                 write_node = _DAGOperationGraphNode(
                     _DAGNodeOperation(exec_task_idx, _DAGNodeOperationType.WRITE),
