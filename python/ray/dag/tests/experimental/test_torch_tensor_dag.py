@@ -1755,6 +1755,46 @@ def test_torch_tensor_nccl_deduplicate_custom_comm(ray_start_regular):
     compiled_dag.teardown()
 
 
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_torch_tensor_nccl_all_reduce_scheduling(ray_start_regular):
+    """
+    Test that scheduling avoids deadlocks when allreduce is used.
+    """
+    if not USE_GPU:
+        pytest.skip("NCCL tests require GPUs")
+
+    assert (
+        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
+    ), "This test requires at least 2 GPUs"
+
+    actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
+
+    num_workers = 2
+    workers = [actor_cls.remote() for _ in range(num_workers)]
+
+    shape = (10,)
+    dtype = torch.float16
+    with InputNode() as inp:
+        # Tensors in the all-reduce.
+        x = workers[0].send.bind(shape, dtype, inp)
+        y = workers[1].send.bind(shape, dtype, inp)
+
+        # Tensor to be sent from workes[0] to workers[1]
+        t = workers[0].send.bind(shape, dtype, inp)
+        t.with_type_hint(TorchTensorType(transport="nccl"))
+
+        collectives = collective.allreduce.bind([x, y])
+        recv = workers[1].recv.bind(t)
+        dag = recv
+
+    compiled_dag = dag.experimental_compile()
+
+    value = 10
+    ref = compiled_dag.execute(value)
+    result = ray.get(ref)
+    assert result == (value, shape, dtype)
+
+
 if __name__ == "__main__":
     if os.environ.get("PARALLEL_CI"):
         sys.exit(pytest.main(["-n", "auto", "--boxed", "-vs", __file__]))

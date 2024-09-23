@@ -1502,7 +1502,7 @@ class CompiledDAG:
                     _DAGNodeOperation(exec_task_idx, _DAGNodeOperationType.COMPUTE),
                     task_index,
                     actor_handle,
-                    requires_nccl or isinstance(dag_node, CollectiveOutputNode),
+                    isinstance(dag_node, CollectiveOutputNode),
                 )
                 write_node = _DAGOperationGraphNode(
                     _DAGNodeOperation(exec_task_idx, _DAGNodeOperationType.WRITE),

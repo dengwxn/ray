@@ -150,7 +150,7 @@ class _DAGOperationGraphNode:
             elif is_nccl_compute and other_is_nccl_compute:
                 return tie_breaker(self, other)
             else:
-                return not is_nccl_write
+                return is_nccl_write
 
     def __eq__(self, other: "_DAGOperationGraphNode"):
         """

@@ -42,7 +42,7 @@ def generate_dag_graph_nodes(local_idx, dag_idx, actor_handle, requires_nccl):
             _DAGNodeOperation(local_idx, op_type),
             dag_idx,
             actor_handle,
-            requires_nccl,
+            (requires_nccl if op_type == _DAGNodeOperationType.WRITE else False),
         )
     return graph_nodes
 
