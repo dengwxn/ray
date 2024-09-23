@@ -1785,14 +1785,18 @@ def test_torch_tensor_nccl_all_reduce_scheduling(ray_start_regular):
 
         collectives = collective.allreduce.bind([x, y])
         recv = workers[1].recv.bind(t)
-        dag = recv
+        dag = MultiOutputNode([collectives[0], collectives[1], recv])
 
     compiled_dag = dag.experimental_compile()
 
     value = 10
     ref = compiled_dag.execute(value)
     result = ray.get(ref)
-    assert result == (value, shape, dtype)
+    reduced_value = value * 2
+    expected_tensor_value = torch.ones(shape, dtype=dtype) * reduced_value
+    assert torch.equal(result[0], expected_tensor_value)
+    assert torch.equal(result[1], expected_tensor_value)
+    assert result[-1] == (value, shape, dtype)
 
 
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
