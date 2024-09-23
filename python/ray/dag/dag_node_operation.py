@@ -148,9 +148,8 @@ class _DAGOperationGraphNode:
             if is_nccl_write and other_is_nccl_write:
                 return tie_breaker(self, other)
             elif is_nccl_compute and other_is_nccl_compute:
-                if self.task_idx != other.task_idx:
-                    return self.task_idx < other.task_idx
-                return self.operation.exec_task_idx < other.operation.exec_task_idx
+                # [TODO] Select only collective groups that are ready.
+                return tie_breaker(self, other)
             else:
                 # [TODO] Comment. Prioritize NCCL writes and reads before
                 # NCCL collectives.
