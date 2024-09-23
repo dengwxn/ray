@@ -265,7 +265,9 @@ def _select_next_nodes(
                 and collective_node.requires_nccl
             )
             candidates = actor_to_candidates[collective_node.actor_handle._actor_id]
-            assert collective_node in candidates
+            assert (
+                collective_node in candidates
+            ), f"Expected ready to pop {collective_node}"
             candidates.remove(collective_node)
             heapq.heapify(candidates)
             next_nodes.append(collective_node)
