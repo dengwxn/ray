@@ -53,9 +53,9 @@ class AllReduceWrapper:
         collective_output_nodes: List[CollectiveOutputNode] = []
 
         for input_node in input_nodes:
-            actor_handle: Optional["ray.actor.ActorHandle"] = (
-                input_node._get_actor_handle()
-            )
+            actor_handle: Optional[
+                "ray.actor.ActorHandle"
+            ] = input_node._get_actor_handle()
             assert actor_handle
             collective_output_node = CollectiveOutputNode(
                 method_name=f"allreduce.{op}",
