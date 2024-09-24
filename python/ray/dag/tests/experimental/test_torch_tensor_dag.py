@@ -1463,9 +1463,8 @@ def test_torch_tensor_nccl_comm_deduplicate_collective_and_p2p(ray_start_regular
                 assert nccl_group_id is not None
                 nccl_group_ids.add(nccl_group_id)
 
-    # Both workers participated in the all-reduce;
-    # one of them is the sender and the other is the receiver in p2p.
-    # So only 1 NCCL group should be created.
+    # Both workers participated in the all-reduce. They are also the sender and
+    # receiver in P2P. So only 1 NCCL group should be created.
     assert len(nccl_group_ids) == 1
     nccl_group_id = list(nccl_group_ids)[0]
     ctx = ChannelContext.get_current()
