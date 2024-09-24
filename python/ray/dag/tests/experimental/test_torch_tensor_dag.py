@@ -539,11 +539,8 @@ def test_torch_tensor_custom_comm_inited(ray_start_regular):
     ), "This test requires at least 2 GPUs"
     runtime_env = {
         "env_vars": {
-            # [NOTE] Local test only.
-            # "MASTER_ADDR": socket.gethostbyname(socket.gethostname()),
-            # "MASTER_PORT": "8888",
-            "MASTER_ADDR": "127.0.0.1",
-            "MASTER_PORT": "13667",
+            "MASTER_ADDR": socket.gethostbyname(socket.gethostname()),
+            "MASTER_PORT": "8888",
         }
     }
     actor_cls = TorchTensorWorker.options(
@@ -1033,7 +1030,9 @@ def test_torch_tensor_nccl_all_reduce_get_partial(ray_start_regular):
 
 #     compiled_dag = dag.experimental_compile()
 
-#     ref = compiled_dag.execute([((20,), dtype, idx + 1) for idx in range(num_workers)])
+#     ref = compiled_dag.execute(
+#         [((20,), dtype, idx + 1) for idx in range(num_workers)]
+#     )
 #     reduced_val = (1 + num_workers) * num_workers / 2
 #     assert ray.get(ref) == [(reduced_val, (20,), dtype) for _ in range(num_workers)]
 
@@ -1834,7 +1833,7 @@ def test_torch_tensor_nccl_all_reduce_scheduling_one_ready_group(ray_start_regul
     with InputNode() as inp:  # (task_idx, exec_task_idx): (0,)
         x = workers[0].send.bind(shape, dtype, inp)  # (1, 0)
         y = workers[1].send.bind(shape, dtype, inp)  # (2, 0)
-        t = workers[0].send.bind(shape, dtype, inp)  # (3, 1)
+        _ = workers[0].send.bind(shape, dtype, inp)  # (3, 1)
 
         allreduce_1 = collective.allreduce.bind([x])
         z = allreduce_1[0]  # (4, 2)
