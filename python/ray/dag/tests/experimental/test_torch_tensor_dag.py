@@ -1799,44 +1799,57 @@ def test_torch_tensor_nccl_all_reduce_scheduling(ray_start_regular):
     assert result[2] == (value, shape, dtype)
 
 
-# @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
-# def test_torch_tensor_nccl_all_reduce_scheduling_one_ready(ray_start_regular):
-#     """
-#     Test that scheduling avoids deadlocks when allreduce is used.
-#     """
-#     if not USE_GPU:
-#         pytest.skip("NCCL tests require GPUs")
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_torch_tensor_nccl_all_reduce_scheduling_one_ready_group(ray_start_regular):
+    """
+    Test that scheduling picks the allreduce group that is ready instead of a group
+    that is not.
 
-#     assert (
-#         sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
-#     ), "This test requires at least 2 GPUs"
+    inp --> x(0) -(nccl)-> z(1) --> +-----------+
+        |                           | allreduce |
+        --> y(0) -----------------> +-----------+
 
-#     actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
+    In the above graph, x, y, z are tensors, and the numbers inside parentheses
+    identify the actors. If actor 0 launches allreduce with tensor y while actor 1
+    waits for x to be sent, then actor 0 waits for actor 1 to join allreduce while
+    actor 1 waits for actor 0 to send x.
 
-#     num_workers = 2
-#     workers = [actor_cls.remote() for _ in range(num_workers)]
+    If an allreduce group is launched only when all its members are ready, such
+    deadlocks won't happen.
+    """
+    if not USE_GPU:
+        pytest.skip("NCCL tests require GPUs")
 
-#     shape = (10,)
-#     dtype = torch.float16
-#     with InputNode() as inp:  # (task_idx, exec_task_idx): (0,)
-#         x = workers[0].send.bind(shape, dtype, inp)  # (1, 0)
-#         y = workers[1].send.bind(shape, dtype, inp)  # (2, 0)
-#         t = workers[0].send.bind(shape, dtype, inp)  # (3, 1)
+    assert (
+        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
+    ), "This test requires at least 2 GPUs"
 
-#         allreduce_1 = collective.allreduce.bind([x])
-#         z = allreduce_1[0]  # (4, 2)
+    actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
 
-#         allreduce_2 = collective.allreduce.bind([y, z])  # (5, 1) (6, 3)
-#         recv_0 = workers[0].recv.bind(allreduce_2[0])
-#         recv_1 = workers[1].recv.bind(allreduce_2[1])
-#         dag = MultiOutputNode([recv_0, recv_1])
+    num_workers = 2
+    workers = [actor_cls.remote() for _ in range(num_workers)]
 
-#     compiled_dag = dag.experimental_compile()
+    shape = (10,)
+    dtype = torch.float16
+    with InputNode() as inp:  # (task_idx, exec_task_idx): (0,)
+        x = workers[0].send.bind(shape, dtype, inp)  # (1, 0)
+        y = workers[1].send.bind(shape, dtype, inp)  # (2, 0)
+        t = workers[0].send.bind(shape, dtype, inp)  # (3, 1)
 
-#     value = 10
-#     ref = compiled_dag.execute(value)
-#     result = ray.get(ref)
-#     assert result == [(value * 2, shape, dtype) for _ in workers]
+        allreduce_1 = collective.allreduce.bind([x])
+        z = allreduce_1[0]  # (4, 2)
+
+        allreduce_2 = collective.allreduce.bind([y, z])  # (5, 1) (6, 3)
+        recv_0 = workers[0].recv.bind(allreduce_2[0])
+        recv_1 = workers[1].recv.bind(allreduce_2[1])
+        dag = MultiOutputNode([recv_0, recv_1])
+
+    compiled_dag = dag.experimental_compile()
+
+    value = 10
+    ref = compiled_dag.execute(value)
+    result = ray.get(ref)
+    assert result == [(value * 2, shape, dtype) for _ in workers]
 
 
 if __name__ == "__main__":
