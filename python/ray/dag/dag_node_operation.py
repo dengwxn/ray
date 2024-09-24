@@ -104,7 +104,7 @@ class _DAGOperationGraphNode:
 
         # Compare two nodes based on the following rules:
         # 1. If lhs and rhs have different `exec_task_idx`, the one with the smaller
-        #    `exec_task_idx` has higher priority. 
+        #    `exec_task_idx` has higher priority.
         # 2. If lhs and rhs have the same `exec_task_idx`, the one with the smaller
         #    `task_idx` has higher priority.
         def compare(lhs: "_DAGOperationGraphNode", rhs: "_DAGOperationGraphNode"):
@@ -498,9 +498,7 @@ def _generate_actor_to_execution_schedule(
         # All the selected nodes should be ready after updating the in-degrees.
         for node in nodes:
             assert node.is_ready, f"Expected {node} to be ready"
-    assert (
-        len(visited_nodes) == len(graph) * 3
-    ), "Expected all nodes to be visited"
+    assert len(visited_nodes) == len(graph) * 3, "Expected all nodes to be visited"
     for _, candidates in actor_to_candidates.items():
         assert len(candidates) == 0, "Expected all candidates to be empty"
 

@@ -311,18 +311,18 @@ class TestSelectNextNodes:
             mock_graph[dag_idx_2][_DAGNodeOperationType.COMPUTE],
         }
 
-    def test_nccl_collectives_one_ready_one_partial(self, monkeypatch):
+    def test_nccl_collectives_one_ready_group(self, monkeypatch):
         """
         Simulate the case where the only candidates are NCCL collective
-        operations. In this case, `_select_next_nodes` should return all
-        NCCL collective operations of the earliest-bound collective group
-        that is ready.
+        operations and there is only 1 collective group that is ready.
+        In this case, we should pick a group that is ready.
 
-        driver -> fake_actor_1.allreduce_1 -> driver
-               |                            |
-               -> fake_actor_1.allreduce_2 ->
-               |                            |
-               -> fake_actor_2.allreduce_2 ->
+        driver -> fake_actor_1.allreduce_1 -> fake_actor_1.allreduce_2 -> driver
+               |                                                        |
+               -> fake_actor_2.allreduce_2 ----------------------------->
+
+        In the above DAG, though fake_actor_2 is ready to launch allreduce_2,
+        it needs to wait for fake_actor_1 to be ready as well to make progress.
 
         with InputNode() as inp:  # (task_idx, exec_task_idx): (0,)
             x = fake_actor_1.get_tensor.bind(inp)  # (1, 0)

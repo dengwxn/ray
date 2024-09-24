@@ -1800,9 +1800,22 @@ def test_torch_tensor_nccl_all_reduce_scheduling(ray_start_regular):
 
 
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
-def test_torch_tensor_nccl_all_reduce_scheduling_one_ready(ray_start_regular):
+def test_torch_tensor_nccl_all_reduce_scheduling_one_ready_group(ray_start_regular):
     """
-    Test that scheduling avoids deadlocks when allreduce is used.
+    Test that scheduling picks the allreduce group that is ready instead of a group
+    that is not.
+
+    inp --> x(0) -(nccl)-> z(1) --> +-----------+
+        |                           | allreduce |
+        --> y(0) -----------------> +-----------+
+
+    In the above graph, x, y, z are tensors, and the numbers inside parentheses
+    identify the actors. If actor 0 launches allreduce with tensor y while actor 1
+    waits for x to be sent, then actor 0 waits for actor 1 to join allreduce while
+    actor 1 waits for actor 0 to send x.
+
+    If an allreduce group is launched only when all its members are ready, such
+    deadlocks won't happen.
     """
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
