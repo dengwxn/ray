@@ -13,7 +13,11 @@ from ray.dag.constants import (
 )
 from ray.dag.format_utils import get_dag_node_str
 from ray.util.annotations import DeveloperAPI
+<<<<<<< HEAD
 from ray.util.collective.nccl_types import ReduceOp
+=======
+from ray.util.collective.nccl_types import CollectiveOp, ReduceOp
+>>>>>>> 3814c7965c33caf35a2f57f075a53afcb83ded6d
 from ray.experimental.channel import ChannelContext
 from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
 from ray.experimental.channel.torch_tensor_type import GPUCommunicator, TorchTensorType
@@ -28,7 +32,11 @@ class CollectiveGroup:
     def __init__(
         self,
         input_nodes: List[DAGNode],
+<<<<<<< HEAD
         op: ReduceOp,  # [TODO] General collective ops.
+=======
+        op: CollectiveOp,
+>>>>>>> 3814c7965c33caf35a2f57f075a53afcb83ded6d
         transport: Union[str, GPUCommunicator] = TorchTensorType.NCCL,
     ):
         self._input_nodes: List[DAGNode] = input_nodes
@@ -46,6 +54,12 @@ class CollectiveGroup:
             raise ValueError("Expected unique actor handles for a collective group")
 
         self._op = op
+<<<<<<< HEAD
+=======
+        assert isinstance(
+            self._op, ReduceOp
+        ), "Other collective ops are not implemented"
+>>>>>>> 3814c7965c33caf35a2f57f075a53afcb83ded6d
         self._type_hint = TorchTensorType(transport=transport, _direct_return=True)
         if isinstance(transport, GPUCommunicator):
             assert set(transport.get_actor_handles()) == set(
@@ -92,6 +106,12 @@ class CollectiveGroup:
 
     def method(self, tensor: "torch.Tensor"):
         nccl_group = self.get_nccl_group()
+<<<<<<< HEAD
+=======
+        assert isinstance(
+            self._op, ReduceOp
+        ), "Other collective ops are not implemented"
+>>>>>>> 3814c7965c33caf35a2f57f075a53afcb83ded6d
         nccl_group.allreduce(tensor, self._op)
         return tensor
 
@@ -103,9 +123,13 @@ class CollectiveOutputNode(DAGNode):
     def __init__(
         self,
         method_name: str,
+<<<<<<< HEAD
         method_args: Tuple[
             DAGNode,
         ],
+=======
+        method_args: Tuple[DAGNode,],
+>>>>>>> 3814c7965c33caf35a2f57f075a53afcb83ded6d
         method_kwargs: Dict[str, Any],
         method_options: Dict[str, Any],
         other_args_to_resolve: Dict[str, Any],
