@@ -288,12 +288,16 @@ class TestSelectNextNodes:
             ],
         }
         # Embed collective group information in _DAGNodeOperation.
-        mock_graph[dag_idx_1][_DAGNodeOperationType.COMPUTE].set_collective_edges(
-            {(dag_idx_2, _DAGNodeOperationType.COMPUTE)}
-        )
-        mock_graph[dag_idx_2][_DAGNodeOperationType.COMPUTE].set_collective_edges(
-            {(dag_idx_1, _DAGNodeOperationType.COMPUTE)}
-        )
+        collective_group = {
+            (dag_idx_1, _DAGNodeOperationType.COMPUTE),
+            (dag_idx_2, _DAGNodeOperationType.COMPUTE),
+        }
+        mock_graph[dag_idx_1][
+            _DAGNodeOperationType.COMPUTE
+        ].collective_group = collective_group
+        mock_graph[dag_idx_2][
+            _DAGNodeOperationType.COMPUTE
+        ].collective_group = collective_group
         next_nodes = _select_next_nodes(mock_actor_to_candidates, mock_graph)
         assert len(next_nodes) == 2
         assert set(next_nodes) == {
