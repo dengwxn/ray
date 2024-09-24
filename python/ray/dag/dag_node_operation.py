@@ -482,7 +482,7 @@ def _generate_actor_to_execution_schedule(
                         out_node,
                     )
         for node in nodes:
-            assert node.in_degree == 0, f"Expected {node} to have in degree 0"
+            assert node.is_ready, f"Expected {node} to be ready"
     assert (
         len(visited_nodes) == len(graph) * 3
     ), "Expected to visit all nodes in the operation graph"
