@@ -994,9 +994,14 @@ class CompiledDAG:
 
         # [TODO] Comments.
         if nccl_actors and self._nccl_group_id is None:
-            self._nccl_group_id = _init_nccl_group(nccl_actors, self._custom_nccl_group)
             actors = frozenset(nccl_actors)
-            actors_to_nccl_group_id[actors] = self._nccl_group_id
+            if actors in actors_to_nccl_group_id:
+                self._nccl_group_id = actors_to_nccl_group_id[actors]
+            else:
+                self._nccl_group_id = _init_nccl_group(
+                    nccl_actors, self._custom_nccl_group
+                )
+                actors_to_nccl_group_id[actors] = self._nccl_group_id
 
         # [TODO] Comments.
         for collective_group in nccl_collective_groups:
@@ -1497,7 +1502,7 @@ class CompiledDAG:
                     _DAGNodeOperation(exec_task_idx, _DAGNodeOperationType.COMPUTE),
                     task_index,
                     actor_handle,
-                    requires_nccl or isinstance(dag_node, CollectiveOutputNode),
+                    isinstance(dag_node, CollectiveOutputNode),
                 )
                 write_node = _DAGOperationGraphNode(
                     _DAGNodeOperation(exec_task_idx, _DAGNodeOperationType.WRITE),
