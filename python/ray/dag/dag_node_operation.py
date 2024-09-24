@@ -125,9 +125,12 @@ class _DAGOperationGraphNode:
             if self.is_nccl_write and other.is_nccl_write:
                 return tie_breaker(self, other)
             elif self.is_nccl_compute and other.is_nccl_compute:
+                # [TODO] Select only collective groups that are ready.
                 return tie_breaker(self, other)
             else:
-                return not self.is_nccl_write
+                # [TODO] Comment. Prioritize NCCL writes and reads before
+                # NCCL collectives.
+                return self.is_nccl_write
 
     def __eq__(self, other: "_DAGOperationGraphNode"):
         """
