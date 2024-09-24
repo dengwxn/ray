@@ -154,15 +154,12 @@ class _DAGOperationGraphNode:
         return len(self.in_edges)
 
     @property
-    def has_ready_collective_group(self) -> bool:
-        return len(self.ready_collective_nodes) == len(self.collective_group)
-
-    @property
     def is_ready(self) -> bool:
+        # [TODO] Comment.
         if not self.is_nccl_compute:
             return self.in_degree == 0
         else:
-            return self.has_ready_collective_group
+            return len(self.ready_collective_nodes) == len(self.collective_group)
 
     @property
     def is_read(self) -> bool:
@@ -170,12 +167,14 @@ class _DAGOperationGraphNode:
 
     @property
     def is_nccl_compute(self) -> bool:
+        # [TODO] Comment.
         return (
             self.operation.type == _DAGNodeOperationType.COMPUTE and self.requires_nccl
         )
 
     @property
     def is_nccl_write(self) -> bool:
+        # [TODO] Comment.
         return self.operation.type == _DAGNodeOperationType.WRITE and self.requires_nccl
 
     @property
@@ -235,13 +234,11 @@ def _select_next_nodes(
         A list of _DAGOperationGraphNodes to be placed into the corresponding
         execution schedules.
     """
+    # [TODO] Comments.
     for actor, candidates in actor_to_candidates.items():
         ready_candidates: List[_DAGOperationGraphNode] = []
         for node in candidates:
-            if not node.is_nccl_compute:
-                assert node.is_ready
-                ready_candidates.append(node)
-            else:
+            if node.is_nccl_compute:
                 for collective_node_metadata in node.collective_group:
                     task_idx, op_type = (
                         collective_node_metadata[0],
@@ -251,8 +248,8 @@ def _select_next_nodes(
                     collective_node.ready_collective_nodes.add(
                         (node.task_idx, node.operation.type)
                     )
-                if node.has_ready_collective_group:
-                    ready_candidates.append(node)
+            if node.is_ready:
+                ready_candidates.append(node)
         actor_to_candidates[actor] = ready_candidates
     top_priority_node = None
     for _, candidates in actor_to_candidates.items():
@@ -266,12 +263,9 @@ def _select_next_nodes(
         heapq.heappop(actor_to_candidates[top_priority_node.actor_handle._actor_id])
     ]
 
-    is_nccl_write = top_priority_node.is_nccl_write
-    is_nccl_compute = top_priority_node.is_nccl_compute
-
-    if not (is_nccl_write or is_nccl_compute):
+    if not (top_priority_node.is_nccl_write or top_priority_node.is_nccl_compute):
         assert len(next_nodes) == 1
-    elif is_nccl_write:
+    elif top_priority_node.is_nccl_write:
         # An NCCL write node is picked. NCCL is a blocking operation, so we need
         # to pick all the corresponding NCCL read nodes to avoid a deadlock.
         for downstream_node_metadata in top_priority_node.out_edges:
@@ -280,7 +274,7 @@ def _select_next_nodes(
             assert downstream_node.is_read
             next_nodes.append(downstream_node)
         assert len(next_nodes) == 1 + len(top_priority_node.out_edges)
-    elif is_nccl_compute:
+    elif top_priority_node.is_nccl_compute:
         # [TODO] Comments.
         # An NCCL compute node is picked.
         for collective_node_metadata in top_priority_node.collective_group:
