@@ -378,7 +378,7 @@ def test_torch_tensor_custom_comm(ray_start_regular):
             self,
             tensor: "torch.Tensor",
             op: ReduceOp,
-        ):
+        ) -> None:
             raise NotImplementedError
 
         def destroy(self) -> None:
@@ -471,7 +471,7 @@ def test_torch_tensor_custom_comm_invalid(ray_start_regular):
             self,
             tensor: "torch.Tensor",
             op: ReduceOp,
-        ):
+        ) -> None:
             raise NotImplementedError
 
         def destroy(self) -> None:
@@ -611,7 +611,7 @@ def test_torch_tensor_custom_comm_inited(ray_start_regular):
             self,
             tensor: "torch.Tensor",
             op: ReduceOp,
-        ):
+        ) -> None:
             raise NotImplementedError
 
         def destroy(self) -> None:
