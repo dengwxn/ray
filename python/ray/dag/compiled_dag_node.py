@@ -968,33 +968,31 @@ class CompiledDAG:
                     # Add all readers to the NCCL group.
                     nccl_actors.add(downstream_actor_handle)
 
+        # [TODO] Comments.
+        actors_to_nccl_group_id: Dict[FrozenSet["ray.actor.ActorHandle"], str] = {}
+
+        # If there were type hints indicating transport via NCCL, initialize
+        # the NCCL group on the participating actors.
         nccl_actors = list(nccl_actors)
         if None in nccl_actors:
             raise ValueError("Driver cannot participate in the NCCL group.")
 
-        # Initialize a NCCL group for each set of actors. A set of actors can be
-        # calling P2P send/recv or collective methods.
-        actors_to_nccl_group_id: Dict[FrozenSet["ray.actor.ActorHandle"], str] = {}
-
-        # If a custom NCCL group is specified for P2P actors, initialize and cache
-        # the NCCL group ID.
-        if nccl_actors and self._custom_nccl_group:
+        # [TODO] Comments.
+        if nccl_actors and self._custom_nccl_group is not None:
             self._nccl_group_id = _init_nccl_group(nccl_actors, self._custom_nccl_group)
             actors = frozenset(nccl_actors)
             actors_to_nccl_group_id[actors] = self._nccl_group_id
 
-        # If a custom NCCL group is specified for collective actors, initialize and
-        # cache the NCCL group ID.
+        # [TODO] Comments.
         for collective_group in nccl_collective_groups:
             type_hint = collective_group.type_hint
-            if type_hint.get_custom_nccl_group():
+            if type_hint.get_custom_nccl_group() is not None:
                 nccl_group_id = collective_group.init_nccl_group()
                 actors = frozenset(collective_group.actor_handles)
                 if actors not in actors_to_nccl_group_id:
                     actors_to_nccl_group_id[actors] = nccl_group_id
 
-        # If the NCCL group for P2P actors is not initialized, initialize and cache
-        # the NCCL group ID.
+        # [TODO] Comments.
         if nccl_actors and self._nccl_group_id is None:
             actors = frozenset(nccl_actors)
             if actors in actors_to_nccl_group_id:
@@ -1005,8 +1003,7 @@ class CompiledDAG:
                 )
                 actors_to_nccl_group_id[actors] = self._nccl_group_id
 
-        # If the NCCL group for collective actors is not initialized, initialize and
-        # cache the NCCL group ID.
+        # [TODO] Comments.
         for collective_group in nccl_collective_groups:
             type_hint = collective_group.type_hint
             if type_hint.nccl_group_id is None:
