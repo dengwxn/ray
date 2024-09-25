@@ -1799,9 +1799,9 @@ def test_torch_tensor_nccl_all_reduce_scheduling_one_ready_group(ray_start_regul
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
 def test_torch_tensor_copy_before_nccl_all_reduce(ray_start_regular):
     """
-    Test that a tensor is copied before all reduce is launched.
+    Test that a tensor is copied before all-reduce is called.
     That is, the tensor is not all-reduced in place and can be reused
-    in the DAG as input to other nodes.
+    as inputs to other nodes in the DAG.
     """
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
@@ -1847,7 +1847,7 @@ def test_torch_tensor_copy_before_nccl_all_reduce(ray_start_regular):
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
 def test_torch_tensor_nccl_all_reduce_non_tensor_input(ray_start_regular):
     """
-    Test that an error is thrown when an all-reduce takes non-tensor input.
+    Test that an error is thrown when an all-reduce takes non-tensor inputs.
     """
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
@@ -1860,14 +1860,11 @@ def test_torch_tensor_nccl_all_reduce_non_tensor_input(ray_start_regular):
     worker = actor_cls.remote()
 
     with InputNode() as inp:
-        nontensor = worker.send.bind((10,), torch.float16, inp, False)
-        allreduce = collective.allreduce.bind([nontensor])
+        non_tensor = worker.send.bind((10,), torch.float16, inp, send_tensor=False)
+        allreduce = collective.allreduce.bind([non_tensor])
         dag = MultiOutputNode(allreduce)
-
     compiled_dag = dag.experimental_compile()
-
     ref = compiled_dag.execute(10)
-
     with pytest.raises(AssertionError, match="Expected a torch tensor"):
         ray.get(ref)
 
