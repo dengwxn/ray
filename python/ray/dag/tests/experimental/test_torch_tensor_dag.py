@@ -1114,7 +1114,7 @@ def test_torch_tensor_nccl_all_reduce_custom_comm(ray_start_regular):
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
 def test_torch_tensor_nccl_all_reduce_custom_comm_wrong_actors(ray_start_regular):
     """
-    Test an error is thrown when all-reduce is bound to a wrong set of actors.
+    Test an error is thrown when an all-reduce binds to a wrong set of actors.
     """
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
@@ -1147,8 +1147,8 @@ def test_torch_tensor_nccl_all_reduce_custom_comm_wrong_actors(ray_start_regular
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
 def test_torch_tensor_nccl_all_reduce_duplicate_actors(ray_start_regular):
     """
-    Test an error is thrown when two input nodes from the same actor
-    is bound to an all-reduce.
+    Test an error is thrown when two input nodes from the same actor bind to
+    an all-reduce.
     """
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
@@ -1181,8 +1181,8 @@ def test_torch_tensor_nccl_all_reduce_duplicate_actors(ray_start_regular):
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
 def test_torch_tensor_nccl_comm_deduplicate_collectives(ray_start_regular):
     """
-    Test communicators are deduplicated when all-reduce
-    is called on the same group of actors more than once.
+    Test communicators are deduplicated when all-reduce is called on the same
+    group of actors more than once.
     """
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
@@ -1248,8 +1248,8 @@ def test_torch_tensor_nccl_comm_deduplicate_collectives(ray_start_regular):
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
 def test_torch_tensor_nccl_comm_deduplicate_collective_and_p2p(ray_start_regular):
     """
-    Test communicators are deduplicated when the collective and the p2p send/recv
-    are on the same set of actors.
+    Test communicators are deduplicated when the collective and the P2P are
+    on the same set of actors.
     """
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
@@ -1270,7 +1270,7 @@ def test_torch_tensor_nccl_comm_deduplicate_collective_and_p2p(ray_start_regular
         ]
         collectives = collective.allreduce.bind(computes)
         recvs = [
-            # Each of the 2 workers recvs from the other.
+            # Each of the 2 workers receives from the other.
             workers[0].recv.bind(
                 collectives[1].with_type_hint(TorchTensorType(transport="nccl"))
             ),
@@ -1302,7 +1302,7 @@ def test_torch_tensor_nccl_comm_deduplicate_collective_and_p2p(ray_start_regular
     nccl_actors = nccl_group.get_actor_handles()
     # The NCCL group should contain both workers.
     assert set(nccl_actors) == set(workers)
-    # The nccl_group for all-reduce should be the same as the p2p send/recv nccl_group.
+    # The NCCL group for all-reduce should be the same as the P2P NCCL group.
     assert nccl_group_id == compiled_dag._nccl_group_id
 
     # Sanity check: the compiled dag can execute.
@@ -1348,7 +1348,7 @@ def test_torch_tensor_nccl_comm_deduplicate_collective_and_p2p(ray_start_regular
     # The NCCL group should contain both workers.
     assert set(nccl_actors) == set(workers)
 
-    # The nccl_group for all-reduce should be the same as the p2p send/recv nccl_group.
+    # The NCCL group for all-reduce should be the same as the P2P NCCL group.
     assert nccl_group_id == compiled_dag._nccl_group_id
 
     # Sanity check: the compiled dag can execute.
@@ -1387,7 +1387,7 @@ def test_torch_tensor_nccl_all_reduce_diff_comms(ray_start_regular):
         ]
         collectives = [collective.allreduce.bind([compute]) for compute in computes]
         recvs = [
-            # Note: There are 2 all-reduces, each on 1 actor.
+            # Note: There are two all-reduces, each on one actor.
             # collective[0] is the only CollectiveOutputNode for each all-reduce.
             worker.recv.bind(collective[0])
             for worker, collective in zip(workers, collectives)
