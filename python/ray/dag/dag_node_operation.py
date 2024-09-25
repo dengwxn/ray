@@ -206,9 +206,9 @@ def _select_next_nodes(
     For the implementation details, we maintain a priority queue for each actor,
     where the head of the priority queue is the node with the smallest `exec_task_idx`.
     When a node has a zero in-degree, it is added to the corresponding actor's
-    priority queue. For a node other than a NCCL compute node, if it has a zero
-    in-degree, it is ready to be executed. For an NCCL compute node, it is ready
-    when all the nodes in its collective group have zero in-degrees.
+    priority queue. For a node other than a NCCL compute node, it is ready to be
+    executed if it has a zero in-degree. For an NCCL compute node, it is ready
+    to be executed when all the nodes in its collective group have zero in-degrees.
 
     If a node is a NCCL compute node, it updates the `ready_collective_nodes` of
     all the nodes in its collective group. Unless all the nodes in its collective
