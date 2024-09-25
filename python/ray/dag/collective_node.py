@@ -98,8 +98,9 @@ class CollectiveGroup:
         assert isinstance(
             self._op, ReduceOp
         ), "Other collective ops are not implemented"
-        nccl_group.allreduce(tensor, self._op)
-        return tensor
+        tensor_copy = tensor.clone()
+        nccl_group.allreduce(tensor_copy, self._op)
+        return tensor_copy
 
 
 @DeveloperAPI

@@ -112,29 +112,19 @@ class _DAGOperationGraphNode:
                 return lhs.operation.exec_task_idx < rhs.operation.exec_task_idx
             return lhs.task_idx < rhs.task_idx
 
-        # When both nodes belong to the same actor, use the default comparison.
         if self.actor_handle == other.actor_handle:
+            # When both nodes belong to the same actor, use the default comparison.
             return compare(self, other)
-
-        if not (self.is_nccl_op or other.is_nccl_op):
-            # When both nodes are not NCCL operations, use the default comparison.
-            return compare(self, other)
-        elif self.is_nccl_op != other.is_nccl_op:
-            # When one node is an NCCL operation and the other is not, prioritize
-            # the non-NCCL operation.
-            return not self.is_nccl_op
         else:
-            # Both nodes are NCCL operations.
-            if self.is_nccl_write and other.is_nccl_write:
-                # When both nodes are NCCL writes, use the default comparison.
-                return compare(self, other)
-            elif self.is_nccl_compute and other.is_nccl_compute:
-                # When both nodes are NCCL computes, use the default comparison.
-                return compare(self, other)
+            # Both nodes belong to different actors.
+            if self.is_nccl_op != other.is_nccl_op:
+                # When one node is an NCCL operation and the other is not, prioritize
+                # the non-NCCL operation.
+                return not self.is_nccl_op
             else:
-                # When one node is an NCCL write and the other is an NCCL compute,
-                # prioritize the NCCL write.
-                return self.is_nccl_write
+                # When either both nodes are NCCL operations or both nodes are not
+                # NCCL operations, use the default comparison.
+                return compare(self, other)
 
     def __eq__(self, other: "_DAGOperationGraphNode"):
         """
@@ -216,9 +206,9 @@ def _select_next_nodes(
     For the implementation details, we maintain a priority queue for each actor,
     where the head of the priority queue is the node with the smallest `exec_task_idx`.
     When a node has a zero in-degree, it is added to the corresponding actor's
-    priority queue. For a node other than a NCCL compute node, if it has a zero
-    in-degree, it is ready to be executed. For an NCCL compute node, it is ready
-    when all the nodes in its collective group have zero in-degrees.
+    priority queue. For a node other than a NCCL compute node, it is ready to be
+    executed if it has a zero in-degree. For an NCCL compute node, it is ready
+    to be executed when all the nodes in its collective group have zero in-degrees.
 
     If a node is a NCCL compute node, it updates the `ready_collective_nodes` of
     all the nodes in its collective group. Unless all the nodes in its collective
