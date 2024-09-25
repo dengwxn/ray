@@ -80,6 +80,10 @@ class TorchTensorWorker:
         tensor = torch.ones(shape, dtype=dtype, device=self.device) * value
         return tensor
 
+    def recv_as_copy(self, tensor):
+        assert tensor.device == self.device
+        return tensor
+
     def ping(self):
         return
 
@@ -1659,6 +1663,84 @@ def test_torch_tensor_nccl_all_reduce_scheduling_one_ready_group(ray_start_regul
     ref = compiled_dag.execute(value)
     result = ray.get(ref)
     assert result == [(value * 2, shape, dtype) for _ in workers]
+
+    compiled_dag.teardown()
+
+
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_torch_tensor_copy_before_nccl_all_reduce(ray_start_regular):
+    """
+    Test that a tensor is copied before all reduce is launched.
+    That is, the tensor is not all-reduced in place and can be reused
+    in the DAG as input to other nodes.
+    """
+    if not USE_GPU:
+        pytest.skip("NCCL tests require GPUs")
+
+    assert (
+        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
+    ), "This test requires at least 2 GPUs"
+
+    actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
+
+    num_workers = 2
+    workers = [actor_cls.remote() for _ in range(num_workers)]
+
+    shape = (10,)
+    dtype = torch.float16
+    with InputNode() as inp:
+        x = workers[0].send.bind(shape, dtype, inp)
+        y = workers[1].send.bind(shape, dtype, inp)
+
+        allreduce = collective.allreduce.bind([x, y])
+
+        u = workers[1].recv_as_copy.bind(x)
+        v = workers[0].recv_as_copy.bind(y)
+
+        dag = MultiOutputNode([*allreduce, u, v])
+
+    compiled_dag = dag.experimental_compile()
+
+    value = 10
+    ref = compiled_dag.execute(value)
+    result = ray.get(ref)
+    result = [tensor.to("cpu") for tensor in result]
+    expected_reduced_tensor_value = torch.ones(shape, dtype=dtype) * value * 2
+    expected_original_tensor_value = torch.ones(shape, dtype=dtype) * value
+    assert torch.equal(result[0], expected_reduced_tensor_value)
+    assert torch.equal(result[1], expected_reduced_tensor_value)
+    assert torch.equal(result[2], expected_original_tensor_value)
+    assert torch.equal(result[3], expected_original_tensor_value)
+
+    compiled_dag.teardown()
+
+
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_torch_tensor_nccl_all_reduce_non_tensor_input(ray_start_regular):
+    """
+    Test that an error is thrown when an all-reduce takes non-tensor input.
+    """
+    if not USE_GPU:
+        pytest.skip("NCCL tests require GPUs")
+
+    assert (
+        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 0
+    ), "This test requires at least 1 GPUs"
+
+    actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
+    worker = actor_cls.remote()
+
+    with InputNode() as inp:
+        nontensor = worker.send.bind((10,), torch.float16, inp, False)
+        allreduce = collective.allreduce.bind([nontensor])
+        dag = MultiOutputNode(allreduce)
+
+    compiled_dag = dag.experimental_compile()
+
+    ref = compiled_dag.execute(10)
+
+    with pytest.raises(AssertionError, match="Expected a torch tensor"):
+        ray.get(ref)
 
     compiled_dag.teardown()
 
