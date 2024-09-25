@@ -1,5 +1,6 @@
 from weakref import ReferenceType
-from typing import Any, Dict, List, Union, Tuple, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Union, Tuple, Optional
+import torch
 
 import ray
 from ray.dag import (
@@ -17,9 +18,6 @@ from ray.util.collective.nccl_types import CollectiveOp, ReduceOp
 from ray.experimental.channel import ChannelContext
 from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
 from ray.experimental.channel.torch_tensor_type import GPUCommunicator, TorchTensorType
-
-if TYPE_CHECKING:
-    import torch
 
 
 class CollectiveGroup:
@@ -93,11 +91,12 @@ class CollectiveGroup:
             raise ValueError("Expected a NCCL group")
         return nccl_group
 
-    def method(self, tensor: "torch.Tensor"):
+    def method(self, tensor: torch.Tensor):
+        assert isinstance(tensor, torch.Tensor), "Expected a torch tensor"
         nccl_group = self.get_nccl_group()
         assert isinstance(
             self._op, ReduceOp
-        ), "Other collective ops are not implemented"
+        ), "Other collective ops are not yet implemented"
         tensor_copy = tensor.clone()
         nccl_group.allreduce(tensor_copy, self._op)
         return tensor_copy
