@@ -80,7 +80,7 @@ class TorchTensorWorker:
         tensor = torch.ones(shape, dtype=dtype, device=self.device) * value
         return tensor
 
-    def recv_as_copy(self, tensor):
+    def recv_tensor(self, tensor):
         assert tensor.device == self.device
         return tensor
 
@@ -1823,8 +1823,8 @@ def test_torch_tensor_copy_before_nccl_all_reduce(ray_start_regular):
 
         allreduce = collective.allreduce.bind([x, y])
 
-        u = workers[1].recv_as_copy.bind(x)
-        v = workers[0].recv_as_copy.bind(y)
+        u = workers[1].recv_tensor.bind(x)
+        v = workers[0].recv_tensor.bind(y)
 
         dag = MultiOutputNode([*allreduce, u, v])
 
