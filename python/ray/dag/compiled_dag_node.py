@@ -993,7 +993,7 @@ class CompiledDAG:
                 if actors not in actors_to_nccl_group_id:
                     actors_to_nccl_group_id[actors] = nccl_group_id
 
-        # If the NCCL group for P2P actors is not initialized, initialize and cache
+        # If a NCCL group for P2P actors is not initialized, initialize and cache
         # the NCCL group ID.
         if nccl_actors and self._nccl_group_id is None:
             actors = frozenset(nccl_actors)
@@ -1005,7 +1005,7 @@ class CompiledDAG:
                 )
                 actors_to_nccl_group_id[actors] = self._nccl_group_id
 
-        # If the NCCL group for collective actors is not initialized, initialize and
+        # If a NCCL group for collective actors is not initialized, initialize and
         # cache the NCCL group ID.
         for collective_group in nccl_collective_groups:
             type_hint = collective_group.type_hint
