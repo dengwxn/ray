@@ -1820,12 +1820,9 @@ def test_torch_tensor_copy_before_nccl_all_reduce(ray_start_regular):
     with InputNode() as inp:
         x = workers[0].send.bind(shape, dtype, inp)
         y = workers[1].send.bind(shape, dtype, inp)
-
         allreduce = collective.allreduce.bind([x, y])
-
         u = workers[1].recv_tensor.bind(x)
         v = workers[0].recv_tensor.bind(y)
-
         dag = MultiOutputNode([*allreduce, u, v])
 
     compiled_dag = dag.experimental_compile()
