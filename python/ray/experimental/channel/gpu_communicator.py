@@ -130,3 +130,6 @@ class GPUCommunicator(ABC):
         done here. Implement as a noop is nothing is needed.
         """
         raise NotImplementedError
+
+    def __deepcopy__(self, _) -> "GPUCommunicator":
+        return self
