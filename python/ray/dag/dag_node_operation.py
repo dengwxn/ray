@@ -80,7 +80,7 @@ class _DAGOperationGraphNode:
         # collective operation. Each node is represented by a tuple of its
         # task idx and type.
         self.collective_group: Set[Tuple[int, _DAGNodeOperationType]] = set()
-        # The ready collective nodes are the nodes that are ready to be executed,
+        # The ready collective nodes are the nodes in the collective group that are ready to be executed,
         # i.e., their in-degrees are zero. When a collective node is ready, it
         # will be added to the ready collective nodes of all the nodes in its
         # collective group.
@@ -272,7 +272,7 @@ def _select_next_nodes(
         # An NCCL write node is picked. NCCL is a blocking operation, so we need
         # to pick all the corresponding NCCL read nodes to avoid a deadlock.
         for downstream_node_metadata in top_priority_node.out_edges:
-            task_idx, op_type = downstream_node_metadata[0], downstream_node_metadata[1]
+            task_idx, op_type = downstream_node_metadata
             downstream_node = graph[task_idx][op_type]
             assert downstream_node.is_read
             next_nodes.append(downstream_node)
@@ -282,7 +282,7 @@ def _select_next_nodes(
         # to pick all the corresponding NCCL compute nodes in its collective group
         # to avoid a deadlock.
         for collective_node_metadata in top_priority_node.collective_group:
-            task_idx, op_type = collective_node_metadata[0], collective_node_metadata[1]
+            task_idx, op_type = collective_node_metadata
             collective_node = graph[task_idx][op_type]
             assert collective_node.is_nccl_compute and collective_node.is_ready
             if collective_node != top_priority_node:
