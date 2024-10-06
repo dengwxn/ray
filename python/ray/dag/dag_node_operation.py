@@ -272,7 +272,7 @@ def _select_next_nodes(
         # An NCCL write node is picked. NCCL is a blocking operation, so we need
         # to pick all the corresponding NCCL read nodes to avoid a deadlock.
         for downstream_node_metadata in top_priority_node.out_edges:
-            task_idx, op_type = downstream_node_metadata[0], downstream_node_metadata[1]
+            task_idx, op_type = downstream_node_metadata
             downstream_node = graph[task_idx][op_type]
             assert downstream_node.is_read
             next_nodes.append(downstream_node)

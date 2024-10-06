@@ -181,7 +181,7 @@ class CollectiveOutputNode(DAGNode):
         )
 
     def _execute_impl(self, *args, **kwargs):
-        raise NotImplementedError("CollectiveOutputNode is only supported for aDAG")
+        raise NotImplementedError("CollectiveOutputNode is only supported with dag.experimental_compile()")
 
     def __str__(self) -> str:
         return get_dag_node_str(self, f"{self._method_name}()")
