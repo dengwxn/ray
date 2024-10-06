@@ -79,7 +79,7 @@ class _DAGOperationGraphNode:
         # The collective group is a set of nodes that belong to the same
         # collective operation. Each node is represented by a tuple of its
         # task idx and type.
-        self.collective_group: Set[Tuple[int, _DAGNodeOperationType]] = set()
+        self.collective_group_idxs: Set[Tuple[int, _DAGNodeOperationType]] = set()
         # The ready collective nodes are the nodes that are ready to be executed,
         # i.e., their in-degrees are zero. When a collective node is ready, it
         # will be added to the ready collective nodes of all the nodes in its
@@ -154,19 +154,19 @@ class _DAGOperationGraphNode:
         If it is an NCCL compute, it is ready when all the nodes in its collective
         group have zero in-degrees.
         """
-        if not self.is_nccl_compute:
+        if not self.is_nccl_collective:
             return self.in_degree == 0
         else:
-            return len(self.ready_collective_nodes) == len(self.collective_group)
+            return len(self.ready_collective_nodes) == len(self.collective_group_idxs)
 
     @property
     def is_read(self) -> bool:
         return self.operation.type == _DAGNodeOperationType.READ
 
     @property
-    def is_nccl_compute(self) -> bool:
+    def is_nccl_collective(self) -> bool:
         """
-        A node is an NCCL compute if it is a compute node and requires NCCL, which
+        A node is an NCCL collective if it is a compute node and requires NCCL, which
         is an NCCL collective operation.
         """
         return (
@@ -182,7 +182,7 @@ class _DAGOperationGraphNode:
 
     @property
     def is_nccl_op(self) -> bool:
-        return self.is_nccl_compute or self.is_nccl_write
+        return self.is_nccl_collective or self.is_nccl_write
 
 
 def _add_edge(from_node: _DAGOperationGraphNode, to_node: _DAGOperationGraphNode):
@@ -238,8 +238,8 @@ def _select_next_nodes(
     for actor, candidates in actor_to_candidates.items():
         ready_candidates: List[_DAGOperationGraphNode] = []
         for node in candidates:
-            if node.is_nccl_compute:
-                for collective_node_metadata in node.collective_group:
+            if node.is_nccl_collective:
+                for collective_node_metadata in node.collective_group_idxs:
                     task_idx, op_type = (
                         collective_node_metadata[0],
                         collective_node_metadata[1],
@@ -277,17 +277,17 @@ def _select_next_nodes(
             assert downstream_node.is_read
             next_nodes.append(downstream_node)
         assert len(next_nodes) == 1 + len(top_priority_node.out_edges)
-    elif top_priority_node.is_nccl_compute:
+    elif top_priority_node.is_nccl_collective:
         # An NCCL compute node is picked. NCCL is a blocking operation, so we need
         # to pick all the corresponding NCCL compute nodes in its collective group
         # to avoid a deadlock.
-        for collective_node_metadata in top_priority_node.collective_group:
+        for collective_node_metadata in top_priority_node.collective_group_idxs:
             task_idx, op_type = collective_node_metadata[0], collective_node_metadata[1]
             collective_node = graph[task_idx][op_type]
-            assert collective_node.is_nccl_compute and collective_node.is_ready
+            assert collective_node.is_nccl_collective and collective_node.is_ready
             if collective_node != top_priority_node:
                 next_nodes.append(collective_node)
-        assert len(next_nodes) == len(top_priority_node.collective_group)
+        assert len(next_nodes) == len(top_priority_node.collective_group_idxs)
 
     return next_nodes
 
@@ -357,6 +357,7 @@ def _build_dag_node_operation_graph(
 
     # Import `ray.dag` here to avoid circular import.
     from ray.dag import ClassMethodNode, CollectiveOutputNode, MultiOutputNode
+    from ray.dag.collective_node import _CollectiveGroup
 
     # Add an edge from WRITE of the writer task to READ of the reader task.
     for task_idx, task in idx_to_task.items():
@@ -390,8 +391,6 @@ def _build_dag_node_operation_graph(
                 graph[downstream_task_idx][_DAGNodeOperationType.READ],
             )
 
-    from ray.dag.collective_node import _CollectiveGroup
-
     # Set collective group nodes for all the NCCL compute nodes.
     collective_group_to_task_idxs: Dict[_CollectiveGroup, Set[int]] = defaultdict(set)
     for task_idx, task in idx_to_task.items():
@@ -406,7 +405,7 @@ def _build_dag_node_operation_graph(
         }
         for task_idx in task_idxs:
             collective_node = graph[task_idx][_DAGNodeOperationType.COMPUTE]
-            collective_node.collective_group = collective_group_nodes
+            collective_node.collective_group_idxs = collective_group_nodes
 
     return graph
 

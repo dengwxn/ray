@@ -108,7 +108,7 @@ class GPUCommunicator(ABC):
     @abstractmethod
     def allreduce(
         self,
-        buf: "torch.Tensor",
+        tensor: "torch.Tensor",
         op: ReduceOp,
     ) -> None:
         """

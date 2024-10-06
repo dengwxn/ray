@@ -55,7 +55,8 @@ class AllReduceWrapper:
             actor_handle: Optional[
                 "ray.actor.ActorHandle"
             ] = input_node._get_actor_handle()
-            assert actor_handle
+            if actor_handle is None:
+                raise ValueError("Expected an actor handle from the input node")
             collective_output_node = CollectiveOutputNode(
                 method_name=f"allreduce.{op}",
                 method_args=(input_node,),

@@ -40,20 +40,29 @@ class _CollectiveGroup:
         self._actor_handles: List["ray.actor.ActorHandle"] = []
         for input_node in self._input_nodes:
             actor_handle = input_node._get_actor_handle()
-            assert actor_handle is not None, "Expected a actor handle"
+            if actor_handle is None:
+                raise ValueError("Expected an actor handle from the input node")
             self._actor_handles.append(actor_handle)
         if len(set(self._actor_handles)) != len(self._actor_handles):
-            raise ValueError("Expected unique actor handles for a collective group")
+            invalid_input_nodes = [
+                input_node
+                for input_node in self._input_nodes
+                if self._actor_handles.count(input_node._get_actor_handle()) > 1
+            ]
+            raise ValueError(
+                "Expected unique actor handles for a collective group, but found "
+                f"duplicate actor handles from input nodes: {invalid_input_nodes}"
+            )
 
         self._op = op
-        assert isinstance(
-            self._op, ReduceOp
-        ), "Other collective ops are not implemented"
+        if not isinstance(self._op, ReduceOp):
+            raise NotImplementedError("Only ReduceOp is implemented")
         self._type_hint = TorchTensorType(transport=transport, _direct_return=True)
         if isinstance(transport, GPUCommunicator):
-            assert set(transport.get_actor_handles()) == set(
-                self._actor_handles
-            ), "Expected actor handles to match the custom NCCL group"
+            if set(transport.get_actor_handles()) != set(self._actor_handles):
+                raise ValueError(
+                    "Expected actor handles to match the custom NCCL group"
+                )
 
     def __str__(self) -> str:
         return (
@@ -94,13 +103,13 @@ class _CollectiveGroup:
         return nccl_group
 
     def method(self, tensor: "torch.Tensor"):
+        """
+        [TODO] Comments.
+        """
         import torch
 
         assert isinstance(tensor, torch.Tensor), "Expected a torch tensor"
         nccl_group = self.get_nccl_group()
-        assert isinstance(
-            self._op, ReduceOp
-        ), "Other collective ops are not yet implemented"
         tensor_copy = tensor.clone()
         nccl_group.allreduce(tensor_copy, self._op)
         return tensor_copy
@@ -163,7 +172,7 @@ class CollectiveOutputNode(DAGNode):
         new_options: Dict[str, Any],
         new_other_args_to_resolve: Dict[str, Any],
     ):
-        return _CollectiveGroup(
+        return CollectiveOutputNode(
             self._method_name,
             new_args,
             new_kwargs,
