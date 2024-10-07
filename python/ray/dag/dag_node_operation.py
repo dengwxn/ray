@@ -199,9 +199,10 @@ def _select_next_nodes(
     graph: Dict[int, Dict[_DAGNodeOperationType, _DAGOperationGraphNode]],
 ) -> Optional[List[_DAGOperationGraphNode]]:
     """
-    This function selects the next nodes for topological sort to generate execution
-    schedule. If there are multiple candidate _DAGOperationGraphNodes, select the node
-    with the top priority. The priority is defined in `_DAGOperationGraphNode.__lt__`.
+    This function selects the next nodes for the topological sort to generate
+    execution schedule. If there are multiple candidate _DAGOperationGraphNodes,
+    select the node with the top priority. The priority is defined in
+    `_DAGOperationGraphNode.__lt__`.
 
     For the implementation details, we maintain a priority queue for each actor,
     where the head of the priority queue is the node with the smallest `exec_task_idx`.
@@ -240,10 +241,7 @@ def _select_next_nodes(
         for node in candidates:
             if node.is_nccl_collective:
                 for collective_node_metadata in node.collective_group_idxs:
-                    task_idx, op_type = (
-                        collective_node_metadata[0],
-                        collective_node_metadata[1],
-                    )
+                    task_idx, op_type = collective_node_metadata
                     collective_node = graph[task_idx][op_type]
                     collective_node.ready_collective_nodes.add(
                         (node.task_idx, node.operation.type)
@@ -282,7 +280,7 @@ def _select_next_nodes(
         # to pick all the corresponding NCCL compute nodes in its collective group
         # to avoid a deadlock.
         for collective_node_metadata in top_priority_node.collective_group_idxs:
-            task_idx, op_type = collective_node_metadata[0], collective_node_metadata[1]
+            task_idx, op_type = collective_node_metadata
             collective_node = graph[task_idx][op_type]
             assert collective_node.is_nccl_collective and collective_node.is_ready
             if collective_node != top_priority_node:

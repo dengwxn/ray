@@ -143,17 +143,19 @@ class CollectiveOutputNode(DAGNode):
         )
 
         # Parse the input node.
-        assert (
+        if not (
             isinstance(method_args, tuple)
             and len(method_args) == 1
             and isinstance(method_args[0], DAGNode)
-        ), "Expected a single input node"
+        ):
+            raise ValueError("Expected a single input node")
         self._input_node = method_args[0]
         # Parse the collective group.
         self._collective_group: _CollectiveGroup = other_args_to_resolve.get(
             COLLECTIVE_GROUP_KEY, None
         )
-        assert self._collective_group is not None, "Expected a collective group"
+        if self._collective_group is None:
+            raise ValueError("Expected a collective group")
 
         # The actor creation task dependency is encoded as the first argument,
         # and the ordering dependency as the second, which ensures they are

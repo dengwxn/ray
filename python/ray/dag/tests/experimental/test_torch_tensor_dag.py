@@ -1202,7 +1202,7 @@ def test_torch_tensor_nccl_all_reduce_custom_comm_wrong_actors(ray_start_regular
             for i, worker in enumerate(workers)
         ]
         with pytest.raises(
-            AssertionError,
+            ValueError,
             match="Expected actor handles to match the custom NCCL group",
         ):
             collective.allreduce.bind(computes, transport=nccl_group)
