@@ -294,16 +294,16 @@ class TestSelectNextNodes:
         }
         mock_graph[dag_idx_1][
             _DAGNodeOperationType.COMPUTE
-        ].collective_group = collective_group_1
+        ].collective_group_idxs = collective_group_1
         mock_graph[dag_idx_2][
             _DAGNodeOperationType.COMPUTE
-        ].collective_group = collective_group_1
+        ].collective_group_idxs = collective_group_1
         collective_group_2 = {
             (dag_idx_3, _DAGNodeOperationType.COMPUTE),
         }
         mock_graph[dag_idx_3][
             _DAGNodeOperationType.COMPUTE
-        ].collective_group = collective_group_2
+        ].collective_group_idxs = collective_group_2
         next_nodes = _select_next_nodes(mock_actor_to_candidates, mock_graph)
         assert len(next_nodes) == 2
         assert set(next_nodes) == {
@@ -384,17 +384,17 @@ class TestSelectNextNodes:
         }
         mock_graph[dag_idx_1][
             _DAGNodeOperationType.COMPUTE
-        ].collective_group = collective_group_1
+        ].collective_group_idxs = collective_group_1
         collective_group_2 = {
             (dag_idx_2, _DAGNodeOperationType.COMPUTE),
             (dag_idx_3, _DAGNodeOperationType.COMPUTE),
         }
         mock_graph[dag_idx_2][
             _DAGNodeOperationType.COMPUTE
-        ].collective_group = collective_group_2
+        ].collective_group_idxs = collective_group_2
         mock_graph[dag_idx_3][
             _DAGNodeOperationType.COMPUTE
-        ].collective_group = collective_group_2
+        ].collective_group_idxs = collective_group_2
         next_nodes = _select_next_nodes(mock_actor_to_candidates, mock_graph)
         assert len(next_nodes) == 1
         assert next_nodes[0] == mock_graph[dag_idx_1][_DAGNodeOperationType.COMPUTE]
