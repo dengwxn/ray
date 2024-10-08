@@ -376,7 +376,8 @@ def test_torch_tensor_custom_comm(ray_start_regular):
 
         def allreduce(
             self,
-            tensor: "torch.Tensor",
+            send_buf: "torch.Tensor",
+            recv_buf: "torch.Tensor",
             op: ReduceOp,
         ) -> None:
             raise NotImplementedError
@@ -469,7 +470,8 @@ def test_torch_tensor_custom_comm_invalid(ray_start_regular):
 
         def allreduce(
             self,
-            tensor: "torch.Tensor",
+            send_buf: "torch.Tensor",
+            recv_buf: "torch.Tensor",
             op: ReduceOp,
         ) -> None:
             raise NotImplementedError
@@ -609,7 +611,8 @@ def test_torch_tensor_custom_comm_inited(ray_start_regular):
 
         def allreduce(
             self,
-            tensor: "torch.Tensor",
+            send_buf: "torch.Tensor",
+            recv_buf: "torch.Tensor",
             op: ReduceOp,
         ) -> None:
             raise NotImplementedError
@@ -1071,10 +1074,11 @@ def test_torch_tensor_nccl_all_reduce_custom_comm(ray_start_regular):
 
         def allreduce(
             self,
-            tensor: "torch.Tensor",
+            send_buf: "torch.Tensor",
+            recv_buf: "torch.Tensor",
             op: ReduceOp = ReduceOp.SUM,
         ) -> None:
-            return self._inner.allreduce(tensor, op)
+            return self._inner.allreduce(send_buf, recv_buf, op)
 
         def destroy(self) -> None:
             return self._inner.destroy()
@@ -1184,10 +1188,11 @@ def test_torch_tensor_nccl_all_reduce_custom_comm_wrong_actors(ray_start_regular
 
         def allreduce(
             self,
-            tensor: "torch.Tensor",
+            send_buf: "torch.Tensor",
+            recv_buf: "torch.Tensor",
             op: ReduceOp = ReduceOp.SUM,
         ) -> None:
-            return self._inner.allreduce(tensor, op)
+            return self._inner.allreduce(send_buf, recv_buf, op)
 
         def destroy(self) -> None:
             return self._inner.destroy()
@@ -1571,10 +1576,11 @@ def test_torch_tensor_nccl_deduplicate_custom_comm(ray_start_regular):
 
         def allreduce(
             self,
-            tensor: "torch.Tensor",
+            send_buf: "torch.Tensor",
+            recv_buf: "torch.Tensor",
             op: ReduceOp = ReduceOp.SUM,
         ) -> None:
-            return self._inner.allreduce(tensor, op)
+            return self._inner.allreduce(send_buf, recv_buf, op)
 
         def destroy(self) -> None:
             return self._inner.destroy()

@@ -104,17 +104,18 @@ class _CollectiveGroup:
             raise ValueError("Expected a NCCL group")
         return nccl_group
 
-    def method(self, tensor: "torch.Tensor"):
+    def method(self, send_buf: "torch.Tensor"):
         """
         [TODO] Comments.
         """
         import torch
 
-        assert isinstance(tensor, torch.Tensor), "Expected a torch tensor"
+        if not isinstance(send_buf, torch.Tensor):
+            raise ValueError("Expected a torch tensor")
         nccl_group = self.get_nccl_group()
-        tensor_copy = tensor.clone()
-        nccl_group.allreduce(tensor_copy, self._op)
-        return tensor_copy
+        recv_buf = torch.empty_like(send_buf)
+        nccl_group.allreduce(send_buf, recv_buf, self._op)
+        return recv_buf
 
 
 @DeveloperAPI

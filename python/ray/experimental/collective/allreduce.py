@@ -79,12 +79,10 @@ class AllReduceWrapper:
         self,
         tensor,
         group_name: str = "default",
-        op: Optional[ray_collective_types.ReduceOp] = None,
+        op: ray_collective_types.ReduceOp = ray_collective_types.ReduceOp.SUM,
     ):
         from ray.util.collective.collective import allreduce
 
-        if op is None:
-            op = ray_collective_types.ReduceOp.SUM
         return allreduce(tensor, group_name, op)
 
 

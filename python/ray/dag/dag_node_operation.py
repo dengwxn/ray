@@ -102,6 +102,7 @@ class _DAGOperationGraphNode:
         higher priority is considered "less than" the other node.
         """
 
+        # [TODO] Can you explain the intuition behind the priority?
         # Compare two nodes based on the following rules:
         # 1. If lhs and rhs have different `exec_task_idx`, the one with the smaller
         #    `exec_task_idx` has higher priority.
