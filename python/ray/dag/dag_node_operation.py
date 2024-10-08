@@ -79,7 +79,7 @@ class _DAGOperationGraphNode:
         # The collective group is a set of nodes that belong to the same
         # collective operation. Each node is represented by a tuple of its
         # task idx and type.
-        self.collective_group_idxs: Set[Tuple[int, _DAGNodeOperationType]] = set()
+        self.collective_group_nodes: Set[Tuple[int, _DAGNodeOperationType]] = set()
         # The ready collective nodes are the nodes that are ready to be executed,
         # i.e., their in-degrees are zero. When a collective node is ready, it
         # will be added to the ready collective nodes of all the nodes in its
@@ -115,16 +115,14 @@ class _DAGOperationGraphNode:
         if self.actor_handle == other.actor_handle:
             # When both nodes belong to the same actor, use the default comparison.
             return compare(self, other)
+        elif self.is_nccl_op != other.is_nccl_op:
+            # When one node is a NCCL operation and the other is not, prioritize
+            # the non-NCCL operation.
+            return not self.is_nccl_op
         else:
-            # Both nodes belong to different actors.
-            if self.is_nccl_op != other.is_nccl_op:
-                # When one node is an NCCL operation and the other is not, prioritize
-                # the non-NCCL operation.
-                return not self.is_nccl_op
-            else:
-                # When either both nodes are NCCL operations or both nodes are not
-                # NCCL operations, use the default comparison.
-                return compare(self, other)
+            # When either both nodes are NCCL operations or both nodes are not
+            # NCCL operations, use the default comparison.
+            return compare(self, other)
 
     def __eq__(self, other: "_DAGOperationGraphNode"):
         """
@@ -150,14 +148,14 @@ class _DAGOperationGraphNode:
     @property
     def is_ready(self) -> bool:
         """
-        If the node is not an NCCL compute, it is ready when it has a zero in-degree.
-        If it is an NCCL compute, it is ready when all the nodes in its collective
+        [TODO] Update comments after collapses.
+        If the node is not a NCCL collective, it is ready when it has a zero in-degree.
+        If it is a NCCL collective, it is ready when all the nodes in its collective
         group have zero in-degrees.
         """
-        if not self.is_nccl_collective:
-            return self.in_degree == 0
-        else:
-            return len(self.ready_collective_nodes) == len(self.collective_group_idxs)
+        return self.in_degree == 0 and (
+            len(self.ready_collective_nodes) == len(self.collective_group_nodes)
+        )
 
     @property
     def is_read(self) -> bool:
@@ -166,8 +164,8 @@ class _DAGOperationGraphNode:
     @property
     def is_nccl_collective(self) -> bool:
         """
-        A node is an NCCL collective if it is a compute node and requires NCCL, which
-        is an NCCL collective operation.
+        A node is a NCCL collective if it is a compute node and requires NCCL, which
+        is a NCCL collective operation.
         """
         return (
             self.operation.type == _DAGNodeOperationType.COMPUTE and self.requires_nccl
@@ -176,7 +174,7 @@ class _DAGOperationGraphNode:
     @property
     def is_nccl_write(self) -> bool:
         """
-        A node is an NCCL write if it is a write node and requires NCCL.
+        A node is a NCCL write if it is a write node and requires NCCL.
         """
         return self.operation.type == _DAGNodeOperationType.WRITE and self.requires_nccl
 
@@ -207,18 +205,18 @@ def _select_next_nodes(
     For the implementation details, we maintain a priority queue for each actor,
     where the head of the priority queue is the node with the smallest `exec_task_idx`.
     When a node has a zero in-degree, it is added to the corresponding actor's
-    priority queue. For a node other than a NCCL compute node, it is ready to be
-    executed if it has a zero in-degree. For an NCCL compute node, it is ready
+    priority queue. For a node other than a NCCL collective node, it is ready to be
+    executed if it has a zero in-degree. For a NCCL collective node, it is ready
     to be executed when all the nodes in its collective group have zero in-degrees.
 
-    If a node is a NCCL compute node, it updates the `ready_collective_nodes` of
+    If a node is a NCCL collective node, it updates the `ready_collective_nodes` of
     all the nodes in its collective group. Unless all the nodes in its collective
     group have zero in-degrees, this node is removed from the candidate list.
-    Eventually, exactly one NCCL compute node from its collective group is selected
+    Eventually, exactly one NCCL collective node from its collective group is selected
     from the candidate list.
 
-    If the selected node is an NCCL write node, select all the downstream NCCL
-    read nodes. If the selected node is an NCCL compute node, select all the NCCL
+    If the selected node is a NCCL write node, select all the downstream NCCL
+    read nodes. If the selected node is a NCCL collective node, select all the NCCL
     compute nodes in its collective group.
 
     Args:
@@ -233,14 +231,14 @@ def _select_next_nodes(
         A list of _DAGOperationGraphNodes to be placed into the corresponding
         execution schedules.
     """
-    # If a node is a NCCL compute node, it updates the `ready_collective_nodes`
+    # If a node is a NCCL collective node, it updates the `ready_collective_nodes`
     # of all the nodes in its collective group. It is removed from the candidate
     # list if the collective group is not ready.
     for actor, candidates in actor_to_candidates.items():
         ready_candidates: List[_DAGOperationGraphNode] = []
         for node in candidates:
             if node.is_nccl_collective:
-                for collective_node_metadata in node.collective_group_idxs:
+                for collective_node_metadata in node.collective_group_nodes:
                     task_idx, op_type = collective_node_metadata
                     collective_node = graph[task_idx][op_type]
                     collective_node.ready_collective_nodes.add(
@@ -267,7 +265,7 @@ def _select_next_nodes(
         # A non-NCCL operation node is picked.
         assert len(next_nodes) == 1
     elif top_priority_node.is_nccl_write:
-        # An NCCL write node is picked. NCCL is a blocking operation, so we need
+        # a NCCL write node is picked. NCCL is a blocking operation, so we need
         # to pick all the corresponding NCCL read nodes to avoid a deadlock.
         for downstream_node_metadata in top_priority_node.out_edges:
             task_idx, op_type = downstream_node_metadata
@@ -276,16 +274,16 @@ def _select_next_nodes(
             next_nodes.append(downstream_node)
         assert len(next_nodes) == 1 + len(top_priority_node.out_edges)
     elif top_priority_node.is_nccl_collective:
-        # An NCCL compute node is picked. NCCL is a blocking operation, so we need
-        # to pick all the corresponding NCCL compute nodes in its collective group
+        # a NCCL collective node is picked. NCCL is a blocking operation, so we need
+        # to pick all the corresponding NCCL collective nodes in its collective group
         # to avoid a deadlock.
-        for collective_node_metadata in top_priority_node.collective_group_idxs:
+        for collective_node_metadata in top_priority_node.collective_group_nodes:
             task_idx, op_type = collective_node_metadata
             collective_node = graph[task_idx][op_type]
             assert collective_node.is_nccl_collective and collective_node.is_ready
             if collective_node != top_priority_node:
                 next_nodes.append(collective_node)
-        assert len(next_nodes) == len(top_priority_node.collective_group_idxs)
+        assert len(next_nodes) == len(top_priority_node.collective_group_nodes)
 
     return next_nodes
 
@@ -389,7 +387,7 @@ def _build_dag_node_operation_graph(
                 graph[downstream_task_idx][_DAGNodeOperationType.READ],
             )
 
-    # Set collective group nodes for all the NCCL compute nodes.
+    # Set collective group nodes for all the NCCL collective nodes.
     collective_group_to_task_idxs: Dict[_CollectiveGroup, Set[int]] = defaultdict(set)
     for task_idx, task in idx_to_task.items():
         if isinstance(task.dag_node, CollectiveOutputNode):
@@ -403,7 +401,7 @@ def _build_dag_node_operation_graph(
         }
         for task_idx in task_idxs:
             collective_node = graph[task_idx][_DAGNodeOperationType.COMPUTE]
-            collective_node.collective_group_idxs = collective_group_nodes
+            collective_node.collective_group_nodes = collective_group_nodes
 
     return graph
 
@@ -453,10 +451,10 @@ def _generate_actor_to_execution_schedule(
     # Use topological sort algorithm to generate the execution schedule.
     while True:
         # Select a list of nodes to be executed. There are three cases:
-        # 1. If a selected node is not an NCCL operation, only itself is returned.
-        # 2. If a selected node is an NCCL write operation, the corresponding NCCL
+        # 1. If a selected node is not a NCCL operation, only itself is returned.
+        # 2. If a selected node is a NCCL write operation, the corresponding NCCL
         #    read operations are also returned.
-        # 3. If a selected node is an NCCL compute operation, all the nodes in its
+        # 3. If a selected node is a NCCL collective operation, all the nodes in its
         #    collective group are returned.
         # In cases 1 and 3, all the selected nodes are ready. In case 2, the NCCL
         # write node is ready, while the NCCL read nodes are not ready until their

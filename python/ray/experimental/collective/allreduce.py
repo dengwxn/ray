@@ -22,7 +22,7 @@ class AllReduceWrapper:
         self,
         input_nodes: List["ray.dag.DAGNode"],
         op: ReduceOp = ReduceOp.SUM,
-        transport: Union[str, GPUCommunicator] = TorchTensorType.NCCL,
+        transport: Optional[Union[str, GPUCommunicator]] = None,
     ) -> List[CollectiveOutputNode]:
         """
         Bind input nodes with a collective operation. The collective operation is
@@ -48,6 +48,8 @@ class AllReduceWrapper:
         Returns:
             A list of collective output nodes.
         """
+        if transport is None:
+            transport = TorchTensorType.NCCL
         collective_group = _CollectiveGroup(input_nodes, op, transport)
         collective_output_nodes: List[CollectiveOutputNode] = []
 
@@ -77,10 +79,12 @@ class AllReduceWrapper:
         self,
         tensor,
         group_name: str = "default",
-        op: ray_collective_types.ReduceOp = ray_collective_types.ReduceOp.SUM,
+        op: Optional[ray_collective_types.ReduceOp] = None,
     ):
         from ray.util.collective.collective import allreduce
 
+        if op is None:
+            op = ray_collective_types.ReduceOp.SUM
         return allreduce(tensor, group_name, op)
 
 

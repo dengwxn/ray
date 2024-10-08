@@ -29,7 +29,7 @@ class _CollectiveGroup:
         self,
         input_nodes: List[DAGNode],
         op: _CollectiveOp,
-        transport: Union[str, GPUCommunicator] = TorchTensorType.NCCL,
+        transport: Optional[Union[str, GPUCommunicator]] = None,
     ):
         self._input_nodes: List[DAGNode] = input_nodes
         if len(self._input_nodes) == 0:
@@ -57,6 +57,8 @@ class _CollectiveGroup:
         self._op = op
         if not isinstance(self._op, ReduceOp):
             raise NotImplementedError("Only ReduceOp is implemented")
+        if transport is None:
+            transport = TorchTensorType.NCCL
         self._type_hint = TorchTensorType(transport=transport, _direct_return=True)
         if isinstance(transport, GPUCommunicator):
             if set(transport.get_actor_handles()) != set(self._actor_handles):

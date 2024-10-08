@@ -979,6 +979,7 @@ class CompiledDAG:
         # If a custom NCCL group is specified for P2P actors, initialize and cache
         # the NCCL group ID.
         if nccl_actors and self._custom_nccl_group:
+            # [TODO] Comment for `_nccl_group_id`, since there are multiple ids.
             self._nccl_group_id = _init_nccl_group(nccl_actors, self._custom_nccl_group)
             actors = frozenset(nccl_actors)
             actors_to_nccl_group_id[actors] = self._nccl_group_id
