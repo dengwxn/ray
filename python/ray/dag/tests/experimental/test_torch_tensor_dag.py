@@ -164,10 +164,11 @@ class TestNcclGroup(GPUCommunicator):
 
     def allreduce(
         self,
-        tensor: "torch.Tensor",
+        send_buf: "torch.Tensor",
+        recv_buf: "torch.Tensor",
         op: ReduceOp = ReduceOp.SUM,
     ) -> None:
-        return self._inner.allreduce(tensor, op)
+        return self._inner.allreduce(send_buf, recv_buf, op)
 
     def destroy(self) -> None:
         return self._inner.destroy()
@@ -477,7 +478,8 @@ def test_torch_tensor_custom_comm_invalid(ray_start_regular):
 
         def allreduce(
             self,
-            tensor: "torch.Tensor",
+            send_buf: "torch.Tensor",
+            recv_buf: "torch.Tensor",
             op: ReduceOp,
         ) -> None:
             raise NotImplementedError
@@ -617,7 +619,8 @@ def test_torch_tensor_custom_comm_inited(ray_start_regular):
 
         def allreduce(
             self,
-            tensor: "torch.Tensor",
+            send_buf: "torch.Tensor",
+            recv_buf: "torch.Tensor",
             op: ReduceOp,
         ) -> None:
             raise NotImplementedError
@@ -1110,7 +1113,8 @@ def test_torch_tensor_nccl_all_reduce_custom_comm_wrong_actors(ray_start_regular
 
         def allreduce(
             self,
-            tensor: "torch.Tensor",
+            send_buf: "torch.Tensor",
+            recv_buf: "torch.Tensor",
             op: ReduceOp = ReduceOp.SUM,
         ) -> None:
             raise NotImplementedError
@@ -1125,7 +1129,7 @@ def test_torch_tensor_nccl_all_reduce_custom_comm_wrong_actors(ray_start_regular
             for i, worker in enumerate(workers)
         ]
         with pytest.raises(
-            AssertionError,
+            ValueError,
             match="Expected actor handles to match the custom NCCL group",
         ):
             collective.allreduce.bind(computes, transport=nccl_group)
@@ -1709,7 +1713,7 @@ def test_torch_tensor_nccl_all_reduce_non_tensor_input(ray_start_regular):
         dag = MultiOutputNode(allreduce)
     compiled_dag = dag.experimental_compile()
     ref = compiled_dag.execute(10)
-    with pytest.raises(AssertionError, match="Expected a torch tensor"):
+    with pytest.raises(ValueError, match="Expected a torch tensor"):
         ray.get(ref)
 
     compiled_dag.teardown()
