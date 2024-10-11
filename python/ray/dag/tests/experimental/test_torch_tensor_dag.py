@@ -1163,7 +1163,7 @@ def test_torch_tensor_nccl_all_reduce_duplicate_actors(ray_start_regular):
 
 
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
-def test_torch_tensor_nccl_comm_deduplicate_collectives(ray_start_regular):
+def test_torch_tensor_nccl_comm_deduplicate_collectives(ray_start_regular, monkeypatch):
     """
     Test communicators are deduplicated when all-reduce is called on the same
     group of actors more than once.
@@ -1174,6 +1174,20 @@ def test_torch_tensor_nccl_comm_deduplicate_collectives(ray_start_regular):
     assert (
         sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
     ), "This test requires at least 2 GPUs"
+
+    nccl_group_ids = set()
+
+    def mock_init_nccl_group(actors, custom_nccl_group=None):
+        from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
+
+        nccl_group_id = _init_nccl_group(actors, custom_nccl_group)
+        nccl_group_ids.add(nccl_group_id)
+        return nccl_group_id
+
+    monkeypatch.setattr(
+        "ray.dag.collective_node._init_nccl_group",
+        mock_init_nccl_group,
+    )
 
     actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
 
@@ -1195,18 +1209,8 @@ def test_torch_tensor_nccl_comm_deduplicate_collectives(ray_start_regular):
 
     compiled_dag = dag.experimental_compile()
 
-    from ray.dag.collective_node import CollectiveOutputNode
     from ray.experimental.channel import ChannelContext
 
-    nccl_group_ids = set()
-    for _, exec_tasks in compiled_dag.actor_to_executable_tasks.items():
-        for exec_task in exec_tasks:
-            dag_node = compiled_dag.idx_to_task[exec_task.task_idx].dag_node
-            if isinstance(dag_node, CollectiveOutputNode):
-                assert exec_task.collective_group is not None
-                nccl_group_id = exec_task.collective_group.type_hint.nccl_group_id
-                assert nccl_group_id is not None
-                nccl_group_ids.add(nccl_group_id)
     # Only 1 NCCL group should be created.
     assert len(nccl_group_ids) == 1
     nccl_group_id = list(nccl_group_ids)[0]
@@ -1230,7 +1234,9 @@ def test_torch_tensor_nccl_comm_deduplicate_collectives(ray_start_regular):
 
 
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
-def test_torch_tensor_nccl_comm_deduplicate_collective_and_p2p(ray_start_regular):
+def test_torch_tensor_nccl_comm_deduplicate_collective_and_p2p(
+    ray_start_regular, monkeypatch
+):
     """
     Test communicators are deduplicated when the collective and the P2P are
     on the same set of actors.
@@ -1241,6 +1247,24 @@ def test_torch_tensor_nccl_comm_deduplicate_collective_and_p2p(ray_start_regular
     assert (
         sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
     ), "This test requires at least 2 GPUs"
+
+    nccl_group_ids = set()
+
+    def mock_init_nccl_group(actors, custom_nccl_group=None):
+        from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
+
+        nccl_group_id = _init_nccl_group(actors, custom_nccl_group)
+        nccl_group_ids.add(nccl_group_id)
+        return nccl_group_id
+
+    monkeypatch.setattr(
+        "ray.dag.compiled_dag_node._init_nccl_group",
+        mock_init_nccl_group,
+    )
+    monkeypatch.setattr(
+        "ray.dag.collective_node._init_nccl_group",
+        mock_init_nccl_group,
+    )
 
     actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
 
@@ -1266,18 +1290,8 @@ def test_torch_tensor_nccl_comm_deduplicate_collective_and_p2p(ray_start_regular
 
     compiled_dag = dag.experimental_compile()
 
-    from ray.dag.collective_node import CollectiveOutputNode
     from ray.experimental.channel import ChannelContext
 
-    nccl_group_ids = set()
-    for _, exec_tasks in compiled_dag.actor_to_executable_tasks.items():
-        for exec_task in exec_tasks:
-            dag_node = compiled_dag.idx_to_task[exec_task.task_idx].dag_node
-            if isinstance(dag_node, CollectiveOutputNode):
-                assert exec_task.collective_group is not None
-                nccl_group_id = exec_task.collective_group.type_hint.nccl_group_id
-                assert nccl_group_id is not None
-                nccl_group_ids.add(nccl_group_id)
     # Only 1 NCCL group should be created.
     assert len(nccl_group_ids) == 1
     nccl_group_id = list(nccl_group_ids)[0]
@@ -1310,17 +1324,8 @@ def test_torch_tensor_nccl_comm_deduplicate_collective_and_p2p(ray_start_regular
             collectives[0].with_type_hint(TorchTensorType(transport="nccl"))
         )
 
+    nccl_group_ids.clear()
     compiled_dag = dag.experimental_compile()
-
-    nccl_group_ids = set()
-    for _, exec_tasks in compiled_dag.actor_to_executable_tasks.items():
-        for exec_task in exec_tasks:
-            dag_node = compiled_dag.idx_to_task[exec_task.task_idx].dag_node
-            if isinstance(dag_node, CollectiveOutputNode):
-                assert exec_task.collective_group is not None
-                nccl_group_id = exec_task.collective_group.type_hint.nccl_group_id
-                assert nccl_group_id is not None
-                nccl_group_ids.add(nccl_group_id)
 
     # Both workers participated in the all-reduce. They are also the sender and
     # receiver in P2P. So only 1 NCCL group should be created.
@@ -1347,7 +1352,7 @@ def test_torch_tensor_nccl_comm_deduplicate_collective_and_p2p(ray_start_regular
 
 
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
-def test_torch_tensor_nccl_all_reduce_diff_comms(ray_start_regular):
+def test_torch_tensor_nccl_all_reduce_diff_comms(ray_start_regular, monkeypatch):
     """
     Test that different communicators are used for
     different all-reduce calls with distinct sets of actors.
@@ -1359,6 +1364,19 @@ def test_torch_tensor_nccl_all_reduce_diff_comms(ray_start_regular):
         sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
     ), "This test requires at least 2 GPUs"
 
+    nccl_group_ids = set()
+
+    def mock_init_nccl_group(actors, custom_nccl_group=None):
+        from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
+
+        nccl_group_id = _init_nccl_group(actors, custom_nccl_group)
+        nccl_group_ids.add(nccl_group_id)
+        return nccl_group_id
+
+    monkeypatch.setattr(
+        "ray.dag.collective_node._init_nccl_group",
+        mock_init_nccl_group,
+    )
     actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
 
     num_workers = 2
@@ -1380,18 +1398,7 @@ def test_torch_tensor_nccl_all_reduce_diff_comms(ray_start_regular):
 
     compiled_dag = dag.experimental_compile()
 
-    from ray.dag.collective_node import CollectiveOutputNode
     from ray.experimental.channel import ChannelContext
-
-    nccl_group_ids = set()
-    for _, exec_tasks in compiled_dag.actor_to_executable_tasks.items():
-        for exec_task in exec_tasks:
-            dag_node = compiled_dag.idx_to_task[exec_task.task_idx].dag_node
-            if isinstance(dag_node, CollectiveOutputNode):
-                assert exec_task.collective_group is not None
-                nccl_group_id = exec_task.collective_group.type_hint.nccl_group_id
-                assert nccl_group_id is not None
-                nccl_group_ids.add(nccl_group_id)
 
     # Exactly 2 NCCL groups should be created.
     assert len(nccl_group_ids) == 2
@@ -1418,7 +1425,7 @@ def test_torch_tensor_nccl_all_reduce_diff_comms(ray_start_regular):
 
 
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
-def test_torch_tensor_nccl_deduplicate_custom_comm(ray_start_regular):
+def test_torch_tensor_nccl_deduplicate_custom_comm(ray_start_regular, monkeypatch):
     """
     Test that a custom GPU communicator is reused when appropriate.
     """
@@ -1428,6 +1435,24 @@ def test_torch_tensor_nccl_deduplicate_custom_comm(ray_start_regular):
     assert (
         sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
     ), "This test requires at least 2 GPUs"
+
+    nccl_group_ids = set()
+
+    def mock_init_nccl_group(actors, custom_nccl_group=None):
+        from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
+
+        nccl_group_id = _init_nccl_group(actors, custom_nccl_group)
+        nccl_group_ids.add(nccl_group_id)
+        return nccl_group_id
+
+    monkeypatch.setattr(
+        "ray.dag.compiled_dag_node._init_nccl_group",
+        mock_init_nccl_group,
+    )
+    monkeypatch.setattr(
+        "ray.dag.collective_node._init_nccl_group",
+        mock_init_nccl_group,
+    )
 
     actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
 
@@ -1451,18 +1476,7 @@ def test_torch_tensor_nccl_deduplicate_custom_comm(ray_start_regular):
 
     compiled_dag = dag.experimental_compile()
 
-    from ray.dag.collective_node import CollectiveOutputNode
     from ray.experimental.channel import ChannelContext
-
-    nccl_group_ids = set()
-    for _, exec_tasks in compiled_dag.actor_to_executable_tasks.items():
-        for exec_task in exec_tasks:
-            dag_node = compiled_dag.idx_to_task[exec_task.task_idx].dag_node
-            if isinstance(dag_node, CollectiveOutputNode):
-                assert exec_task.collective_group is not None
-                nccl_group_id = exec_task.collective_group.type_hint.nccl_group_id
-                assert nccl_group_id is not None
-                nccl_group_ids.add(nccl_group_id)
 
     # Exactly 1 NCCL group should be created.
     assert len(nccl_group_ids) == 1
@@ -1498,20 +1512,10 @@ def test_torch_tensor_nccl_deduplicate_custom_comm(ray_start_regular):
             collectives[1].with_type_hint(TorchTensorType(transport=comm))
         )
 
+    nccl_group_ids.clear()
     compiled_dag = dag.experimental_compile()
 
-    from ray.dag.collective_node import CollectiveOutputNode
     from ray.experimental.channel import ChannelContext
-
-    nccl_group_ids = set()
-    for _, exec_tasks in compiled_dag.actor_to_executable_tasks.items():
-        for exec_task in exec_tasks:
-            dag_node = compiled_dag.idx_to_task[exec_task.task_idx].dag_node
-            if isinstance(dag_node, CollectiveOutputNode):
-                assert exec_task.collective_group is not None
-                nccl_group_id = exec_task.collective_group.type_hint.nccl_group_id
-                assert nccl_group_id is not None
-                nccl_group_ids.add(nccl_group_id)
 
     # Exactly 1 NCCL group should be created.
     assert len(nccl_group_ids) == 1
@@ -1720,7 +1724,7 @@ def test_torch_tensor_nccl_all_reduce_non_tensor_input(ray_start_regular):
 
 
 # @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
-# def test_torch_tensor_nccl_group_teardown(ray_start_regular):
+# def test_torch_tensor_nccl_group_teardown(ray_start_regular, monkeypatch):
 #     """
 #     Test that all NCCL groups (for either P2P or collectives) are torndown
 #     during `compiled_dag.teardown()`.
@@ -1731,6 +1735,24 @@ def test_torch_tensor_nccl_all_reduce_non_tensor_input(ray_start_regular):
 #     assert (
 #         sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
 #     ), "This test requires at least 2 GPUs"
+
+#     nccl_group_ids = set()
+
+#     def mock_init_nccl_group(actors, custom_nccl_group=None):
+#         from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
+
+#         nccl_group_id = _init_nccl_group(actors, custom_nccl_group)
+#         nccl_group_ids.add(nccl_group_id)
+#         return nccl_group_id
+
+#     monkeypatch.setattr(
+#         "ray.dag.compiled_dag_node._init_nccl_group",
+#         mock_init_nccl_group,
+#     )
+#     monkeypatch.setattr(
+#         "ray.dag.collective_node._init_nccl_group",
+#         mock_init_nccl_group,
+#     )
 
 #     actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
 #     num_workers = 2
@@ -1744,18 +1766,7 @@ def test_torch_tensor_nccl_all_reduce_non_tensor_input(ray_start_regular):
 #         dag = MultiOutputNode(allreduce)
 #     compiled_dag = dag.experimental_compile()
 
-#     from ray.dag.collective_node import CollectiveOutputNode
 #     from ray.experimental.channel import ChannelContext
-
-#     nccl_group_ids = set()
-#     for _, exec_tasks in compiled_dag.actor_to_executable_tasks.items():
-#         for exec_task in exec_tasks:
-#             dag_node = compiled_dag.idx_to_task[exec_task.task_idx].dag_node
-#             if isinstance(dag_node, CollectiveOutputNode):
-#                 assert exec_task.collective_group is not None
-#                 nccl_group_id = exec_task.collective_group.type_hint.nccl_group_id
-#                 assert nccl_group_id is not None
-#                 nccl_group_ids.add(nccl_group_id)
 
 #     # Sanity check: Exactly 1 NCCL group should be created.
 #     assert len(nccl_group_ids) == 1
@@ -1785,17 +1796,9 @@ def test_torch_tensor_nccl_all_reduce_non_tensor_input(ray_start_regular):
 #         send.with_type_hint(TorchTensorType(transport="nccl"))
 #         recv = workers[1].recv.bind(send)
 #         dag = recv
-#     compiled_dag = dag.experimental_compile()
 
-#     nccl_group_ids = set()
-#     for _, exec_tasks in compiled_dag.actor_to_executable_tasks.items():
-#         for exec_task in exec_tasks:
-#             dag_node = compiled_dag.idx_to_task[exec_task.task_idx].dag_node
-#             if isinstance(dag_node, CollectiveOutputNode):
-#                 assert exec_task.collective_group is not None
-#                 nccl_group_id = exec_task.collective_group.type_hint.nccl_group_id
-#                 assert nccl_group_id is not None
-#                 nccl_group_ids.add(nccl_group_id)
+#     nccl_group_ids.clear()
+#     compiled_dag = dag.experimental_compile()
 
 #     # Sanity check: Exactly 2 NCCL groups should be created.
 #     assert len(compiled_dag._nccl_group_ids) == 2
@@ -1831,17 +1834,9 @@ def test_torch_tensor_nccl_all_reduce_non_tensor_input(ray_start_regular):
 #         send.with_type_hint(TorchTensorType(transport="nccl"))
 #         recv = workers[1].recv.bind(send)
 #         dag = recv
-#     compiled_dag = dag.experimental_compile()
 
-#     nccl_group_ids = set()
-#     for _, exec_tasks in compiled_dag.actor_to_executable_tasks.items():
-#         for exec_task in exec_tasks:
-#             dag_node = compiled_dag.idx_to_task[exec_task.task_idx].dag_node
-#             if isinstance(dag_node, CollectiveOutputNode):
-#                 assert exec_task.collective_group is not None
-#                 nccl_group_id = exec_task.collective_group.type_hint.nccl_group_id
-#                 assert nccl_group_id is not None
-#                 nccl_group_ids.add(nccl_group_id)
+#     nccl_group_ids.clear()
+#     compiled_dag = dag.experimental_compile()
 
 #     # Sanity check: Exactly 1 NCCL group should be created.
 #     assert len(compiled_dag._nccl_group_ids) == 1
@@ -1884,6 +1879,24 @@ def test_torch_tensor_nccl_all_reduce_non_tensor_input(ray_start_regular):
 #         sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
 #     ), "This test requires at least 2 GPUs"
 
+#     nccl_group_ids = set()
+
+#     def mock_init_nccl_group(actors, custom_nccl_group=None):
+#         from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
+
+#         nccl_group_id = _init_nccl_group(actors, custom_nccl_group)
+#         nccl_group_ids.add(nccl_group_id)
+#         return nccl_group_id
+
+#     monkeypatch.setattr(
+#         "ray.dag.compiled_dag_node._init_nccl_group",
+#         mock_init_nccl_group,
+#     )
+#     monkeypatch.setattr(
+#         "ray.dag.collective_node._init_nccl_group",
+#         mock_init_nccl_group,
+#     )
+
 #     actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
 
 #     num_workers = 2
@@ -1904,18 +1917,7 @@ def test_torch_tensor_nccl_all_reduce_non_tensor_input(ray_start_regular):
 #         )
 #     compiled_dag = dag.experimental_compile()
 
-#     from ray.dag.collective_node import CollectiveOutputNode
 #     from ray.experimental.channel import ChannelContext
-
-#     nccl_group_ids = set()
-#     for _, exec_tasks in compiled_dag.actor_to_executable_tasks.items():
-#         for exec_task in exec_tasks:
-#             dag_node = compiled_dag.idx_to_task[exec_task.task_idx].dag_node
-#             if isinstance(dag_node, CollectiveOutputNode):
-#                 assert exec_task.collective_group is not None
-#                 nccl_group_id = exec_task.collective_group.type_hint.nccl_group_id
-#                 assert nccl_group_id is not None
-#                 nccl_group_ids.add(nccl_group_id)
 
 #     # Exactly 1 NCCL group should be created.
 #     assert len(compiled_dag._nccl_group_ids) == 1
@@ -1958,20 +1960,11 @@ def test_torch_tensor_nccl_all_reduce_non_tensor_input(ray_start_regular):
 #         dag = workers[0].recv.bind(
 #             allreduce2[1].with_type_hint(TorchTensorType(transport=comm_3))
 #         )
+
+#     nccl_group_ids.clear()
 #     compiled_dag = dag.experimental_compile()
 
-#     from ray.dag.collective_node import CollectiveOutputNode
 #     from ray.experimental.channel import ChannelContext
-
-#     nccl_group_ids = set()
-#     for _, exec_tasks in compiled_dag.actor_to_executable_tasks.items():
-#         for exec_task in exec_tasks:
-#             dag_node = compiled_dag.idx_to_task[exec_task.task_idx].dag_node
-#             if isinstance(dag_node, CollectiveOutputNode):
-#                 assert exec_task.collective_group is not None
-#                 nccl_group_id = exec_task.collective_group.type_hint.nccl_group_id
-#                 assert nccl_group_id is not None
-#                 nccl_group_ids.add(nccl_group_id)
 
 #     # Exactly 3 NCCL groups should be created.
 #     assert len(compiled_dag._nccl_group_ids) == 3
