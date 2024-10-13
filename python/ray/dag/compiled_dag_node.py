@@ -973,8 +973,10 @@ class CompiledDAG:
         if None in nccl_actors:
             raise ValueError("Driver cannot participate in the NCCL group.")
 
-        # Initialize a NCCL group for each set of actors. A set of actors can be
-        # calling P2P send/recv or collective operations.
+        # Initialize and cache a NCCL group for each set of actors. A set of actors
+        # can perform P2P send/recv and collective operations. All the custom NCCL
+        # groups are initialized before the default NCCL groups. If there are
+        # multiple custom NCCL groups for a set of actors, only one is cached.
         actors_to_nccl_group_id: Dict[FrozenSet["ray.actor.ActorHandle"], str] = {}
         # Initialize a NCCL group for each custom NCCL group.
         custom_nccl_group_to_id: Dict[GPUCommunicator, str] = {}
@@ -1028,7 +1030,7 @@ class CompiledDAG:
                     nccl_group_id = collective_group.init_nccl_group()
                     actors_to_nccl_group_id[actors] = nccl_group_id
 
-        # Store all the NCCL group IDs in this DAG.
+        # Store all the NCCL group IDs for P2P send/recv and collective operations.
         self._nccl_group_ids = set(actors_to_nccl_group_id.values())
 
         if direct_input:
