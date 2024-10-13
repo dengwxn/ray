@@ -23,7 +23,14 @@ from ray.experimental.util.types import _CollectiveOp, ReduceOp
 
 
 class _CollectiveGroup:
-    """Represent metadata for a NCCL collective method."""
+    """
+    Represent metadata for a NCCL collective operation.
+
+    Args:
+        input_nodes: A list of input nodes to the collective operation.
+        op: The collective operation to perform.
+        transport: The transport to use for the collective operation.
+    """
 
     def __init__(
         self,
@@ -83,14 +90,19 @@ class _CollectiveGroup:
     def type_hint(self) -> TorchTensorType:
         return self._type_hint
 
-    def init_nccl_group(self) -> str:
+    def init_nccl_group(self, nccl_group_id: Optional[str] = None) -> str:
+        """
+        Initialize the NCCL group if it has not been initialized yet. If `nccl_group_id`
+        is provided, it means the NCCL group has already been initialized.
+        """
         type_hint = self._type_hint
         if type_hint.nccl_group_id is not None:
             # The NCCL group has already been initialized.
             return type_hint.nccl_group_id
-        nccl_group_id = _init_nccl_group(
-            self._actor_handles, type_hint.get_custom_nccl_group()
-        )
+        if nccl_group_id is None:
+            nccl_group_id = _init_nccl_group(
+                self._actor_handles, type_hint.get_custom_nccl_group()
+            )
         type_hint.set_nccl_group_id(nccl_group_id)
         return nccl_group_id
 
@@ -104,9 +116,10 @@ class _CollectiveGroup:
             raise ValueError("Expected a NCCL group")
         return nccl_group
 
-    def method(self, send_buf: "torch.Tensor"):
+    def method(self, send_buf: "torch.Tensor") -> "torch.Tensor":
         """
-        [TODO] Comments.
+        Call the collective operation on the input tensor. An output tensor is
+        allocated and returned.
         """
         import torch
 
@@ -120,7 +133,7 @@ class _CollectiveGroup:
 
 @DeveloperAPI
 class CollectiveOutputNode(DAGNode):
-    """Represent an output node from a NCCL collective method in a Ray DAG."""
+    """Represent an output node from a NCCL collective operation in a Ray DAG."""
 
     def __init__(
         self,
