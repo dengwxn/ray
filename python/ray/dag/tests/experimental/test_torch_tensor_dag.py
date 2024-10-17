@@ -20,7 +20,6 @@ from ray.experimental.channel.gpu_communicator import (
     TorchTensorAllocator,
 )
 from ray.experimental.channel.nccl_group import _NcclGroup
-from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
 from ray.experimental.channel.torch_tensor_type import TorchTensorType
 from ray.tests.conftest import *  # noqa
 from ray.util.collective.types import ReduceOp
