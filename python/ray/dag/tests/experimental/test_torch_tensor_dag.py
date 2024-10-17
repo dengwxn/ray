@@ -2078,8 +2078,8 @@ def test_torch_tensor_nccl_custom_comm_init_teardown(ray_start_regular, monkeypa
     result = ray.get(ref)
     assert result == (value * num_workers * 2, shape, dtype)
 
-    # check_nccl_group_teardown(compiled_dag, init_nccl_group_set)
-    compiled_dag.teardown()
+    check_nccl_group_teardown(compiled_dag, init_nccl_group_set)
+    # compiled_dag.teardown()
     # for nccl_group in nccl_groups:
     #     assert nccl_group not in ctx.nccl_groups
 
