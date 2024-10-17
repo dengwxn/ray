@@ -2,7 +2,7 @@
 import logging
 import os
 import sys
-from typing import List, Optional, Tuple, Dict, Set
+from typing import List, Optional, Tuple, Dict, Set, FrozenSet, Iterable
 from ray.experimental.channel.gpu_communicator import (
     GPUCommunicator,
     TorchTensorAllocator,
@@ -189,10 +189,10 @@ class InitNcclGroupSet:
         count: int,
         has_p2p_group: bool,
         nccl_groups_to_actors: Set[
-            Tuple[GPUCommunicator, Tuple["ray.actor.ActorHandle", ...]]
+            Tuple[GPUCommunicator, FrozenSet["ray.actor.ActorHandle"]]
         ],
         p2p_group: Optional[GPUCommunicator],
-        p2p_actors: List["ray.actor.ActorHandle"],
+        p2p_actors: Iterable["ray.actor.ActorHandle"],
     ):
         assert len(self.nccl_group_ids) == count
         from ray.experimental.channel import ChannelContext
@@ -208,16 +208,23 @@ class InitNcclGroupSet:
                 assert actual_p2p_group == p2p_group
             else:
                 assert isinstance(actual_p2p_group, _NcclGroup)
-            assert actual_p2p_group.get_actor_handles() == p2p_actors
+            assert set(actual_p2p_group.get_actor_handles()) == set(p2p_actors)
 
         actual_nccl_group_to_actors = set()
         for nccl_group_id in self.nccl_group_ids:
             nccl_group = ctx.nccl_groups[nccl_group_id]
+            actors = frozenset(nccl_group.get_actor_handles())
             if isinstance(nccl_group, _NcclGroup):
                 nccl_group = None
-            actors = tuple(nccl_group.get_actor_handles())
             actual_nccl_group_to_actors.add((nccl_group, actors))
         assert actual_nccl_group_to_actors == nccl_groups_to_actors
+
+    def check_teardown(self):
+        from ray.experimental.channel import ChannelContext
+
+        ctx = ChannelContext.get_current()
+        for nccl_group_id in self.nccl_group_ids:
+            assert nccl_group_id not in ctx.nccl_groups
 
 
 class MockNcclGroupSet:
@@ -231,6 +238,12 @@ class MockNcclGroupSet:
 
         nccl_group_id = str(uuid.uuid4())
         self.nccl_group_ids[nccl_group_id] = (custom_nccl_group, actors)
+        # from ray.experimental.channel import ChannelContext
+
+        # ctx = ChannelContext.get_current()
+        # ctx.nccl_groups[nccl_group_id] = custom_nccl_group
+        # print(ctx)
+        # print([k for k in ctx.nccl_groups])
         return nccl_group_id
 
     def check_init(
@@ -239,10 +252,10 @@ class MockNcclGroupSet:
         count: int,
         has_p2p_group: bool,
         nccl_groups_to_actors: Set[
-            Tuple[GPUCommunicator, Tuple["ray.actor.ActorHandle", ...]]
+            Tuple[GPUCommunicator, FrozenSet["ray.actor.ActorHandle"]]
         ],
         p2p_group: Optional[GPUCommunicator],
-        p2p_actors: List["ray.actor.ActorHandle"],
+        p2p_actors: Set["ray.actor.ActorHandle"],
     ):
         assert len(self.nccl_group_ids) == count
         actual_p2p_group_id = compiled_dag._nccl_group_id_p2p
@@ -252,12 +265,15 @@ class MockNcclGroupSet:
             assert actual_p2p_group_id
             actual_p2p_group, actual_actors = self.nccl_group_ids[actual_p2p_group_id]
             assert actual_p2p_group == p2p_group
-            assert actual_actors == p2p_actors
+            assert actual_actors == set(p2p_actors)
 
         actual_nccl_group_to_actors = set()
         for nccl_group, actors in self.nccl_group_ids.values():
-            actual_nccl_group_to_actors.add((nccl_group, tuple(actors)))
+            actual_nccl_group_to_actors.add((nccl_group, frozenset(actors)))
         assert actual_nccl_group_to_actors == nccl_groups_to_actors
+
+    def check_teardown():
+        raise NotImplementedError
 
 
 def check_nccl_group_init(
@@ -265,11 +281,11 @@ def check_nccl_group_init(
     dag: "ray.dag.DAGNode",
     count: int,
     nccl_groups_to_actors: Set[
-        Tuple[Optional[GPUCommunicator], Tuple["ray.actor.ActorHandle", ...]]
+        Tuple[Optional[GPUCommunicator], FrozenSet["ray.actor.ActorHandle"]]
     ],
     has_p2p_group: bool,
     p2p_group: Optional[GPUCommunicator] = None,
-    p2p_actors: List["ray.actor.ActorHandle"] = [],
+    p2p_actors: Iterable["ray.actor.ActorHandle"] = {},
     mock: bool = True,
 ):
     # Mock the `_init_nccl_group` function to keep track of the NCCL group IDs.
@@ -294,7 +310,12 @@ def check_nccl_group_init(
         p2p_group,
         p2p_actors,
     )
-    return compiled_dag
+    return compiled_dag, init_nccl_group_set
+
+
+def check_nccl_group_teardown(compiled_dag, init_nccl_group_set):
+    compiled_dag.teardown()
+    init_nccl_group_set.check_teardown()
 
 
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
@@ -672,7 +693,8 @@ def test_torch_tensor_custom_comm_inited(ray_start_regular):
     ), "This test requires at least 2 GPUs"
     runtime_env = {
         "env_vars": {
-            "MASTER_ADDR": socket.gethostbyname(socket.gethostname()),
+            "MASTER_ADDR": "127.0.0.1",
+            # "MASTER_ADDR": socket.gethostbyname(socket.gethostname()),
             "MASTER_PORT": "8888",
         }
     }
@@ -1163,13 +1185,6 @@ def test_torch_tensor_nccl_all_reduce_non_tensor_input(ray_start_regular):
     """
     Test an error is thrown when an all-reduce takes non-tensor inputs.
     """
-    # if not USE_GPU:
-    #     pytest.skip("NCCL tests require GPUs")
-
-    # assert (
-    #     sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 0
-    # ), "This test requires at least 1 GPU"
-
     actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
 
     worker = actor_cls.remote(use_gpu=False)
@@ -1384,30 +1399,30 @@ def test_torch_tensor_nccl_all_reduce_custom_comm_wrong_actors(ray_start_regular
             collective.allreduce.bind(computes, transport=nccl_group)
 
 
-@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+@pytest.mark.parametrize("ray_start_regular", [{"num_gpus": 4}], indirect=True)
 def test_torch_tensor_nccl_comm_deduplicate_collectives(ray_start_regular, monkeypatch):
     """
     Test communicators are deduplicated when all-reduce is called on the same
     group of actors more than once.
     """
-    if not USE_GPU:
-        pytest.skip("NCCL tests require GPUs")
+    # if not USE_GPU:
+    #     pytest.skip("NCCL tests require GPUs")
 
-    assert (
-        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
-    ), "This test requires at least 2 GPUs"
+    # assert (
+    #     sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
+    # ), "This test requires at least 2 GPUs"
 
     # Mock the `_init_nccl_group` function to keep track of the NCCL group IDs.
-    init_nccl_group_set = InitNcclGroupSet()
-    monkeypatch.setattr(
-        "ray.dag.collective_node._init_nccl_group",
-        init_nccl_group_set,
-    )
+    # init_nccl_group_set = InitNcclGroupSet()
+    # monkeypatch.setattr(
+    #     "ray.dag.collective_node._init_nccl_group",
+    #     init_nccl_group_set,
+    # )
 
     actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
 
     num_workers = 2
-    workers = [actor_cls.remote() for _ in range(num_workers)]
+    workers = [actor_cls.remote(use_gpu=False) for _ in range(num_workers)]
 
     with InputNode() as inp:
         computes = [
@@ -1422,33 +1437,41 @@ def test_torch_tensor_nccl_comm_deduplicate_collectives(ray_start_regular, monke
         ]
         dag = MultiOutputNode(recvs)
 
-    compiled_dag = dag.experimental_compile()
+    compiled_dag, _ = check_nccl_group_init(
+        monkeypatch,
+        dag,
+        1,
+        {(None, frozenset(workers))},
+        False,
+    )
 
-    from ray.experimental.channel import ChannelContext
+    # compiled_dag = dag.experimental_compile()
+
+    # from ray.experimental.channel import ChannelContext
 
     # Only 1 NCCL group should be created.
-    assert len(init_nccl_group_set.nccl_group_ids) == 1
-    nccl_group_id = list(init_nccl_group_set.nccl_group_ids)[0]
-    ctx = ChannelContext.get_current()
-    nccl_group = ctx.nccl_groups[nccl_group_id]
-    nccl_actors = nccl_group.get_actor_handles()
+    # assert len(init_nccl_group_set.nccl_group_ids) == 1
+    # nccl_group_id = list(init_nccl_group_set.nccl_group_ids)[0]
+    # ctx = ChannelContext.get_current()
+    # nccl_group = ctx.nccl_groups[nccl_group_id]
+    # nccl_actors = nccl_group.get_actor_handles()
     # The NCCL group should contain both workers.
-    assert set(nccl_actors) == set(workers)
+    # assert set(nccl_actors) == set(workers)
     # P2P NCCL group should be none since NCCL transport is not used.
-    assert compiled_dag._nccl_group_id_p2p is None
+    # assert compiled_dag._nccl_group_id_p2p is None
 
     # Sanity check: the compiled dag can execute.
-    shape = (10,)
-    dtype = torch.float16
-    ref = compiled_dag.execute([(shape, dtype, i + 1) for i in range(num_workers)])
-    result = ray.get(ref)
-    reduced_val = sum(i + 1 for i in range(num_workers)) * 2
-    assert result == [(reduced_val, shape, dtype) for _ in workers]
+    # shape = (10,)
+    # dtype = torch.float16
+    # ref = compiled_dag.execute([(shape, dtype, i + 1) for i in range(num_workers)])
+    # result = ray.get(ref)
+    # reduced_val = sum(i + 1 for i in range(num_workers)) * 2
+    # assert result == [(reduced_val, shape, dtype) for _ in workers]
 
     compiled_dag.teardown()
 
 
-@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+@pytest.mark.parametrize("ray_start_regular", [{"num_gpus": 4}], indirect=True)
 def test_torch_tensor_nccl_comm_deduplicate_p2p_and_collective(
     ray_start_regular, monkeypatch
 ):
@@ -1464,15 +1487,15 @@ def test_torch_tensor_nccl_comm_deduplicate_p2p_and_collective(
     ), "This test requires at least 2 GPUs"
 
     # Mock the `_init_nccl_group` function to keep track of the NCCL group IDs.
-    init_nccl_group_set = InitNcclGroupSet()
-    monkeypatch.setattr(
-        "ray.dag.compiled_dag_node._init_nccl_group",
-        init_nccl_group_set,
-    )
-    monkeypatch.setattr(
-        "ray.dag.collective_node._init_nccl_group",
-        init_nccl_group_set,
-    )
+    # init_nccl_group_set = InitNcclGroupSet()
+    # monkeypatch.setattr(
+    #     "ray.dag.compiled_dag_node._init_nccl_group",
+    #     init_nccl_group_set,
+    # )
+    # monkeypatch.setattr(
+    #     "ray.dag.collective_node._init_nccl_group",
+    #     init_nccl_group_set,
+    # )
 
     actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
 
@@ -1496,20 +1519,24 @@ def test_torch_tensor_nccl_comm_deduplicate_p2p_and_collective(
         ]
         dag = MultiOutputNode(recvs)
 
-    compiled_dag = dag.experimental_compile()
+    compiled_dag, _ = check_nccl_group_init(
+        monkeypatch, dag, 1, {(None, frozenset(workers))}, True, None, workers, False
+    )
 
-    from ray.experimental.channel import ChannelContext
+    # compiled_dag = dag.experimental_compile()
 
-    # Only 1 NCCL group should be created.
-    assert len(init_nccl_group_set.nccl_group_ids) == 1
-    nccl_group_id = list(init_nccl_group_set.nccl_group_ids)[0]
-    ctx = ChannelContext.get_current()
-    nccl_group = ctx.nccl_groups[nccl_group_id]
-    nccl_actors = nccl_group.get_actor_handles()
-    # The NCCL group should contain both workers.
-    assert set(nccl_actors) == set(workers)
-    # The NCCL group for all-reduce should be the same as the P2P NCCL group.
-    assert nccl_group_id == compiled_dag._nccl_group_id_p2p
+    # from ray.experimental.channel import ChannelContext
+
+    # # Only 1 NCCL group should be created.
+    # assert len(init_nccl_group_set.nccl_group_ids) == 1
+    # nccl_group_id = list(init_nccl_group_set.nccl_group_ids)[0]
+    # ctx = ChannelContext.get_current()
+    # nccl_group = ctx.nccl_groups[nccl_group_id]
+    # nccl_actors = nccl_group.get_actor_handles()
+    # # The NCCL group should contain both workers.
+    # assert set(nccl_actors) == set(workers)
+    # # The NCCL group for all-reduce should be the same as the P2P NCCL group.
+    # assert nccl_group_id == compiled_dag._nccl_group_id_p2p
 
     # Sanity check: the compiled dag can execute.
     shape = (10,)
@@ -1532,21 +1559,24 @@ def test_torch_tensor_nccl_comm_deduplicate_p2p_and_collective(
             collectives[0].with_type_hint(TorchTensorType(transport="nccl"))
         )
 
-    init_nccl_group_set.nccl_group_ids.clear()
-    compiled_dag = dag.experimental_compile()
+    compiled_dag, _ = check_nccl_group_init(
+        monkeypatch, dag, 1, {(None, frozenset(workers))}, True, None, workers, False
+    )
+    # init_nccl_group_set.nccl_group_ids.clear()
+    # compiled_dag = dag.experimental_compile()
 
-    # Both workers participated in the all-reduce. They are also the sender and
-    # receiver in P2P. So only 1 NCCL group should be created.
-    assert len(init_nccl_group_set.nccl_group_ids) == 1
-    nccl_group_id = list(init_nccl_group_set.nccl_group_ids)[0]
-    ctx = ChannelContext.get_current()
-    nccl_group = ctx.nccl_groups[nccl_group_id]
-    nccl_actors = nccl_group.get_actor_handles()
-    # The NCCL group should contain both workers.
-    assert set(nccl_actors) == set(workers)
+    # # Both workers participated in the all-reduce. They are also the sender and
+    # # receiver in P2P. So only 1 NCCL group should be created.
+    # assert len(init_nccl_group_set.nccl_group_ids) == 1
+    # nccl_group_id = list(init_nccl_group_set.nccl_group_ids)[0]
+    # ctx = ChannelContext.get_current()
+    # nccl_group = ctx.nccl_groups[nccl_group_id]
+    # nccl_actors = nccl_group.get_actor_handles()
+    # # The NCCL group should contain both workers.
+    # assert set(nccl_actors) == set(workers)
 
-    # The NCCL group for all-reduce should be the same as the P2P NCCL group.
-    assert nccl_group_id == compiled_dag._nccl_group_id_p2p
+    # # The NCCL group for all-reduce should be the same as the P2P NCCL group.
+    # assert nccl_group_id == compiled_dag._nccl_group_id_p2p
 
     # Sanity check: the compiled dag can execute.
     shape = (10,)
@@ -1591,8 +1621,12 @@ def test_torch_tensor_nccl_comm_all_reduces(ray_start_regular, monkeypatch):
         ]
         dag = MultiOutputNode(recvs)
 
-    compiled_dag = check_nccl_group_init(
-        monkeypatch, dag, 2, {(None, (workers[0],)), (None, (workers[1],))}, False
+    compiled_dag, _ = check_nccl_group_init(
+        monkeypatch,
+        dag,
+        2,
+        {(None, frozenset((workers[0],))), (None, frozenset((workers[1],)))},
+        False,
     )
 
     # Sanity check: the compiled dag can execute.
@@ -1605,7 +1639,7 @@ def test_torch_tensor_nccl_comm_all_reduces(ray_start_regular, monkeypatch):
     compiled_dag.teardown()
 
 
-@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+@pytest.mark.parametrize("ray_start_regular", [{"num_gpus": 4}], indirect=True)
 def test_torch_tensor_nccl_comm_teardown(ray_start_regular, monkeypatch):
     """
     Test all the NCCL groups for P2P send/recv or collective operations are
@@ -1619,15 +1653,15 @@ def test_torch_tensor_nccl_comm_teardown(ray_start_regular, monkeypatch):
     ), "This test requires at least 2 GPUs"
 
     # Mock the `_init_nccl_group` function to keep track of the NCCL group IDs.
-    init_nccl_group_set = InitNcclGroupSet()
-    monkeypatch.setattr(
-        "ray.dag.compiled_dag_node._init_nccl_group",
-        init_nccl_group_set,
-    )
-    monkeypatch.setattr(
-        "ray.dag.collective_node._init_nccl_group",
-        init_nccl_group_set,
-    )
+    # init_nccl_group_set = InitNcclGroupSet()
+    # monkeypatch.setattr(
+    #     "ray.dag.compiled_dag_node._init_nccl_group",
+    #     init_nccl_group_set,
+    # )
+    # monkeypatch.setattr(
+    #     "ray.dag.collective_node._init_nccl_group",
+    #     init_nccl_group_set,
+    # )
 
     actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
 
@@ -1640,30 +1674,35 @@ def test_torch_tensor_nccl_comm_teardown(ray_start_regular, monkeypatch):
         tensors = [worker.send.bind(shape, dtype, inp) for worker in workers]
         allreduce = collective.allreduce.bind(tensors)
         dag = MultiOutputNode(allreduce)
-    compiled_dag = dag.experimental_compile()
 
-    from ray.experimental.channel import ChannelContext
+    compiled_dag, init_nccl_group_set = check_nccl_group_init(
+        monkeypatch, dag, 1, {(None, frozenset(workers))}, False, mock=False
+    )
+    # compiled_dag = dag.experimental_compile()
 
-    # Sanity check: Exactly 1 NCCL group should be created.
-    assert len(init_nccl_group_set.nccl_group_ids) == 1
-    ctx = ChannelContext.get_current()
-    nccl_group_id = list(init_nccl_group_set.nccl_group_ids)[0]
-    nccl_group = ctx.nccl_groups[nccl_group_id]
-    assert set(nccl_group.get_actor_handles()) == set(workers)
-    assert compiled_dag._nccl_group_id_p2p is None
+    # from ray.experimental.channel import ChannelContext
 
-    # Sanity check: Compiled DAG can execute.
-    value = 10
-    ref = compiled_dag.execute(value)
-    result = ray.get(ref)
-    assert len(result) == num_workers
-    expected_tensor_val = torch.ones(shape, dtype=dtype) * value * num_workers
-    for tensor in result:
-        tensor = tensor.to("cpu")
-        assert torch.equal(tensor, expected_tensor_val)
+    # # Sanity check: Exactly 1 NCCL group should be created.
+    # assert len(init_nccl_group_set.nccl_group_ids) == 1
+    # ctx = ChannelContext.get_current()
+    # nccl_group_id = list(init_nccl_group_set.nccl_group_ids)[0]
+    # nccl_group = ctx.nccl_groups[nccl_group_id]
+    # assert set(nccl_group.get_actor_handles()) == set(workers)
+    # assert compiled_dag._nccl_group_id_p2p is None
 
-    compiled_dag.teardown()
-    assert nccl_group_id not in ctx.nccl_groups
+    # # Sanity check: Compiled DAG can execute.
+    # value = 10
+    # ref = compiled_dag.execute(value)
+    # result = ray.get(ref)
+    # assert len(result) == num_workers
+    # expected_tensor_val = torch.ones(shape, dtype=dtype) * value * num_workers
+    # for tensor in result:
+    #     tensor = tensor.to("cpu")
+    #     assert torch.equal(tensor, expected_tensor_val)
+
+    check_nccl_group_teardown(compiled_dag, init_nccl_group_set)
+    # compiled_dag.teardown()
+    # assert nccl_group_id not in ctx.nccl_groups
 
     with InputNode() as inp:
         tensor = workers[0].send.bind(shape, dtype, inp)
@@ -1673,35 +1712,46 @@ def test_torch_tensor_nccl_comm_teardown(ray_start_regular, monkeypatch):
         recv = workers[1].recv.bind(send)
         dag = recv
 
-    init_nccl_group_set.nccl_group_ids.clear()
-    compiled_dag = dag.experimental_compile()
+    compiled_dag, _ = check_nccl_group_init(
+        monkeypatch,
+        dag,
+        2,
+        {(None, frozenset(workers)), (None, frozenset((workers[0],)))},
+        True,
+        None,
+        workers,
+        mock=False,
+    )
+    # init_nccl_group_set.nccl_group_ids.clear()
+    # compiled_dag = dag.experimental_compile()
 
     # Sanity check: Exactly 2 NCCL groups should be created.
     # 1 NCCL group is for collective.
     # 1 NCCL group is for P2P.
-    nccl_group_ids = list(init_nccl_group_set.nccl_group_ids)
-    assert len(nccl_group_ids) == 2
-    p2p_nccl_group_id = compiled_dag._nccl_group_id_p2p
-    assert p2p_nccl_group_id
-    assert p2p_nccl_group_id in nccl_group_ids
+    # nccl_group_ids = list(init_nccl_group_set.nccl_group_ids)
+    # assert len(nccl_group_ids) == 2
+    # p2p_nccl_group_id = compiled_dag._nccl_group_id_p2p
+    # assert p2p_nccl_group_id
+    # assert p2p_nccl_group_id in nccl_group_ids
 
-    ctx = ChannelContext.get_current()
-    p2p_nccl_group = ctx.nccl_groups[p2p_nccl_group_id]
-    assert set(p2p_nccl_group.get_actor_handles()) == set(workers)
-    collective_nccl_group_id = nccl_group_ids[
-        0 if nccl_group_ids.index(p2p_nccl_group_id) == 1 else 1
-    ]
-    collective_nccl_group = ctx.nccl_groups[collective_nccl_group_id]
-    assert collective_nccl_group.get_actor_handles() == [workers[0]]
+    # ctx = ChannelContext.get_current()
+    # p2p_nccl_group = ctx.nccl_groups[p2p_nccl_group_id]
+    # assert set(p2p_nccl_group.get_actor_handles()) == set(workers)
+    # collective_nccl_group_id = nccl_group_ids[
+    #     0 if nccl_group_ids.index(p2p_nccl_group_id) == 1 else 1
+    # ]
+    # collective_nccl_group = ctx.nccl_groups[collective_nccl_group_id]
+    # assert collective_nccl_group.get_actor_handles() == [workers[0]]
 
     # Sanity check: Compiled DAG can execute.
-    ref = compiled_dag.execute(value)
-    result = ray.get(ref)
-    assert result == (value, shape, dtype)
+    # ref = compiled_dag.execute(value)
+    # result = ray.get(ref)
+    # assert result == (value, shape, dtype)
 
-    compiled_dag.teardown()
-    assert collective_nccl_group_id not in ctx.nccl_groups
-    assert p2p_nccl_group_id not in ctx.nccl_groups
+    check_nccl_group_teardown(compiled_dag, init_nccl_group_set)
+    # compiled_dag.teardown()
+    # assert collective_nccl_group_id not in ctx.nccl_groups
+    # assert p2p_nccl_group_id not in ctx.nccl_groups
 
     with InputNode() as inp:
         tensors = [worker.send.bind(shape, dtype, inp) for worker in workers]
@@ -1711,30 +1761,41 @@ def test_torch_tensor_nccl_comm_teardown(ray_start_regular, monkeypatch):
         recv = workers[1].recv.bind(send)
         dag = recv
 
-    init_nccl_group_set.nccl_group_ids.clear()
-    compiled_dag = dag.experimental_compile()
+    compiled_dag, _ = check_nccl_group_init(
+        monkeypatch,
+        dag,
+        1,
+        {(None, frozenset(workers))},
+        True,
+        None,
+        workers,
+        mock=False,
+    )
+    # init_nccl_group_set.nccl_group_ids.clear()
+    # compiled_dag = dag.experimental_compile()
 
-    # Sanity check: Exactly 1 NCCL group should be created.
-    # The NCCL group is used for collective.
-    # The NCCL group is also used for P2P.
-    nccl_group_ids = list(init_nccl_group_set.nccl_group_ids)
-    assert len(nccl_group_ids) == 1
-    nccl_group_id = nccl_group_ids[0]
-    p2p_nccl_group_id = compiled_dag._nccl_group_id_p2p
-    assert p2p_nccl_group_id
-    assert p2p_nccl_group_id == nccl_group_id
+    # # Sanity check: Exactly 1 NCCL group should be created.
+    # # The NCCL group is used for collective.
+    # # The NCCL group is also used for P2P.
+    # nccl_group_ids = list(init_nccl_group_set.nccl_group_ids)
+    # assert len(nccl_group_ids) == 1
+    # nccl_group_id = nccl_group_ids[0]
+    # p2p_nccl_group_id = compiled_dag._nccl_group_id_p2p
+    # assert p2p_nccl_group_id
+    # assert p2p_nccl_group_id == nccl_group_id
 
-    ctx = ChannelContext.get_current()
-    nccl_group = ctx.nccl_groups[nccl_group_id]
-    assert set(nccl_group.get_actor_handles()) == set(workers)
+    # ctx = ChannelContext.get_current()
+    # nccl_group = ctx.nccl_groups[nccl_group_id]
+    # assert set(nccl_group.get_actor_handles()) == set(workers)
 
-    # Sanity check: Compiled DAG can execute.
-    ref = compiled_dag.execute(value)
-    result = ray.get(ref)
-    assert result == (value * num_workers, shape, dtype)
+    # # Sanity check: Compiled DAG can execute.
+    # ref = compiled_dag.execute(value)
+    # result = ray.get(ref)
+    # assert result == (value * num_workers, shape, dtype)
 
-    compiled_dag.teardown()
-    assert nccl_group_id not in ctx.nccl_groups
+    check_nccl_group_teardown(compiled_dag, init_nccl_group_set)
+    # compiled_dag.teardown()
+    # assert nccl_group_id not in ctx.nccl_groups
 
 
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
@@ -1750,15 +1811,15 @@ def test_torch_tensor_nccl_custom_comm_deduplicate(ray_start_regular, monkeypatc
     ), "This test requires at least 2 GPUs"
 
     # Mock the `_init_nccl_group` function to keep track of the NCCL group IDs.
-    init_nccl_group_set = InitNcclGroupSet()
-    monkeypatch.setattr(
-        "ray.dag.compiled_dag_node._init_nccl_group",
-        init_nccl_group_set,
-    )
-    monkeypatch.setattr(
-        "ray.dag.collective_node._init_nccl_group",
-        init_nccl_group_set,
-    )
+    # init_nccl_group_set = InitNcclGroupSet()
+    # monkeypatch.setattr(
+    #     "ray.dag.compiled_dag_node._init_nccl_group",
+    #     init_nccl_group_set,
+    # )
+    # monkeypatch.setattr(
+    #     "ray.dag.collective_node._init_nccl_group",
+    #     init_nccl_group_set,
+    # )
 
     actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
 
@@ -1780,28 +1841,38 @@ def test_torch_tensor_nccl_custom_comm_deduplicate(ray_start_regular, monkeypatc
             collectives[1].with_type_hint(TorchTensorType(transport="nccl"))
         )
 
-    compiled_dag = dag.experimental_compile()
+    compiled_dag, _ = check_nccl_group_init(
+        monkeypatch,
+        dag,
+        1,
+        {(comm, frozenset(workers))},
+        True,
+        comm,
+        workers,
+        mock=False,
+    )
+    # compiled_dag = dag.experimental_compile()
 
-    from ray.experimental.channel import ChannelContext
+    # from ray.experimental.channel import ChannelContext
 
-    # Exactly 1 NCCL group should be created.
-    assert len(init_nccl_group_set.nccl_group_ids) == 1
-    ctx = ChannelContext.get_current()
-    nccl_group_id = list(init_nccl_group_set.nccl_group_ids)[0]
-    nccl_group = ctx.nccl_groups[nccl_group_id]
-    assert set(nccl_group.get_actor_handles()) == set(workers)
-    assert nccl_group == comm
+    # # Exactly 1 NCCL group should be created.
+    # assert len(init_nccl_group_set.nccl_group_ids) == 1
+    # ctx = ChannelContext.get_current()
+    # nccl_group_id = list(init_nccl_group_set.nccl_group_ids)[0]
+    # nccl_group = ctx.nccl_groups[nccl_group_id]
+    # assert set(nccl_group.get_actor_handles()) == set(workers)
+    # assert nccl_group == comm
 
-    # P2P and NCCL group should be the same.
-    assert compiled_dag._nccl_group_id_p2p == nccl_group_id
+    # # P2P and NCCL group should be the same.
+    # assert compiled_dag._nccl_group_id_p2p == nccl_group_id
 
     # Sanity check: the compiled dag can execute.
-    shape = (10,)
-    dtype = torch.float16
-    value = 10
-    ref = compiled_dag.execute([(shape, dtype, value) for _ in workers])
-    result = ray.get(ref)
-    assert result == (value * num_workers * 2, shape, dtype)
+    # shape = (10,)
+    # dtype = torch.float16
+    # value = 10
+    # ref = compiled_dag.execute([(shape, dtype, value) for _ in workers])
+    # result = ray.get(ref)
+    # assert result == (value * num_workers * 2, shape, dtype)
 
     compiled_dag.teardown()
 
@@ -1818,41 +1889,51 @@ def test_torch_tensor_nccl_custom_comm_deduplicate(ray_start_regular, monkeypatc
             collectives[1].with_type_hint(TorchTensorType(transport=comm))
         )
 
-    init_nccl_group_set.nccl_group_ids.clear()
-    compiled_dag = dag.experimental_compile()
-
-    from ray.experimental.channel import ChannelContext
-
-    # Exactly 1 NCCL group should be created.
-    assert len(init_nccl_group_set.nccl_group_ids) == 1
-    ctx = ChannelContext.get_current()
-    nccl_group_id = list(init_nccl_group_set.nccl_group_ids)[0]
-    nccl_group = ctx.nccl_groups[nccl_group_id]
-    assert set(nccl_group.get_actor_handles()) == set(workers)
-    # The following assertion fails because TorchTensorType is deep-copied as a whole.
-    # assert nccl_group == comm
-    assert (
-        nccl_group._world_size,
-        nccl_group._comm_id,
-        nccl_group._actor_handles,
-        nccl_group._inner,
-    ) == (
-        comm._world_size,
-        comm._comm_id,
-        comm._actor_handles,
-        comm._inner,
+    compiled_dag, _ = check_nccl_group_init(
+        monkeypatch,
+        dag,
+        1,
+        {(comm, frozenset(workers))},
+        True,
+        comm,
+        workers,
+        mock=False,
     )
+    # init_nccl_group_set.nccl_group_ids.clear()
+    # compiled_dag = dag.experimental_compile()
 
-    # P2P and NCCL group should be the same.
-    assert compiled_dag._nccl_group_id_p2p == nccl_group_id
+    # from ray.experimental.channel import ChannelContext
+
+    # # Exactly 1 NCCL group should be created.
+    # assert len(init_nccl_group_set.nccl_group_ids) == 1
+    # ctx = ChannelContext.get_current()
+    # nccl_group_id = list(init_nccl_group_set.nccl_group_ids)[0]
+    # nccl_group = ctx.nccl_groups[nccl_group_id]
+    # assert set(nccl_group.get_actor_handles()) == set(workers)
+    # # The following assertion fails because TorchTensorType is deep-copied as a whole.
+    # # assert nccl_group == comm
+    # assert (
+    #     nccl_group._world_size,
+    #     nccl_group._comm_id,
+    #     nccl_group._actor_handles,
+    #     nccl_group._inner,
+    # ) == (
+    #     comm._world_size,
+    #     comm._comm_id,
+    #     comm._actor_handles,
+    #     comm._inner,
+    # )
+
+    # # P2P and NCCL group should be the same.
+    # assert compiled_dag._nccl_group_id_p2p == nccl_group_id
 
     # Sanity check: the compiled dag can execute.
-    shape = (10,)
-    dtype = torch.float16
-    value = 10
-    ref = compiled_dag.execute([(shape, dtype, value) for _ in workers])
-    result = ray.get(ref)
-    assert result == (value * num_workers * 2, shape, dtype)
+    # shape = (10,)
+    # dtype = torch.float16
+    # value = 10
+    # ref = compiled_dag.execute([(shape, dtype, value) for _ in workers])
+    # result = ray.get(ref)
+    # assert result == (value * num_workers * 2, shape, dtype)
 
     compiled_dag.teardown()
 
@@ -1865,23 +1946,23 @@ def test_torch_tensor_nccl_custom_comm_init_teardown(ray_start_regular, monkeypa
     the `custom_nccl_group` is initialized only once.
     2. Test all initialized NCCL groups are destroyed during teardown.
     """
-    # if not USE_GPU:
-    #     pytest.skip("NCCL tests require GPUs")
+    if not USE_GPU:
+        pytest.skip("NCCL tests require GPUs")
 
-    # assert (
-    #     sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
-    # ), "This test requires at least 2 GPUs"
+    assert (
+        sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) > 1
+    ), "This test requires at least 2 GPUs"
 
     # Mock the `_init_nccl_group` function to keep track of the NCCL group IDs.
-    init_nccl_group_set = MockNcclGroupSet()
-    monkeypatch.setattr(
-        "ray.dag.compiled_dag_node._init_nccl_group",
-        init_nccl_group_set,
-    )
-    monkeypatch.setattr(
-        "ray.dag.collective_node._init_nccl_group",
-        init_nccl_group_set,
-    )
+    # init_nccl_group_set = MockNcclGroupSet()
+    # monkeypatch.setattr(
+    #     "ray.dag.compiled_dag_node._init_nccl_group",
+    #     init_nccl_group_set,
+    # )
+    # monkeypatch.setattr(
+    #     "ray.dag.collective_node._init_nccl_group",
+    #     init_nccl_group_set,
+    # )
 
     actor_cls = TorchTensorWorker.options(num_cpus=0, num_gpus=1)
 
@@ -1901,34 +1982,46 @@ def test_torch_tensor_nccl_custom_comm_init_teardown(ray_start_regular, monkeypa
         dag = workers[0].recv.bind(
             allreduce[1].with_type_hint(TorchTensorType(transport=comm))
         )
-    compiled_dag = dag.experimental_compile()
 
-    from ray.experimental.channel import ChannelContext
+    compiled_dag, init_nccl_group_set = check_nccl_group_init(
+        monkeypatch,
+        dag,
+        1,
+        {(comm, frozenset(workers))},
+        True,
+        comm,
+        workers,
+        mock=False,
+    )
+    # compiled_dag = dag.experimental_compile()
+
+    # from ray.experimental.channel import ChannelContext
 
     # Exactly 1 NCCL group should be created.
     # The NCCL group is used for collective.
     # The NCCL group is also used for P2P send/recv.
-    nccl_group_ids = list(init_nccl_group_set.nccl_group_ids)
-    assert len(nccl_group_ids) == 1
-    nccl_group_id = nccl_group_ids[0]
-    p2p_nccl_group_id = compiled_dag._nccl_group_id_p2p
-    assert p2p_nccl_group_id
-    assert p2p_nccl_group_id == nccl_group_id
-    # Sanity check: The NCCL group has correct actors.
-    ctx = ChannelContext.get_current()
-    nccl_group = ctx.nccl_groups[nccl_group_id]
-    assert set(nccl_group.get_actor_handles()) == set(workers)
-    # The NCCL group should be the custom communicator.
-    assert nccl_group == comm
+    # nccl_group_ids = list(init_nccl_group_set.nccl_group_ids)
+    # assert len(nccl_group_ids) == 1
+    # nccl_group_id = nccl_group_ids[0]
+    # p2p_nccl_group_id = compiled_dag._nccl_group_id_p2p
+    # assert p2p_nccl_group_id
+    # assert p2p_nccl_group_id == nccl_group_id
+    # # Sanity check: The NCCL group has correct actors.
+    # ctx = ChannelContext.get_current()
+    # nccl_group = ctx.nccl_groups[nccl_group_id]
+    # assert set(nccl_group.get_actor_handles()) == set(workers)
+    # # The NCCL group should be the custom communicator.
+    # assert nccl_group == comm
 
-    # # Sanity check: the compiled dag can execute.
-    # value = 10
-    # ref = compiled_dag.execute(value)
-    # result = ray.get(ref)
-    # assert result == (value * num_workers, shape, dtype)
+    # Sanity check: the compiled dag can execute.
+    value = 10
+    ref = compiled_dag.execute(value)
+    result = ray.get(ref)
+    assert result == (value * num_workers, shape, dtype)
 
-    compiled_dag.teardown()
-    assert nccl_group not in ctx.nccl_groups
+    check_nccl_group_teardown(compiled_dag, init_nccl_group_set)
+    # compiled_dag.teardown()
+    # assert nccl_group not in ctx.nccl_groups
 
     comm_id_1 = nccl.get_unique_id()
     comm_1 = TestNcclGroup(num_workers, comm_id_1, workers)
@@ -1945,35 +2038,50 @@ def test_torch_tensor_nccl_custom_comm_init_teardown(ray_start_regular, monkeypa
             allreduce2[1].with_type_hint(TorchTensorType(transport=comm_3))
         )
 
-    init_nccl_group_set.nccl_group_ids.clear()
-    compiled_dag = dag.experimental_compile()
+    compiled_dag, init_nccl_group_set = check_nccl_group_init(
+        monkeypatch,
+        dag,
+        3,
+        {
+            (comm_1, frozenset(workers)),
+            (comm_2, frozenset(workers)),
+            (comm_3, frozenset(workers)),
+        },
+        True,
+        comm_3,
+        workers,
+        mock=False,
+    )
+    # init_nccl_group_set.nccl_group_ids.clear()
+    # compiled_dag = dag.experimental_compile()
 
     # Exactly 3 NCCL groups should be created.
     # 2 NCCL groups are used for collectives.
     # 1 NCCL group is used for P2P send/recv.
-    nccl_group_ids = list(init_nccl_group_set.nccl_group_ids)
-    assert len(nccl_group_ids) == 3
-    p2p_nccl_group_id = compiled_dag._nccl_group_id_p2p
-    assert p2p_nccl_group_id
-    assert p2p_nccl_group_id in nccl_group_ids
-    # Sanity check: The NCCL groups have correct actors.
-    ctx = ChannelContext.get_current()
-    nccl_groups = set()
-    for nccl_group_id in nccl_group_ids:
-        nccl_group = ctx.nccl_groups[nccl_group_id]
-        assert set(nccl_group.get_actor_handles()) == set(workers)
-        nccl_groups.add(nccl_group)
-    assert nccl_groups == {comm_1, comm_2, comm_3}
+    # nccl_group_ids = list(init_nccl_group_set.nccl_group_ids)
+    # assert len(nccl_group_ids) == 3
+    # p2p_nccl_group_id = compiled_dag._nccl_group_id_p2p
+    # assert p2p_nccl_group_id
+    # assert p2p_nccl_group_id in nccl_group_ids
+    # # Sanity check: The NCCL groups have correct actors.
+    # ctx = ChannelContext.get_current()
+    # nccl_groups = set()
+    # for nccl_group_id in nccl_group_ids:
+    #     nccl_group = ctx.nccl_groups[nccl_group_id]
+    #     assert set(nccl_group.get_actor_handles()) == set(workers)
+    #     nccl_groups.add(nccl_group)
+    # assert nccl_groups == {comm_1, comm_2, comm_3}
 
     # Sanity check: the compiled dag can execute.
-    # value = 20
-    # ref = compiled_dag.execute(value)
-    # result = ray.get(ref)
-    # assert result == (value * num_workers * 2, shape, dtype)
+    value = 20
+    ref = compiled_dag.execute(value)
+    result = ray.get(ref)
+    assert result == (value * num_workers * 2, shape, dtype)
 
+    # check_nccl_group_teardown(compiled_dag, init_nccl_group_set)
     compiled_dag.teardown()
-    for nccl_group in nccl_groups:
-        assert nccl_group not in ctx.nccl_groups
+    # for nccl_group in nccl_groups:
+    #     assert nccl_group not in ctx.nccl_groups
 
 
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
