@@ -2,20 +2,21 @@
 import logging
 import os
 import sys
-from typing import List, Optional, Tuple, Dict, Set, FrozenSet, Iterable
-from ray.experimental.channel.gpu_communicator import (
-    GPUCommunicator,
-    TorchTensorAllocator,
-)
-import torch
+import uuid
+from typing import Dict, FrozenSet, List, Optional, Set, Tuple
 
 import pytest
 import ray
 import ray.cluster_utils
 import ray.experimental.collective as collective
+import torch
 from ray.dag import InputNode, MultiOutputNode
-from ray.util.collective.types import ReduceOp
+from ray.experimental.channel.gpu_communicator import (
+    GPUCommunicator,
+    TorchTensorAllocator,
+)
 from ray.tests.conftest import *  # noqa
+from ray.util.collective.types import ReduceOp
 
 logger = logging.getLogger(__name__)
 
@@ -46,57 +47,62 @@ class CPUTorchTensorWorker:
 
 class MockNcclGroupSet:
     def __init__(self):
-        self.nccl_group_ids: Dict[
-            str, Tuple[Optional[GPUCommunicator], List["ray.actor.ActorHandle"]]
+        # Represents a mapping from a NCCL group ID to a set of actors and a custom
+        # NCCL group.
+        self.ids_to_actors_and_custom_comms: Dict[
+            str, Tuple[FrozenSet["ray.actor.ActorHandle"], Optional[GPUCommunicator]]
         ] = {}
 
-    def __call__(self, actors, custom_nccl_group=None):
-        import uuid
-
+    def __call__(
+        self,
+        actors: List["ray.actor.ActorHandle"],
+        custom_nccl_group: Optional[GPUCommunicator] = None,
+    ) -> str:
         nccl_group_id = str(uuid.uuid4())
-        self.nccl_group_ids[nccl_group_id] = (custom_nccl_group, actors)
+        self.ids_to_actors_and_custom_comms[nccl_group_id] = (
+            frozenset(actors),
+            custom_nccl_group,
+        )
         return nccl_group_id
 
     def check_init(
         self,
         compiled_dag: "ray.dag.CompiledDAG",
-        count: int,
-        nccl_groups_to_actors: Set[
-            Tuple[Optional[GPUCommunicator], FrozenSet["ray.actor.ActorHandle"]]
+        num: int,
+        actors_and_custom_comms: Set[
+            Tuple[FrozenSet["ray.actor.ActorHandle"], Optional[GPUCommunicator]]
         ],
-        p2p_group_and_actors: Optional[
-            Tuple[Optional[GPUCommunicator], Iterable["ray.actor.ActorHandle"]]
+        p2p_actors_and_custom_comm: Optional[
+            Tuple[FrozenSet["ray.actor.ActorHandle"], Optional[GPUCommunicator]]
         ],
-    ):
-        assert len(self.nccl_group_ids) == count
-        actual_p2p_group_id = compiled_dag._nccl_group_id_p2p
-        if p2p_group_and_actors is None:
-            assert actual_p2p_group_id is None
-        else:
-            assert actual_p2p_group_id
-            actual_p2p_group, actual_actors = self.nccl_group_ids[actual_p2p_group_id]
-            p2p_group, p2p_actors = p2p_group_and_actors
-            assert actual_p2p_group == p2p_group
-            assert actual_actors == set(p2p_actors)
+    ) -> None:
+        assert len(self.ids_to_actors_and_custom_comms) == num
+        assert (
+            set(self.ids_to_actors_and_custom_comms.values()) == actors_and_custom_comms
+        )
 
-        actual_nccl_group_to_actors = set()
-        for nccl_group, actors in self.nccl_group_ids.values():
-            actual_nccl_group_to_actors.add((nccl_group, frozenset(actors)))
-        assert actual_nccl_group_to_actors == nccl_groups_to_actors
+        nccl_group_id_p2p = compiled_dag.nccl_group_id_p2p
+        if p2p_actors_and_custom_comm is None:
+            assert nccl_group_id_p2p is None
+        else:
+            assert nccl_group_id_p2p
+            assert (
+                self.ids_to_actors_and_custom_comms[nccl_group_id_p2p]
+                == p2p_actors_and_custom_comm
+            )
 
 
 def check_nccl_group_init(
     monkeypatch,
     dag: "ray.dag.DAGNode",
-    count: int,
-    nccl_groups_to_actors: Set[
-        Tuple[Optional[GPUCommunicator], FrozenSet["ray.actor.ActorHandle"]]
+    num: int,
+    actors_and_custom_comms: Set[
+        Tuple[FrozenSet["ray.actor.ActorHandle"], Optional[GPUCommunicator]]
     ],
-    p2p_group_and_actors: Optional[
-        Tuple[Optional[GPUCommunicator], Iterable["ray.actor.ActorHandle"]]
+    p2p_actors_and_custom_comm: Optional[
+        Tuple[FrozenSet["ray.actor.ActorHandle"], Optional[GPUCommunicator]]
     ] = None,
-):
-    # Mock the `_init_nccl_group` function to keep track of the NCCL group IDs.
+) -> "ray.dag.CompiledDAG":
     mock_nccl_group_set = MockNcclGroupSet()
     monkeypatch.setattr(
         "ray.dag.compiled_dag_node._init_nccl_group",
@@ -106,18 +112,20 @@ def check_nccl_group_init(
         "ray.dag.collective_node._init_nccl_group",
         mock_nccl_group_set,
     )
+
     compiled_dag = dag.experimental_compile()
     mock_nccl_group_set.check_init(
         compiled_dag,
-        count,
-        nccl_groups_to_actors,
-        p2p_group_and_actors,
+        num,
+        actors_and_custom_comms,
+        p2p_actors_and_custom_comm,
     )
+
     return compiled_dag
 
 
-@pytest.mark.parametrize("ray_start_regular", [{"num_gpus": 4}], indirect=True)
-def test_torch_tensor_nccl_all_reduce_non_tensor_input(ray_start_regular):
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_all_reduce_non_tensor_input(ray_start_regular):
     """
     Test an error is thrown when an all-reduce takes non-tensor inputs.
     """
@@ -129,6 +137,7 @@ def test_torch_tensor_nccl_all_reduce_non_tensor_input(ray_start_regular):
         non_tensor = worker.send.bind((10,), torch.float16, inp, send_tensor=False)
         allreduce = collective.allreduce.bind([non_tensor])
         dag = MultiOutputNode(allreduce)
+
     compiled_dag = dag.experimental_compile()
     ref = compiled_dag.execute(10)
     with pytest.raises(ValueError, match="Expected a torch tensor"):
@@ -138,7 +147,7 @@ def test_torch_tensor_nccl_all_reduce_non_tensor_input(ray_start_regular):
 
 
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
-def test_torch_tensor_nccl_all_reduce_duplicate_actors(ray_start_regular):
+def test_all_reduce_duplicate_actors(ray_start_regular):
     """
     Test an error is thrown when two input nodes from the same actor bind to
     an all-reduce.
@@ -164,8 +173,8 @@ def test_torch_tensor_nccl_all_reduce_duplicate_actors(ray_start_regular):
             collective.allreduce.bind(computes)
 
 
-@pytest.mark.parametrize("ray_start_regular", [{"num_gpus": 4}], indirect=True)
-def test_torch_tensor_nccl_comm_deduplicate_collectives(ray_start_regular, monkeypatch):
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_comm_deduplicate_collectives(ray_start_regular, monkeypatch):
     """
     Test communicators are deduplicated when all-reduce is called on the same
     group of actors more than once.
@@ -191,17 +200,18 @@ def test_torch_tensor_nccl_comm_deduplicate_collectives(ray_start_regular, monke
     compiled_dag = check_nccl_group_init(
         monkeypatch,
         dag,
-        count=1,
-        nccl_groups_to_actors={(None, frozenset(workers))},
+        1,
+        {(frozenset(workers), None)},
     )
 
     compiled_dag.teardown()
 
 
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
-def test_torch_tensor_nccl_all_reduce_custom_comm_wrong_actors(ray_start_regular):
+def test_all_reduce_custom_comm_wrong_actors(ray_start_regular):
     """
-    Test an error is thrown when an all-reduce binds to a wrong set of actors.
+    Test an error is thrown when an all-reduce binds to a custom NCCL group and
+    a wrong set of actors.
     """
     actor_cls = CPUTorchTensorWorker.options()
 
@@ -267,8 +277,8 @@ def test_torch_tensor_nccl_all_reduce_custom_comm_wrong_actors(ray_start_regular
             collective.allreduce.bind(computes, transport=nccl_group)
 
 
-@pytest.mark.parametrize("ray_start_regular", [{"num_gpus": 4}], indirect=True)
-def test_torch_tensor_nccl_comm_all_reduces(ray_start_regular, monkeypatch):
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_comm_all_reduces(ray_start_regular, monkeypatch):
     """
     Test different communicators are used for different all-reduce calls of
     different sets of actors.
@@ -295,10 +305,10 @@ def test_torch_tensor_nccl_comm_all_reduces(ray_start_regular, monkeypatch):
     compiled_dag = check_nccl_group_init(
         monkeypatch,
         dag,
-        count=2,
-        nccl_groups_to_actors={
-            (None, frozenset((workers[0],))),
-            (None, frozenset((workers[1],))),
+        2,
+        {
+            (frozenset([workers[0]]), None),
+            (frozenset([workers[1]]), None),
         },
     )
 
