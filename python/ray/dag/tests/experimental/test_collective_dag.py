@@ -191,8 +191,8 @@ def test_torch_tensor_nccl_comm_deduplicate_collectives(ray_start_regular, monke
     compiled_dag = check_nccl_group_init(
         monkeypatch,
         dag,
-        1,
-        {(None, frozenset(workers))},
+        count=1,
+        nccl_groups_to_actors={(None, frozenset(workers))},
     )
 
     compiled_dag.teardown()
@@ -295,8 +295,11 @@ def test_torch_tensor_nccl_comm_all_reduces(ray_start_regular, monkeypatch):
     compiled_dag = check_nccl_group_init(
         monkeypatch,
         dag,
-        2,
-        {(None, frozenset((workers[0],))), (None, frozenset((workers[1],)))},
+        count=2,
+        nccl_groups_to_actors={
+            (None, frozenset((workers[0],))),
+            (None, frozenset((workers[1],))),
+        },
     )
 
     compiled_dag.teardown()

@@ -1266,7 +1266,11 @@ def test_torch_tensor_nccl_comm_deduplicate_p2p_and_collective(
         dag = MultiOutputNode(recvs)
 
     compiled_dag, _ = check_nccl_group_init(
-        monkeypatch, dag, 1, {(None, frozenset(workers))}, (None, workers)
+        monkeypatch,
+        dag,
+        count=1,
+        nccl_groups_to_actors={(None, frozenset(workers))},
+        p2p_group_and_actors=(None, workers),
     )
 
     # Sanity check: the compiled dag can execute.
@@ -1291,7 +1295,11 @@ def test_torch_tensor_nccl_comm_deduplicate_p2p_and_collective(
         )
 
     compiled_dag, _ = check_nccl_group_init(
-        monkeypatch, dag, 1, {(None, frozenset(workers))}, (None, workers)
+        monkeypatch,
+        dag,
+        count=1,
+        nccl_groups_to_actors={(None, frozenset(workers))},
+        p2p_group_and_actors=(None, workers),
     )
 
     # Sanity check: the compiled dag can execute.
@@ -1331,7 +1339,7 @@ def test_torch_tensor_nccl_comm_teardown(ray_start_regular, monkeypatch):
         dag = MultiOutputNode(allreduce)
 
     compiled_dag, init_nccl_group_set = check_nccl_group_init(
-        monkeypatch, dag, 1, {(None, frozenset(workers))}
+        monkeypatch, dag, count=1, nccl_groups_to_actors={(None, frozenset(workers))}
     )
 
     # # Sanity check: Compiled DAG can execute.
@@ -1357,9 +1365,12 @@ def test_torch_tensor_nccl_comm_teardown(ray_start_regular, monkeypatch):
     compiled_dag, _ = check_nccl_group_init(
         monkeypatch,
         dag,
-        2,
-        {(None, frozenset(workers)), (None, frozenset((workers[0],)))},
-        (None, workers),
+        count=2,
+        nccl_groups_to_actors={
+            (None, frozenset(workers)),
+            (None, frozenset((workers[0],))),
+        },
+        p2p_group_and_actors=(None, workers),
     )
 
     # Sanity check: Compiled DAG can execute.
@@ -1380,9 +1391,9 @@ def test_torch_tensor_nccl_comm_teardown(ray_start_regular, monkeypatch):
     compiled_dag, _ = check_nccl_group_init(
         monkeypatch,
         dag,
-        1,
-        {(None, frozenset(workers))},
-        (None, workers),
+        count=1,
+        nccl_groups_to_actors={(None, frozenset(workers))},
+        p2p_group_and_actors=(None, workers),
     )
 
     # # Sanity check: Compiled DAG can execute.
@@ -1428,9 +1439,9 @@ def test_torch_tensor_nccl_custom_comm_deduplicate(ray_start_regular, monkeypatc
     compiled_dag, _ = check_nccl_group_init(
         monkeypatch,
         dag,
-        1,
-        {(comm, frozenset(workers))},
-        (comm, workers),
+        count=1,
+        nccl_groups_to_actors={(comm, frozenset(workers))},
+        p2p_group_and_actors=(comm, workers),
     )
 
     # Sanity check: the compiled dag can execute.
@@ -1459,9 +1470,9 @@ def test_torch_tensor_nccl_custom_comm_deduplicate(ray_start_regular, monkeypatc
     compiled_dag, _ = check_nccl_group_init(
         monkeypatch,
         dag,
-        1,
-        {(comm, frozenset(workers))},
-        (comm, workers),
+        count=1,
+        nccl_groups_to_actors={(comm, frozenset(workers))},
+        p2p_group_and_actors=(comm, workers),
     )
 
     # Sanity check: the compiled dag can execute.
@@ -1512,9 +1523,9 @@ def test_torch_tensor_nccl_custom_comm_init_teardown(ray_start_regular, monkeypa
     compiled_dag, init_nccl_group_set = check_nccl_group_init(
         monkeypatch,
         dag,
-        1,
-        {(comm, frozenset(workers))},
-        (comm, workers),
+        count=1,
+        nccl_groups_to_actors={(comm, frozenset(workers))},
+        p2p_group_and_actors=(comm, workers),
     )
 
     # Sanity check: the compiled dag can execute.
@@ -1543,13 +1554,13 @@ def test_torch_tensor_nccl_custom_comm_init_teardown(ray_start_regular, monkeypa
     compiled_dag, init_nccl_group_set = check_nccl_group_init(
         monkeypatch,
         dag,
-        3,
-        {
+        count=3,
+        nccl_groups_to_actors={
             (comm_1, frozenset(workers)),
             (comm_2, frozenset(workers)),
             (comm_3, frozenset(workers)),
         },
-        (comm_3, workers),
+        p2p_group_and_actors=(comm_3, workers),
     )
 
     # Sanity check: the compiled dag can execute.
