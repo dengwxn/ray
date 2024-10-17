@@ -14,7 +14,7 @@ import ray
 import ray.cluster_utils
 import ray.experimental.collective as collective
 from ray.dag import InputNode, MultiOutputNode
-from ray.experimental.util.types import ReduceOp
+from ray.util.collective.types import ReduceOp
 from ray.tests.conftest import *  # noqa
 
 logger = logging.getLogger(__name__)
@@ -61,20 +61,21 @@ class MockNcclGroupSet:
         self,
         compiled_dag: "ray.dag.CompiledDAG",
         count: int,
-        has_p2p_group: bool,
         nccl_groups_to_actors: Set[
-            Tuple[GPUCommunicator, FrozenSet["ray.actor.ActorHandle"]]
+            Tuple[Optional[GPUCommunicator], FrozenSet["ray.actor.ActorHandle"]]
         ],
-        p2p_group: Optional[GPUCommunicator],
-        p2p_actors: Set["ray.actor.ActorHandle"],
+        p2p_group_and_actors: Optional[
+            Tuple[Optional[GPUCommunicator], Iterable["ray.actor.ActorHandle"]]
+        ],
     ):
         assert len(self.nccl_group_ids) == count
         actual_p2p_group_id = compiled_dag._nccl_group_id_p2p
-        if not has_p2p_group:
+        if p2p_group_and_actors is None:
             assert actual_p2p_group_id is None
         else:
             assert actual_p2p_group_id
             actual_p2p_group, actual_actors = self.nccl_group_ids[actual_p2p_group_id]
+            p2p_group, p2p_actors = p2p_group_and_actors
             assert actual_p2p_group == p2p_group
             assert actual_actors == set(p2p_actors)
 
@@ -91,9 +92,9 @@ def check_nccl_group_init(
     nccl_groups_to_actors: Set[
         Tuple[Optional[GPUCommunicator], FrozenSet["ray.actor.ActorHandle"]]
     ],
-    has_p2p_group: bool,
-    p2p_group: Optional[GPUCommunicator] = None,
-    p2p_actors: Iterable["ray.actor.ActorHandle"] = {},
+    p2p_group_and_actors: Optional[
+        Tuple[Optional[GPUCommunicator], Iterable["ray.actor.ActorHandle"]]
+    ] = None,
 ):
     # Mock the `_init_nccl_group` function to keep track of the NCCL group IDs.
     mock_nccl_group_set = MockNcclGroupSet()
@@ -109,10 +110,8 @@ def check_nccl_group_init(
     mock_nccl_group_set.check_init(
         compiled_dag,
         count,
-        has_p2p_group,
         nccl_groups_to_actors,
-        p2p_group,
-        p2p_actors,
+        p2p_group_and_actors,
     )
     return compiled_dag
 
@@ -194,7 +193,6 @@ def test_torch_tensor_nccl_comm_deduplicate_collectives(ray_start_regular, monke
         dag,
         1,
         {(None, frozenset(workers))},
-        False,
     )
 
     compiled_dag.teardown()
@@ -299,7 +297,6 @@ def test_torch_tensor_nccl_comm_all_reduces(ray_start_regular, monkeypatch):
         dag,
         2,
         {(None, frozenset((workers[0],))), (None, frozenset((workers[1],)))},
-        False,
     )
 
     compiled_dag.teardown()

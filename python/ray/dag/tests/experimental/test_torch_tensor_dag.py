@@ -187,23 +187,24 @@ class InitNcclGroupSet:
         self,
         compiled_dag: "ray.dag.CompiledDAG",
         count: int,
-        has_p2p_group: bool,
         nccl_groups_to_actors: Set[
-            Tuple[GPUCommunicator, FrozenSet["ray.actor.ActorHandle"]]
+            Tuple[Optional[GPUCommunicator], FrozenSet["ray.actor.ActorHandle"]]
         ],
-        p2p_group: Optional[GPUCommunicator],
-        p2p_actors: Iterable["ray.actor.ActorHandle"],
+        p2p_group_and_actors: Optional[
+            Tuple[Optional[GPUCommunicator], Iterable["ray.actor.ActorHandle"]]
+        ],
     ):
         assert len(self.nccl_group_ids) == count
         from ray.experimental.channel import ChannelContext
 
         ctx = ChannelContext.get_current()
         actual_p2p_group_id = compiled_dag._nccl_group_id_p2p
-        if not has_p2p_group:
+        if p2p_group_and_actors is None:
             assert actual_p2p_group_id is None
         else:
             assert actual_p2p_group_id
             actual_p2p_group = ctx.nccl_groups[actual_p2p_group_id]
+            p2p_group, p2p_actors = p2p_group_and_actors
             if p2p_group:
                 assert actual_p2p_group == p2p_group
             else:
@@ -234,9 +235,9 @@ def check_nccl_group_init(
     nccl_groups_to_actors: Set[
         Tuple[Optional[GPUCommunicator], FrozenSet["ray.actor.ActorHandle"]]
     ],
-    has_p2p_group: bool,
-    p2p_group: Optional[GPUCommunicator] = None,
-    p2p_actors: Iterable["ray.actor.ActorHandle"] = {},
+    p2p_group_and_actors: Optional[
+        Tuple[Optional[GPUCommunicator], Iterable["ray.actor.ActorHandle"]]
+    ] = None,
 ):
     # Mock the `_init_nccl_group` function to keep track of the NCCL group IDs.
     init_nccl_group_set = InitNcclGroupSet()
@@ -252,10 +253,8 @@ def check_nccl_group_init(
     init_nccl_group_set.check_init(
         compiled_dag,
         count,
-        has_p2p_group,
         nccl_groups_to_actors,
-        p2p_group,
-        p2p_actors,
+        p2p_group_and_actors,
     )
     return compiled_dag, init_nccl_group_set
 
@@ -1267,7 +1266,7 @@ def test_torch_tensor_nccl_comm_deduplicate_p2p_and_collective(
         dag = MultiOutputNode(recvs)
 
     compiled_dag, _ = check_nccl_group_init(
-        monkeypatch, dag, 1, {(None, frozenset(workers))}, True, None, workers
+        monkeypatch, dag, 1, {(None, frozenset(workers))}, (None, workers)
     )
 
     # Sanity check: the compiled dag can execute.
@@ -1292,7 +1291,7 @@ def test_torch_tensor_nccl_comm_deduplicate_p2p_and_collective(
         )
 
     compiled_dag, _ = check_nccl_group_init(
-        monkeypatch, dag, 1, {(None, frozenset(workers))}, True, None, workers
+        monkeypatch, dag, 1, {(None, frozenset(workers))}, (None, workers)
     )
 
     # Sanity check: the compiled dag can execute.
@@ -1332,7 +1331,7 @@ def test_torch_tensor_nccl_comm_teardown(ray_start_regular, monkeypatch):
         dag = MultiOutputNode(allreduce)
 
     compiled_dag, init_nccl_group_set = check_nccl_group_init(
-        monkeypatch, dag, 1, {(None, frozenset(workers))}, False
+        monkeypatch, dag, 1, {(None, frozenset(workers))}
     )
 
     # # Sanity check: Compiled DAG can execute.
@@ -1360,9 +1359,7 @@ def test_torch_tensor_nccl_comm_teardown(ray_start_regular, monkeypatch):
         dag,
         2,
         {(None, frozenset(workers)), (None, frozenset((workers[0],)))},
-        True,
-        None,
-        workers,
+        (None, workers),
     )
 
     # Sanity check: Compiled DAG can execute.
@@ -1385,9 +1382,7 @@ def test_torch_tensor_nccl_comm_teardown(ray_start_regular, monkeypatch):
         dag,
         1,
         {(None, frozenset(workers))},
-        True,
-        None,
-        workers,
+        (None, workers),
     )
 
     # # Sanity check: Compiled DAG can execute.
@@ -1435,9 +1430,7 @@ def test_torch_tensor_nccl_custom_comm_deduplicate(ray_start_regular, monkeypatc
         dag,
         1,
         {(comm, frozenset(workers))},
-        True,
-        comm,
-        workers,
+        (comm, workers),
     )
 
     # Sanity check: the compiled dag can execute.
@@ -1468,9 +1461,7 @@ def test_torch_tensor_nccl_custom_comm_deduplicate(ray_start_regular, monkeypatc
         dag,
         1,
         {(comm, frozenset(workers))},
-        True,
-        comm,
-        workers,
+        (comm, workers),
     )
 
     # Sanity check: the compiled dag can execute.
@@ -1523,9 +1514,7 @@ def test_torch_tensor_nccl_custom_comm_init_teardown(ray_start_regular, monkeypa
         dag,
         1,
         {(comm, frozenset(workers))},
-        True,
-        comm,
-        workers,
+        (comm, workers),
     )
 
     # Sanity check: the compiled dag can execute.
@@ -1560,9 +1549,7 @@ def test_torch_tensor_nccl_custom_comm_init_teardown(ray_start_regular, monkeypa
             (comm_2, frozenset(workers)),
             (comm_3, frozenset(workers)),
         },
-        True,
-        comm_3,
-        workers,
+        (comm_3, workers),
     )
 
     # Sanity check: the compiled dag can execute.
