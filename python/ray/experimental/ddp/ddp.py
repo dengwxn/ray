@@ -111,7 +111,11 @@ class Model(torch.nn.Module):
     """A model that is a chain of (linear, relu) layers."""
 
     def __init__(
-        self, layer_size: int, num_layers: int, device: torch.device, dtype: torch.dtype
+        self,
+        layer_size: int,
+        num_layers: int,
+        device: torch.device,
+        dtype: torch.dtype,
     ):
         torch.manual_seed(SEED)
         torch.cuda.manual_seed_all(SEED)
@@ -176,27 +180,28 @@ class Model(torch.nn.Module):
 class TorchDDPModel(DDPModel):
     """An actor class wrapper around the pytorch model."""
 
-    def __init__(self, num_layers: int, layer_size: int):
+    def __init__(self, num_layers: int, layer_size: int, world_size: int):
         super().__init__(num_layers)
 
-        self._model: Model = Model(layer_size, num_layers, self._device, torch.float32)
+        self.model: Model = Model(layer_size, num_layers, self._device, torch.float32)
+        self.world_size: int = world_size
 
     def start_train(self, x: torch.Tensor) -> torch.Tensor:
-        self._model.zero_grad()
-        self._model.inputs = []
-        self._model.activations = []
-        self._model.loss = None
-        self._model.pred = None
+        self.model.zero_grad()
+        self.model.inputs = []
+        self.model.activations = []
+        self.model.loss = None
+        self.model.pred = None
         return x.to(self._device)
 
     def forward(self, layer_idx: int, input: torch.Tensor) -> torch.Tensor:
         input = input.to(self._device)
-        return self._model.forward_layer(input, layer_idx)
+        return self.model.forward_layer(input, layer_idx)
 
     def loss(self, pred: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, None]:
         y = y.to(self._device)
         pred = pred.to(self._device)
-        loss: torch.Tensor = self._model.criterion(pred, y)
+        loss: torch.Tensor = self.model.criterion(pred, y)
         loss.backward(retain_graph=True, inputs=[pred])
         return pred.grad, None
 
@@ -205,13 +210,14 @@ class TorchDDPModel(DDPModel):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         bp_grad, _ = grad
         bp_grad = bp_grad.to(self._device)
-        return self._model.backward_layer(bp_grad, layer_idx)
+        return self.model.backward_layer(bp_grad, layer_idx)
 
     def update(
         self, layer_idx: int, grad: torch.Tensor, return_weight: bool = True
     ) -> torch.Tensor:
         grad = grad.to(self._device)
-        return self._model.update_layer(grad, layer_idx)
+        grad /= self.world_size
+        return self.model.update_layer(grad, layer_idx)
 
     def finish_train(self, *updates: torch.Tensor) -> List[torch.Tensor]:
         return updates
@@ -254,7 +260,9 @@ def measure_ray_perf(model: Type[DDPModel]):
     actor_cls = model.options(num_gpus=1)
     num_layers, layer_size = CONFIG.num_layers, CONFIG.layer_size
     num_actors = CONFIG.num_actors
-    actors = [actor_cls.remote(num_layers, layer_size) for _ in range(num_actors)]
+    actors = [
+        actor_cls.remote(num_layers, layer_size, num_actors) for _ in range(num_actors)
+    ]
 
     with InputNode() as inp:
         losses = []
@@ -401,7 +409,9 @@ def check_correctness_ray(model: Type[DDPModel]):
     actor_cls = model.options(num_gpus=1)
     num_layers, layer_size = CONFIG.num_layers, CONFIG.layer_size
     num_actors = CONFIG.num_actors
-    actors = [actor_cls.remote(num_layers, layer_size) for _ in range(num_actors)]
+    actors = [
+        actor_cls.remote(num_layers, layer_size, num_actors) for _ in range(num_actors)
+    ]
 
     with InputNode() as inp:
         losses = []
