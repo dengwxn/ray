@@ -317,29 +317,28 @@ def measure_ray_perf(model: Type[DDPModel]):
         ray.kill(actor)
 
 
-def deduplicate_ray_results(results: List[List[Tuple[torch.Tensor]]]):
+def deduplicate_ray_weights(weights: List[List[Tuple[torch.Tensor]]]):
     """
     Check that the model is consistent across all ranks after each iteration
-    of training. Deduplicate the results after the checks.
+    of training. Deduplicate the weights after the checks.
 
     Args:
-        results: Results from running Ray DDP. `results[i]` is the weights
-            across all actors for the ith iteration.
+        weights: Weights from running Ray DDP for a number of iterations.
+            `weights[i]` is the weights across all actors for the ith iteration.
     """
     deduplicated = []
-    for result in results:
-        part_len = len(result[0])
+    for single_iter_weights in weights:
+        part_len = len(single_iter_weights[0])
         for i in range(1, CONFIG.num_actors):
             for j in range(part_len):
-                assert torch.equal(result[0][j], result[i][j])
-        deduplicated.append(result[0])
+                assert torch.equal(single_iter_weights[0][j], single_iter_weights[i][j])
+        deduplicated.append(single_iter_weights[0])
     return deduplicated
 
 
-def ray_inference(results):
+def ray_inference(weights):
     """Run inference with the model weights after training with Ray DDP."""
     device = "cpu"
-    weights = results[-1]
     model = Model(CONFIG.layer_size, CONFIG.num_layers, device, CONFIG.dtype)
     for i in range(0, len(model.layers), 2):
         model.layers[i].weight = nn.Parameter(weights[i // 2].to(device))
@@ -365,37 +364,35 @@ def detach_all(results: List[List[torch.Tensor]]):
     return detached
 
 
-def compare_results(actual, expected, desc):
+def compare_weights(W1, W2, desc):
     """
-    Compare the actual and expected results.
-    The results are model weights after each iteration.
-    [TODO] Figure out why weights are different.
-    Maybe 1) compare loss/accuracy if weight difference exists but is small,
-    or 2) rename to `compare_weights`. Same for other methods.
+    Compare the weights after each iteration across different training approaches.
+
+    Args:
+        W1: Weights after each iteration from one approach.
+        W2: Weights after each iteration from the other approach.
+        desc: Description of approaches
     """
-    assert len(actual) == len(expected)
-    max_diff_all = 0
-    for i, (a, e) in enumerate(zip(actual, expected)):
-        assert len(a) == len(e)
-        max_diff = 0
-        for t_a, t_e in zip(a, e):
-            t_a = t_a.to("cpu")
-            t_e = t_e.to("cpu")
-            diff = torch.max(torch.abs(t_a - t_e).flatten())
-            if diff > max_diff:
-                max_diff = diff
-        print(f"{desc} it #{i} max diff: {max_diff}")
-        if max_diff > max_diff_all:
-            max_diff_all = max_diff
-    print(f"{desc} max diff across its: {max_diff_all}")
+    assert len(W1) == len(W2)
+    # w1, w2 are weights after a single iteration for the 1st and 2nd approaches,
+    # respectively.
+    for w1, w2 in zip(W1, W2):
+        assert len(w1) == len(w2)
+        # t1, t2 are weights of a single layer.
+        for t1, t2 in zip(w1, w2):
+            t1 = t1.to("cpu")
+            t2 = t2.to("cpu")
+            assert torch.allclose(
+                t1, t2
+            ), f"{desc} max diff: {torch.max(torch.abs(t1 - t2).flatten())}"
 
 
 def check_correctness(results) -> None:
     """Compare Ray results with pytorch basic and pytorch.distributed results."""
-    results = deduplicate_ray_results(results)
-    ray_inference(results)
+    results = deduplicate_ray_weights(results)
+    ray_inference(results[-1])  # Run inference with weights after the last iteration.
     auto = check_correctness_torch_basic()
-    compare_results(results, auto, "ray vs auto")
+    compare_weights(results, auto, "ray vs auto")
     results = detach_all(results)
     auto = detach_all(auto)
     check_correctness_torch_distributed(auto, results)
@@ -589,8 +586,8 @@ def torch_dist_run(rank, world_size, auto_res, ray_res):
     print(f"dist #{rank} loss: {loss}")
 
     torch_dist_cleanup()
-    compare_results(auto_res, results, "auto vs dist")
-    compare_results(ray_res, results, "ray vs dist")
+    compare_weights(auto_res, results, "auto vs dist")
+    compare_weights(ray_res, results, "ray vs dist")
 
 
 def torch_dist_setup(rank, world_size):
@@ -625,3 +622,6 @@ if __name__ == "__main__":
 # 0. cleanup
 # 1. baseline (identify performance overhead)
 # 2. multiple steps
+# 3. profile
+# 4. y axis: throughput/iter; x axis: increasing model size (keeping layers constant)
+# open issue for can't pass class method output to allreduce
