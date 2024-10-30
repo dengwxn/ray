@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Config:
-    "Configuration for the demo model."
+    """Configuration for the demo DDP model."""
+
     # Model config.
     num_layers: int = 2
     layer_size: int = 10  # The layer is a square.
@@ -38,6 +39,7 @@ CONFIG = Config()
 
 
 def set_seed(seed):
+    """Set the RNG seeds to get deterministic output."""
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
@@ -50,6 +52,8 @@ set_seed(SEED)
 
 
 class DDPModel(ABC):
+    """A layered model that uses distributed data parallel."""
+
     def __init__(self, num_layers: int):
         self._num_layers = num_layers
         self._device = torch_utils.get_devices()[0]
@@ -104,6 +108,8 @@ class DDPModel(ABC):
 
 
 class Model(torch.nn.Module):
+    """A model that is a chain of (linear, relu) layers."""
+
     def __init__(
         self, layer_size: int, num_layers: int, device: torch.device, dtype: torch.dtype
     ):
@@ -168,6 +174,8 @@ class Model(torch.nn.Module):
 
 @ray.remote
 class TorchDDPModel(DDPModel):
+    """An actor class wrapper around the pytorch model."""
+
     def __init__(self, num_layers: int, layer_size: int):
         super().__init__(num_layers)
 
@@ -210,6 +218,7 @@ class TorchDDPModel(DDPModel):
 
 
 def generate_x_y(config: Config) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Generate input `x` and output `y` for training."""
     layer_size = config.layer_size
     num_actors = config.num_actors
     dtype = config.dtype
@@ -225,7 +234,170 @@ def generate_x_y(config: Config) -> Tuple[torch.Tensor, torch.Tensor]:
     return x, y
 
 
-def run_experiment(model: Type[DDPModel]):
+def print_elapses(elapses, desc):
+    """Print individual elapses and their average."""
+    for i, elapse in enumerate(elapses):
+        print(f"{desc} #{i} elapse={elapse}")
+    total = sum(elapses)
+    avg = total / len(elapses)
+    print(f"{desc} avg: {avg}")
+    total -= elapses[0]
+    avg = total / (len(elapses) - 1)
+    print(f"{desc} avg w/o 1st iter: {avg}")
+
+
+def measure_ray_perf(model: Type[DDPModel]):
+    """
+    Measure the performance of Ray DDP with aDAG and allreduce.
+    For performance, only serialize the tensors to be allreduced (WIP).
+    """
+    actor_cls = model.options(num_gpus=1)
+    num_layers, layer_size = CONFIG.num_layers, CONFIG.layer_size
+    num_actors = CONFIG.num_actors
+    actors = [actor_cls.remote(num_layers, layer_size) for _ in range(num_actors)]
+
+    with InputNode() as inp:
+        losses = []
+        for i, actor in enumerate(actors):
+            x = inp[i]
+            y = inp[num_actors + i]
+            start = actor.start_train.bind(x)
+            forwards = [start]
+            for j in range(num_layers):
+                forwards.append(actor.forward.bind(j, forwards[-1]))
+            loss = actor.loss.bind(forwards[-1], y)
+            losses.append(loss)
+        output = []
+        grads = losses
+        for j in reversed(range(num_layers)):
+            for i, actor in enumerate(actors):
+                grads[i] = actor.backward.bind(j, grads[i])
+            reduced_grads = allreduce.bind(
+                [
+                    actor.get_grad_to_reduce.bind(grads[i])
+                    for i, actor in enumerate(actors)
+                ]
+            )
+            updates = [
+                actor.update.bind(j, reduced_grad, False)
+                for actor, reduced_grad in zip(actors, reduced_grads)
+            ]
+            for update in updates:
+                output.append(update)
+        dag = MultiOutputNode(output)
+
+    compiled_dag = dag.experimental_compile()
+    it = CONFIG.it
+    results = []
+    elapses = []
+    for i in range(it):
+        x, y = generate_x_y(CONFIG)
+        xs = torch.tensor_split(x, num_actors)
+        ys = torch.tensor_split(y, num_actors)
+        start = time.perf_counter()
+        ref = compiled_dag.execute(*xs, *ys)
+        result = ray.get(ref)
+        end = time.perf_counter()
+        results.append(result)
+        elapse = end - start
+        elapses.append(elapse)
+
+    print_elapses(elapses, "ray")
+    compiled_dag.teardown()
+
+    for actor in actors:
+        ray.kill(actor)
+
+
+def deduplicate_ray_results(results: List[List[Tuple[torch.Tensor]]]):
+    """
+    Check that the model is consistent across all ranks after each iteration
+    of training. Deduplicate the results after the checks.
+
+    Args:
+        results: Results from running Ray DDP. `results[i]` is the weights
+            across all actors for the ith iteration.
+    """
+    deduplicated = []
+    for result in results:
+        part_len = len(result[0])
+        for i in range(1, CONFIG.num_actors):
+            for j in range(part_len):
+                assert torch.equal(result[0][j], result[i][j])
+        deduplicated.append(result[0])
+    return deduplicated
+
+
+def ray_inference(results):
+    """Run inference with the model weights after training with Ray DDP."""
+    device = "cpu"
+    weights = results[-1]
+    model = Model(CONFIG.layer_size, CONFIG.num_layers, device, CONFIG.dtype)
+    for i in range(0, len(model.layers), 2):
+        model.layers[i].weight = nn.Parameter(weights[i // 2].to(device))
+    x, y = generate_x_y(CONFIG)
+    print(f"x: {x}")
+    print(f"y: {y}")
+    pred = model(x)
+    loss = model.criterion(pred, y)
+    print(f"ray pred: {pred}")
+    print(f"ray loss: {loss}")
+
+
+def detach_all(results: List[List[torch.Tensor]]):
+    """
+    Detach all tensors in order to pass tensors through `torch.multiprocessing.spawn`.
+    """
+    detached = []
+    for result in results:
+        d = []
+        for r in result:
+            d.append(r.detach())
+        detached.append(d)
+    return detached
+
+
+def compare_results(actual, expected, desc):
+    """
+    Compare the actual and expected results.
+    The results are model weights after each iteration.
+    [TODO] Figure out why weights are different.
+    Maybe 1) compare loss/accuracy if weight difference exists but is small,
+    or 2) rename to `compare_weights`. Same for other methods.
+    """
+    assert len(actual) == len(expected)
+    max_diff_all = 0
+    for i, (a, e) in enumerate(zip(actual, expected)):
+        assert len(a) == len(e)
+        max_diff = 0
+        for t_a, t_e in zip(a, e):
+            t_a = t_a.to("cpu")
+            t_e = t_e.to("cpu")
+            diff = torch.max(torch.abs(t_a - t_e).flatten())
+            if diff > max_diff:
+                max_diff = diff
+        print(f"{desc} it #{i} max diff: {max_diff}")
+        if max_diff > max_diff_all:
+            max_diff_all = max_diff
+    print(f"{desc} max diff across its: {max_diff_all}")
+
+
+def check_correctness(results) -> None:
+    """Compare Ray results with pytorch basic and pytorch.distributed results."""
+    results = deduplicate_ray_results(results)
+    ray_inference(results)
+    auto = check_correctness_torch_basic()
+    compare_results(results, auto, "ray vs auto")
+    results = detach_all(results)
+    auto = detach_all(auto)
+    check_correctness_torch_distributed(auto, results)
+
+
+def check_correctness_ray(model: Type[DDPModel]):
+    """
+    Check the correctness of DDP using aDAG and allreduce in Ray.
+    Return the updated weights after each iteration.
+    """
     actor_cls = model.options(num_gpus=1)
     num_layers, layer_size = CONFIG.num_layers, CONFIG.layer_size
     num_actors = CONFIG.num_actors
@@ -285,137 +457,8 @@ def run_experiment(model: Type[DDPModel]):
     return results
 
 
-def print_elapses(elapses, desc):
-    for i, elapse in enumerate(elapses):
-        print(f"{desc} #{i} elapse={elapse}")
-    total = sum(elapses)
-    avg = total / len(elapses)
-    print(f"{desc} avg: {avg}")
-    total -= elapses[0]
-    avg = total / (len(elapses) - 1)
-    print(f"{desc} avg w/o 1st iter: {avg}")
-
-
-def measure_ray_perf(model: Type[DDPModel]):
-    actor_cls = model.options(num_gpus=1)
-    num_layers, layer_size = CONFIG.num_layers, CONFIG.layer_size
-    num_actors = CONFIG.num_actors
-    actors = [actor_cls.remote(num_layers, layer_size) for _ in range(num_actors)]
-
-    with InputNode() as inp:
-        losses = []
-        for i, actor in enumerate(actors):
-            x = inp[i]
-            y = inp[num_actors + i]
-            start = actor.start_train.bind(x)
-            forwards = [start]
-            for j in range(num_layers):
-                forwards.append(actor.forward.bind(j, forwards[-1]))
-            loss = actor.loss.bind(forwards[-1], y)
-            losses.append(loss)
-        output = []
-        grads = losses
-        for j in reversed(range(num_layers)):
-            for i, actor in enumerate(actors):
-                grads[i] = actor.backward.bind(j, grads[i])
-            reduced_grads = allreduce.bind(
-                [
-                    actor.get_grad_to_reduce.bind(grads[i])
-                    for i, actor in enumerate(actors)
-                ]
-            )
-            updates = [
-                actor.update.bind(j, reduced_grad, False)
-                for actor, reduced_grad in zip(actors, reduced_grads)
-            ]
-            for update in updates:
-                output.append(update)
-        dag = MultiOutputNode(output)
-
-    compiled_dag = dag.experimental_compile()
-    it = CONFIG.it
-    results = []
-    elapses = []
-    for i in range(it):
-        x, y = generate_x_y(CONFIG)
-        xs = torch.tensor_split(x, num_actors)
-        ys = torch.tensor_split(y, num_actors)
-        start = time.perf_counter()
-        ref = compiled_dag.execute(*xs, *ys)
-        result = ray.get(ref)
-        end = time.perf_counter()
-        results.append(result)
-        elapse = end - start
-        elapses.append(elapse)
-
-    print_elapses(elapses, "ray")
-    compiled_dag.teardown()
-
-    for actor in actors:
-        ray.kill(actor)
-
-
-def deduplicate_ray_results(results):
-    deduplicated = []
-    for result in results:
-        part_len = len(result[0])
-        for i in range(1, CONFIG.num_actors):
-            for j in range(part_len):
-                assert torch.equal(result[0][j], result[i][j])
-        deduplicated.append(result[0])
-    return deduplicated
-
-
-def compare_results(actual, expected, desc):
-    assert len(actual) == len(expected)
-    max_diff = 0
-    for a, e in zip(actual, expected):
-        assert len(a) == len(e)
-        for t_a, t_e in zip(a, e):
-            t_a = t_a.to("cpu")
-            t_e = t_e.to("cpu")
-            diff = torch.max(torch.abs(t_a - t_e).flatten())
-            if diff > max_diff:
-                max_diff = diff
-    print(f"{desc} max diff: {max_diff}")
-
-
-def detach_all(results: List[List[torch.Tensor]]):
-    detached = []
-    for result in results:
-        d = []
-        for r in result:
-            d.append(r.detach())
-        detached.append(d)
-    return detached
-
-
-def ray_inference(results):
-    device = "cpu"
-    weights = results[-1]
-    model = Model(CONFIG.layer_size, CONFIG.num_layers, device, CONFIG.dtype)
-    for i in range(0, len(model.layers), 2):
-        model.layers[i].weight = nn.Parameter(weights[i // 2].to(device))
-    x, y = generate_x_y(CONFIG)
-    print(f"x: {x}")
-    print(f"y: {y}")
-    pred = model(x)
-    loss = model.criterion(pred, y)
-    print(f"ray pred: {pred}")
-    print(f"ray loss: {loss}")
-
-
-def check_torch_model_correctness(results) -> None:
-    results = deduplicate_ray_results(results)
-    ray_inference(results)
-    auto = check_torch_model_correctness_auto()
-    compare_results(results, auto, "ray vs auto")
-    results = detach_all(results)
-    auto = detach_all(auto)
-    check_torch_model_correctness_dist(auto, results)
-
-
-def check_torch_model_correctness_auto():
+def check_correctness_torch_basic():
+    """Run basic pytorch without DDP and return the weights."""
     device = "cuda:0"
     model = Model(CONFIG.layer_size, CONFIG.num_layers, device, CONFIG.dtype)
     criterion = model.criterion
@@ -460,21 +503,26 @@ def check_torch_model_correctness_auto():
     return results
 
 
-def setup(rank, world_size):
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "12355"
-
-    # initialize the process group
-    dist.init_process_group("gloo", rank=rank, world_size=world_size)
-
-
-def cleanup():
-    dist.destroy_process_group()
+def check_correctness_torch_distributed(auto_res, ray_res):
+    """Run DDP with `torch.distributed`. Check and compare the results."""
+    n_gpus = torch.cuda.device_count()
+    assert (
+        n_gpus >= CONFIG.num_actors
+    ), f"Requires at least {CONFIG.num_actors} GPUs to run, but got {n_gpus}"
+    world_size = n_gpus
+    torch_dist_spawn(torch_dist_run, world_size, auto_res, ray_res)
 
 
-def demo_basic(rank, world_size, auto_res, ray_res):
+def torch_dist_spawn(demo_fn, world_size, auto_res, ray_res):
+    mp.spawn(
+        demo_fn, args=(world_size, auto_res, ray_res), nprocs=world_size, join=True
+    )
+
+
+def torch_dist_run(rank, world_size, auto_res, ray_res):
+    """Run DDP with `torch.distributed`."""
     print(f"Running basic DDP example on rank {rank}.")
-    setup(rank, world_size)
+    torch_dist_setup(rank, world_size)
 
     # create model and move it to GPU with id rank
     model = Model(
@@ -530,24 +578,21 @@ def demo_basic(rank, world_size, auto_res, ray_res):
     print(f"dist #{rank} pred: {pred}")
     print(f"dist #{rank} loss: {loss}")
 
-    cleanup()
+    torch_dist_cleanup()
     compare_results(auto_res, results, "auto vs dist")
     compare_results(ray_res, results, "ray vs dist")
 
 
-def run_demo(demo_fn, world_size, auto_res, ray_res):
-    mp.spawn(
-        demo_fn, args=(world_size, auto_res, ray_res), nprocs=world_size, join=True
-    )
+def torch_dist_setup(rank, world_size):
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12355"
+
+    # initialize the process group
+    dist.init_process_group("gloo", rank=rank, world_size=world_size)
 
 
-def check_torch_model_correctness_dist(auto_res, ray_res):
-    n_gpus = torch.cuda.device_count()
-    assert (
-        n_gpus >= CONFIG.num_actors
-    ), f"Requires at least {CONFIG.num_actors} GPUs to run, but got {n_gpus}"
-    world_size = n_gpus
-    run_demo(demo_basic, world_size, auto_res, ray_res)
+def torch_dist_cleanup():
+    dist.destroy_process_group()
 
 
 def main() -> None:
@@ -556,12 +601,12 @@ def main() -> None:
         print(f"Needs at least {CONFIG.num_actors} GPUs")
         return
 
-    results = run_experiment(TorchDDPModel)
+    results = check_correctness_ray(TorchDDPModel)
     measure_ray_perf(TorchDDPModel)
 
     ray.shutdown()
 
-    check_torch_model_correctness(results)
+    check_correctness(results)
 
 
 if __name__ == "__main__":
