@@ -168,6 +168,7 @@ class RayDDPWorker:
         """
         When an allreduce binds a class method output with `num_returns > 1`,
         an error is thrown. This is a workaround.
+        See: https://github.com/ray-project/ray/issues/48522
         """
         _, reduce_grad = grad
         return reduce_grad
