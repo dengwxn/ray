@@ -107,7 +107,7 @@ class DDPModel(ABC):
         return reduce_grad
 
 
-class Model(torch.nn.Module):
+class LayeredModel(torch.nn.Module):
     """A model that is a chain of (linear, relu) layers."""
 
     def __init__(
@@ -120,7 +120,7 @@ class Model(torch.nn.Module):
         torch.manual_seed(SEED)
         torch.cuda.manual_seed_all(SEED)
 
-        super(Model, self).__init__()
+        super(LayeredModel, self).__init__()
 
         self.layers: List[torch.nn.Module] = []
         for _ in range(num_layers):
@@ -177,13 +177,15 @@ class Model(torch.nn.Module):
 
 
 @ray.remote
-class TorchDDPModel(DDPModel):
+class RayDDPWorker(DDPModel):
     """An actor class wrapper around the pytorch model."""
 
     def __init__(self, num_layers: int, layer_size: int, world_size: int):
         super().__init__(num_layers)
 
-        self.model: Model = Model(layer_size, num_layers, self._device, torch.float32)
+        self.model: LayeredModel = LayeredModel(
+            layer_size, num_layers, self._device, torch.float32
+        )
         self.world_size: int = world_size
 
     def start_train(self, x: torch.Tensor) -> torch.Tensor:
@@ -223,7 +225,7 @@ class TorchDDPModel(DDPModel):
         return updates
 
 
-def generate_x_y(config: Config) -> Tuple[torch.Tensor, torch.Tensor]:
+def generate_input_output(config: Config) -> Tuple[torch.Tensor, torch.Tensor]:
     """Generate input `x` and output `y` for training."""
     layer_size = config.layer_size
     num_actors = config.num_actors
@@ -252,7 +254,7 @@ def print_elapses(elapses, desc):
     print(f"{desc} avg w/o 1st iter: {avg}")
 
 
-def measure_ray_perf(model: Type[DDPModel]):
+def measure_adag_ddp_perf(model: Type[DDPModel]):
     """
     Measure the performance of Ray DDP with aDAG and allreduce.
     For performance, only serialize the tensors to be allreduced (WIP).
@@ -299,7 +301,7 @@ def measure_ray_perf(model: Type[DDPModel]):
     results = []
     elapses = []
     for i in range(it):
-        x, y = generate_x_y(CONFIG)
+        x, y = generate_input_output(CONFIG)
         xs = torch.tensor_split(x, num_actors)
         ys = torch.tensor_split(y, num_actors)
         start = time.perf_counter()
@@ -310,20 +312,20 @@ def measure_ray_perf(model: Type[DDPModel]):
         elapse = end - start
         elapses.append(elapse)
 
-    print_elapses(elapses, "ray")
+    print_elapses(elapses, "adag ddp")
     compiled_dag.teardown()
 
     for actor in actors:
         ray.kill(actor)
 
 
-def deduplicate_ray_weights(weights: List[List[Tuple[torch.Tensor]]]):
+def get_adag_ddp_weights_per_device(weights: List[List[Tuple[torch.Tensor]]]):
     """
     Check that the model is consistent across all ranks after each iteration
     of training. Deduplicate the weights after the checks.
 
     Args:
-        weights: Weights from running Ray DDP for a number of iterations.
+        weights: Weights from running aDAG DDP for a number of iterations.
             `weights[i]` is the weights across all actors for the ith iteration.
     """
     deduplicated = []
@@ -336,19 +338,19 @@ def deduplicate_ray_weights(weights: List[List[Tuple[torch.Tensor]]]):
     return deduplicated
 
 
-def ray_inference(weights):
-    """Run inference with the model weights after training with Ray DDP."""
+def adag_ddp_inference(weights):
+    """Run inference with the model weights after training with aDAG DDP."""
     device = "cpu"
-    model = Model(CONFIG.layer_size, CONFIG.num_layers, device, CONFIG.dtype)
+    model = LayeredModel(CONFIG.layer_size, CONFIG.num_layers, device, CONFIG.dtype)
     for i in range(0, len(model.layers), 2):
         model.layers[i].weight = nn.Parameter(weights[i // 2].to(device))
-    x, y = generate_x_y(CONFIG)
+    x, y = generate_input_output(CONFIG)
     print(f"x: {x}")
     print(f"y: {y}")
     pred = model(x)
     loss = model.criterion(pred, y)
-    print(f"ray pred: {pred}")
-    print(f"ray loss: {loss}")
+    print(f"adag ddp pred: {pred}")
+    print(f"adag ddp loss: {loss}")
 
 
 def detach_all(results: List[List[torch.Tensor]]):
@@ -387,18 +389,20 @@ def compare_weights(W1, W2, desc):
             ), f"{desc} max diff: {torch.max(torch.abs(t1 - t2).flatten())}"
 
 
-def check_correctness(results) -> None:
-    """Compare Ray results with pytorch basic and pytorch.distributed results."""
-    results = deduplicate_ray_weights(results)
-    ray_inference(results[-1])  # Run inference with weights after the last iteration.
-    auto = check_correctness_torch_basic()
-    compare_weights(results, auto, "ray vs auto")
-    results = detach_all(results)
-    auto = detach_all(auto)
-    check_correctness_torch_distributed(auto, results)
+def check_correctness(adag_ddp_weights) -> None:
+    """Compare aDAG DDP weights with pytorch and pytorch DDP weights."""
+    adag_ddp_weights = get_adag_ddp_weights_per_device(adag_ddp_weights)
+    adag_ddp_inference(
+        adag_ddp_weights[-1]
+    )  # Run inference with weights after the last iteration.
+    torch_weights = run_torch()
+    compare_weights(adag_ddp_weights, torch_weights, "adag ddp vs torch")
+    adag_ddp_weights = detach_all(adag_ddp_weights)
+    torch_weights = detach_all(torch_weights)
+    run_torch_ddp(torch_weights, adag_ddp_weights)
 
 
-def check_correctness_ray(model: Type[DDPModel]):
+def run_adag_ddp(model: Type[DDPModel]):
     """
     Check the correctness of DDP using aDAG and allreduce in Ray.
     Return the updated weights after each iteration.
@@ -449,7 +453,7 @@ def check_correctness_ray(model: Type[DDPModel]):
     it = CONFIG.it
     results = []
     for i in range(it):
-        x, y = generate_x_y(CONFIG)
+        x, y = generate_input_output(CONFIG)
         xs = torch.tensor_split(x, num_actors)
         ys = torch.tensor_split(y, num_actors)
         ref = compiled_dag.execute(*xs, *ys)
@@ -464,17 +468,17 @@ def check_correctness_ray(model: Type[DDPModel]):
     return results
 
 
-def check_correctness_torch_basic():
+def run_torch():
     """Run basic pytorch without DDP and return the weights."""
     device = "cuda:0"
-    model = Model(CONFIG.layer_size, CONFIG.num_layers, device, CONFIG.dtype)
+    model = LayeredModel(CONFIG.layer_size, CONFIG.num_layers, device, CONFIG.dtype)
     criterion = model.criterion
     optimizer = optim.SGD(model.parameters(), lr=model.lr)
 
     results = []
     elapses = []
     for i in range(CONFIG.it):
-        x, y = generate_x_y(CONFIG)
+        x, y = generate_input_output(CONFIG)
         x = x.to(device)
         y = y.to(device)
         start = time.perf_counter()
@@ -494,45 +498,50 @@ def check_correctness_torch_basic():
         elapse = end - start
         elapses.append(elapse)
 
-    print_elapses(elapses, "auto")
+    print_elapses(elapses, "torch")
 
-    x, y = generate_x_y(CONFIG)
+    x, y = generate_input_output(CONFIG)
     x = x.to(device)
     y = y.to(device)
-    model = Model(CONFIG.layer_size, CONFIG.num_layers, device, CONFIG.dtype).to(device)
+    model = LayeredModel(CONFIG.layer_size, CONFIG.num_layers, device, CONFIG.dtype).to(
+        device
+    )
     for i in range(0, len(model.layers), 2):
         model.layers[i].weight = nn.Parameter(results[-1][i // 2])
     pred = model(y)
     loss = model.criterion(pred, y)
-    print(f"auto pred: {pred}")
-    print(f"auto loss: {loss}")
+    print(f"torch pred: {pred}")
+    print(f"torch loss: {loss}")
 
     return results
 
 
-def check_correctness_torch_distributed(auto_res, ray_res):
-    """Run DDP with `torch.distributed`. Check and compare the results."""
+def run_torch_ddp(torch_weights, adag_ddp_weights):
+    """Run DDP with `torch.distributed`. Check and compare the weights."""
     n_gpus = torch.cuda.device_count()
     assert (
         n_gpus >= CONFIG.num_actors
     ), f"Requires at least {CONFIG.num_actors} GPUs to run, but got {n_gpus}"
     world_size = n_gpus
-    torch_dist_spawn(torch_dist_run, world_size, auto_res, ray_res)
+    torch_dist_spawn(torch_dist_run, world_size, torch_weights, adag_ddp_weights)
 
 
-def torch_dist_spawn(demo_fn, world_size, auto_res, ray_res):
+def torch_dist_spawn(demo_fn, world_size, torch_weights, adag_ddp_weights):
     mp.spawn(
-        demo_fn, args=(world_size, auto_res, ray_res), nprocs=world_size, join=True
+        demo_fn,
+        args=(world_size, torch_weights, adag_ddp_weights),
+        nprocs=world_size,
+        join=True,
     )
 
 
-def torch_dist_run(rank, world_size, auto_res, ray_res):
+def torch_dist_run(rank, world_size, torch_weights, adag_ddp_weights):
     """Run DDP with `torch.distributed`."""
-    print(f"Running basic DDP example on rank {rank}.")
+    print(f"Running torch DDP on rank {rank}.")
     torch_dist_setup(rank, world_size)
 
     # create model and move it to GPU with id rank
-    model = Model(
+    model = LayeredModel(
         CONFIG.layer_size, CONFIG.num_layers, f"cuda:{rank}", CONFIG.dtype
     ).to(rank)
     ddp_model = DDP(model, device_ids=[rank])
@@ -542,10 +551,10 @@ def torch_dist_run(rank, world_size, auto_res, ray_res):
 
     num_actors = CONFIG.num_actors
 
-    results = []
+    torch_ddp_weights = []
     elapses = []
     for i in range(CONFIG.it):
-        x, y = generate_x_y(CONFIG)
+        x, y = generate_input_output(CONFIG)
         xs = torch.tensor_split(x, num_actors)
         ys = torch.tensor_split(y, num_actors)
         x = xs[rank]
@@ -565,29 +574,29 @@ def torch_dist_run(rank, world_size, auto_res, ray_res):
         for i in range(0, len(model.layers), 2):
             layer: torch.nn.Linear = model.layers[i]
             result.append(torch.clone(layer.weight))
-        results.append(result)
+        torch_ddp_weights.append(result)
 
         elapse = end - start
         elapses.append(elapse)
 
-    print_elapses(elapses, f"dist #{rank}")
+    print_elapses(elapses, f"torch ddp #{rank}")
 
-    x, y = generate_x_y(CONFIG)
+    x, y = generate_input_output(CONFIG)
     x = x.to(rank)
     y = y.to(rank)
-    model = Model(
+    model = LayeredModel(
         CONFIG.layer_size, CONFIG.num_layers, f"cuda:{rank}", CONFIG.dtype
     ).to(rank)
     for i in range(0, len(model.layers), 2):
-        model.layers[i].weight = nn.Parameter(results[-1][i // 2])
+        model.layers[i].weight = nn.Parameter(torch_ddp_weights[-1][i // 2])
     pred = model(y)
     loss = loss_fn(pred, y)
-    print(f"dist #{rank} pred: {pred}")
-    print(f"dist #{rank} loss: {loss}")
+    print(f"torch ddp #{rank} pred: {pred}")
+    print(f"torch ddp #{rank} loss: {loss}")
 
     torch_dist_cleanup()
-    compare_weights(auto_res, results, "auto vs dist")
-    compare_weights(ray_res, results, "ray vs dist")
+    compare_weights(torch_weights, torch_ddp_weights, "torch vs torch ddp")
+    compare_weights(adag_ddp_weights, torch_ddp_weights, "adag ddp vs torch ddp")
 
 
 def torch_dist_setup(rank, world_size):
@@ -608,8 +617,8 @@ def main() -> None:
         print(f"Needs at least {CONFIG.num_actors} GPUs")
         return
 
-    results = check_correctness_ray(TorchDDPModel)
-    measure_ray_perf(TorchDDPModel)
+    results = run_adag_ddp(RayDDPWorker)
+    measure_adag_ddp_perf(RayDDPWorker)
 
     ray.shutdown()
 
@@ -619,7 +628,7 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 
-# 0. cleanup
+# 0. cleanup output
 # 1. baseline (identify performance overhead)
 # 2. multiple steps
 # 3. profile
