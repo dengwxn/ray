@@ -328,42 +328,27 @@ def get_adag_ddp_weights_per_device(weights: List[List[Tuple[torch.Tensor]]]):
         weights: Weights from running aDAG DDP for a number of iterations.
             `weights[i]` is the weights across all actors for the ith iteration.
     """
-    deduplicated = []
+    weights_per_device = []
     for single_iter_weights in weights:
-        part_len = len(single_iter_weights[0])
+        per_device_len = len(single_iter_weights[0])
         for i in range(1, CONFIG.num_actors):
-            for j in range(part_len):
+            for j in range(per_device_len):
                 assert torch.equal(single_iter_weights[0][j], single_iter_weights[i][j])
-        deduplicated.append(single_iter_weights[0])
-    return deduplicated
+        weights_per_device.append(single_iter_weights[0])
+    return weights_per_device
 
 
-def adag_ddp_inference(weights):
-    """Run inference with the model weights after training with aDAG DDP."""
-    device = "cpu"
-    model = LayeredModel(CONFIG.layer_size, CONFIG.num_layers, device, CONFIG.dtype)
-    for i in range(0, len(model.layers), 2):
-        model.layers[i].weight = nn.Parameter(weights[i // 2].to(device))
-    x, y = generate_input_output(CONFIG)
-    print(f"x: {x}")
-    print(f"y: {y}")
-    pred = model(x)
-    loss = model.criterion(pred, y)
-    print(f"adag ddp pred: {pred}")
-    print(f"adag ddp loss: {loss}")
-
-
-def detach_all(results: List[List[torch.Tensor]]):
+def detach_all(tensors_across_iters: List[List[torch.Tensor]]):
     """
     Detach all tensors in order to pass tensors through `torch.multiprocessing.spawn`.
     """
-    detached = []
-    for result in results:
-        d = []
-        for r in result:
-            d.append(r.detach())
-        detached.append(d)
-    return detached
+    all_iters_detached = []
+    for single_iter_tensors in tensors_across_iters:
+        detached = []
+        for tensor in single_iter_tensors:
+            detached.append(tensor.detach())
+        all_iters_detached.append(detached)
+    return all_iters_detached
 
 
 def compare_weights(W1, W2, desc):
@@ -392,9 +377,6 @@ def compare_weights(W1, W2, desc):
 def check_correctness(adag_ddp_weights) -> None:
     """Compare aDAG DDP weights with pytorch and pytorch DDP weights."""
     adag_ddp_weights = get_adag_ddp_weights_per_device(adag_ddp_weights)
-    adag_ddp_inference(
-        adag_ddp_weights[-1]
-    )  # Run inference with weights after the last iteration.
     torch_weights = run_torch()
     compare_weights(adag_ddp_weights, torch_weights, "adag ddp vs torch")
     adag_ddp_weights = detach_all(adag_ddp_weights)
@@ -451,21 +433,21 @@ def run_adag_ddp(model: Type[DDPModel]):
 
     compiled_dag = dag.experimental_compile()
     it = CONFIG.it
-    results = []
+    adag_ddp_weights = []
     for i in range(it):
         x, y = generate_input_output(CONFIG)
         xs = torch.tensor_split(x, num_actors)
         ys = torch.tensor_split(y, num_actors)
         ref = compiled_dag.execute(*xs, *ys)
-        result = ray.get(ref)
-        results.append(result)
+        cur_iter_weights = ray.get(ref)
+        adag_ddp_weights.append(cur_iter_weights)
 
     compiled_dag.teardown()
 
     for actor in actors:
         ray.kill(actor)
 
-    return results
+    return adag_ddp_weights
 
 
 def run_torch():
@@ -475,7 +457,7 @@ def run_torch():
     criterion = model.criterion
     optimizer = optim.SGD(model.parameters(), lr=model.lr)
 
-    results = []
+    torch_weights = []
     elapses = []
     for i in range(CONFIG.it):
         x, y = generate_input_output(CONFIG)
@@ -489,31 +471,18 @@ def run_torch():
         optimizer.step()
         end = time.perf_counter()
 
-        result = []
+        cur_iter_weights = []
         for i in range(0, len(model.layers), 2):
             layer: torch.nn.Linear = model.layers[i]
-            result.append(torch.clone(layer.weight))
-        results.append(result)
+            cur_iter_weights.append(torch.clone(layer.weight))
+        torch_weights.append(cur_iter_weights)
 
         elapse = end - start
         elapses.append(elapse)
 
     print_elapses(elapses, "torch")
 
-    x, y = generate_input_output(CONFIG)
-    x = x.to(device)
-    y = y.to(device)
-    model = LayeredModel(CONFIG.layer_size, CONFIG.num_layers, device, CONFIG.dtype).to(
-        device
-    )
-    for i in range(0, len(model.layers), 2):
-        model.layers[i].weight = nn.Parameter(results[-1][i // 2])
-    pred = model(y)
-    loss = model.criterion(pred, y)
-    print(f"torch pred: {pred}")
-    print(f"torch loss: {loss}")
-
-    return results
+    return torch_weights
 
 
 def run_torch_ddp(torch_weights, adag_ddp_weights):
@@ -523,12 +492,8 @@ def run_torch_ddp(torch_weights, adag_ddp_weights):
         n_gpus >= CONFIG.num_actors
     ), f"Requires at least {CONFIG.num_actors} GPUs to run, but got {n_gpus}"
     world_size = n_gpus
-    torch_dist_spawn(torch_dist_run, world_size, torch_weights, adag_ddp_weights)
-
-
-def torch_dist_spawn(demo_fn, world_size, torch_weights, adag_ddp_weights):
     mp.spawn(
-        demo_fn,
+        torch_dist_run,
         args=(world_size, torch_weights, adag_ddp_weights),
         nprocs=world_size,
         join=True,
@@ -538,7 +503,11 @@ def torch_dist_spawn(demo_fn, world_size, torch_weights, adag_ddp_weights):
 def torch_dist_run(rank, world_size, torch_weights, adag_ddp_weights):
     """Run DDP with `torch.distributed`."""
     print(f"Running torch DDP on rank {rank}.")
-    torch_dist_setup(rank, world_size)
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12355"
+
+    # initialize the process group
+    dist.init_process_group("gloo", rank=rank, world_size=world_size)
 
     # create model and move it to GPU with id rank
     model = LayeredModel(
@@ -570,45 +539,20 @@ def torch_dist_run(rank, world_size, torch_weights, adag_ddp_weights):
         optimizer.step()
         end = time.perf_counter()
 
-        result = []
+        cur_iter_weights = []
         for i in range(0, len(model.layers), 2):
             layer: torch.nn.Linear = model.layers[i]
-            result.append(torch.clone(layer.weight))
-        torch_ddp_weights.append(result)
+            cur_iter_weights.append(torch.clone(layer.weight))
+        torch_ddp_weights.append(cur_iter_weights)
 
         elapse = end - start
         elapses.append(elapse)
 
     print_elapses(elapses, f"torch ddp #{rank}")
 
-    x, y = generate_input_output(CONFIG)
-    x = x.to(rank)
-    y = y.to(rank)
-    model = LayeredModel(
-        CONFIG.layer_size, CONFIG.num_layers, f"cuda:{rank}", CONFIG.dtype
-    ).to(rank)
-    for i in range(0, len(model.layers), 2):
-        model.layers[i].weight = nn.Parameter(torch_ddp_weights[-1][i // 2])
-    pred = model(y)
-    loss = loss_fn(pred, y)
-    print(f"torch ddp #{rank} pred: {pred}")
-    print(f"torch ddp #{rank} loss: {loss}")
-
-    torch_dist_cleanup()
+    dist.destroy_process_group()
     compare_weights(torch_weights, torch_ddp_weights, "torch vs torch ddp")
     compare_weights(adag_ddp_weights, torch_ddp_weights, "adag ddp vs torch ddp")
-
-
-def torch_dist_setup(rank, world_size):
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "12355"
-
-    # initialize the process group
-    dist.init_process_group("gloo", rank=rank, world_size=world_size)
-
-
-def torch_dist_cleanup():
-    dist.destroy_process_group()
 
 
 def main() -> None:
@@ -617,12 +561,12 @@ def main() -> None:
         print(f"Needs at least {CONFIG.num_actors} GPUs")
         return
 
-    results = run_adag_ddp(RayDDPWorker)
+    adag_ddp_weights = run_adag_ddp(RayDDPWorker)
     measure_adag_ddp_perf(RayDDPWorker)
 
     ray.shutdown()
 
-    check_correctness(results)
+    check_correctness(adag_ddp_weights)
 
 
 if __name__ == "__main__":
