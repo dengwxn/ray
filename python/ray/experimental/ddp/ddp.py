@@ -1,9 +1,9 @@
 import logging
 import os
 import time
+import argparse
 from dataclasses import dataclass
-from abc import ABC, abstractmethod
-from typing import List, Tuple, Type, Optional
+from typing import List, Tuple, Optional
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -35,20 +35,7 @@ class Config:
     num_actors: int = 2
 
 
-CONFIG = Config()
-
-
-def set_seed(seed):
-    """Set the RNG seeds to get deterministic output."""
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-
 SEED = 42
-set_seed(SEED)
 
 
 class LayeredModel(torch.nn.Module):
@@ -63,7 +50,6 @@ class LayeredModel(torch.nn.Module):
         lr: float,
     ):
         torch.manual_seed(SEED)
-        torch.cuda.manual_seed_all(SEED)
 
         super(LayeredModel, self).__init__()
 
@@ -123,12 +109,19 @@ class LayeredModel(torch.nn.Module):
 class RayDDPWorker:
     """An actor class wrapper around the pytorch model."""
 
-    def __init__(self, num_layers: int, layer_size: int, world_size: int, lr: float):
+    def __init__(
+        self,
+        num_layers: int,
+        layer_size: int,
+        world_size: int,
+        dtype: torch.dtype,
+        lr: float,
+    ):
         self.num_layers = num_layers
         self.device = torch_utils.get_devices()[0]
 
         self.model: LayeredModel = LayeredModel(
-            layer_size, num_layers, self.device, torch.float32, lr
+            layer_size, num_layers, self.device, dtype, lr
         )
         self.world_size: int = world_size
 
@@ -274,7 +267,6 @@ def check_correctness(adag_ddp_weights, config: Config) -> None:
     )
     torch_weights = run_torch(config)
     compare_weights(adag_ddp_weights, torch_weights, "adag ddp vs torch")
-    adag_ddp_weights = detach_all(adag_ddp_weights)
     torch_weights = detach_all(torch_weights)
     run_torch_ddp(torch_weights, config)
 
@@ -288,7 +280,7 @@ def run_adag_ddp(config: Config):
     num_layers, layer_size = config.num_layers, config.layer_size
     num_actors = config.num_actors
     actors = [
-        actor_cls.remote(num_layers, layer_size, num_actors, config.lr)
+        actor_cls.remote(num_layers, layer_size, num_actors, config.dtype, config.lr)
         for _ in range(num_actors)
     ]
 
@@ -453,8 +445,7 @@ def torch_dist_run(rank, world_size, torch_weights, config: Config):
     compare_weights(torch_weights, torch_ddp_weights, "torch vs torch ddp")
 
 
-def main() -> None:
-    config = CONFIG
+def main(config: Config) -> None:
     ray.init()
     if sum(node["Resources"].get("GPU", 0) for node in ray.nodes()) < config.num_actors:
         print(f"Needs at least {config.num_actors} GPUs")
@@ -467,8 +458,42 @@ def main() -> None:
     check_correctness(adag_ddp_weights, config)
 
 
+def cli() -> Config:
+    str_to_dtype = {
+        "float32": torch.float32,
+        "float": torch.float,  # alias for float32
+        "float64": torch.float64,
+        "double": torch.double,  # alias for float64
+        "float16": torch.float16,
+        "half": torch.half,  # alias for float16
+    }
+    parser = argparse.ArgumentParser(
+        description="DDP demo (aDAG DDP vs torch vs torch DDP)"
+    )
+    parser.add_argument("--num-layers", type=int, help="number of layers")
+    parser.add_argument(
+        "--layer-size", type=int, help="size of a layer (each layer is a square)"
+    )
+    parser.add_argument(
+        "--dtype",
+        type=str,
+        choices=list(str_to_dtype.keys()),
+        help="data type of tensors",
+    )
+    parser.add_argument("--it", type=int, help="number of iterations")
+    parser.add_argument("--lr", type=float, help="learning rate")
+    parser.add_argument("--num-actors", type=int, help="number of actors")
+    args = parser.parse_args()
+    args = vars(args)
+    args["dtype"] = str_to_dtype.get(args["dtype"], None)
+    args = {k: v for k, v in args.items() if v is not None}
+    config = Config(**args)
+    return config
+
+
 if __name__ == "__main__":
-    main()
+    main(cli())
+
 
 # 0. cleanup output
 # 1. baseline (identify performance overhead)
