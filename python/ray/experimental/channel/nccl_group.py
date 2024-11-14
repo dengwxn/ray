@@ -1,4 +1,5 @@
 import logging
+import time
 from types import ModuleType
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
@@ -262,6 +263,7 @@ class _NcclGroup(GPUCommunicator):
         if self._closed:
             raise RayChannelError("NCCL group has been destroyed.")
 
+        # start_time = time.perf_counter()
         self._comm.allReduce(
             self.nccl_util.get_tensor_ptr(send_buf),
             self.nccl_util.get_tensor_ptr(recv_buf),
@@ -277,6 +279,8 @@ class _NcclGroup(GPUCommunicator):
         # TODO(swang): Avoid CUDA synchronization.
         # TODO(wxdeng): Use check_async_error.
         self._cuda_stream.synchronize()
+        # end_time = time.perf_counter()
+        # print(f"_NcclGroup.allreduce: {round((end_time - start_time) * 1e6)} us")
         if self._closed:
             raise RayChannelError("NCCL group has been destroyed.")
 
