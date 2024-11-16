@@ -76,6 +76,8 @@ class LayeredModel(torch.nn.Module):
         self.activations: List[torch.Tensor] = []
         self.lr: float = lr
         self.criterion = nn.MSELoss()
+        # [TODO] Use a single optimizer for all layers.
+        # [TODO] performance comparison: 1 optim vs many?
         self.optimizers: List[optim.SGD] = [
             optim.SGD(self.layers[2 * i].parameters(), lr=self.lr)
             for i in range(num_layers)
@@ -103,7 +105,9 @@ class LayeredModel(torch.nn.Module):
         layer: torch.nn.Linear = self.layers[2 * layer_idx]
         W: torch.Tensor = layer.weight
         optimizer = self.optimizers[layer_idx]
+        # [TODO] where to clear the gradient?
         optimizer.zero_grad()
+        # [TODO] add comment to explain the retain_graph=True
         z.backward(gradient=grad, retain_graph=True, inputs=[W, x])
         return x.grad, W.grad
 
@@ -164,6 +168,7 @@ class RayDDPWorker:
     def start_train(self) -> None:
         self.start_time = time.perf_counter()
 
+        # [TODO] duplicate zero_grad?
         self.model.zero_grad()
         self.model.inputs = []
         self.model.activations = []
@@ -175,6 +180,7 @@ class RayDDPWorker:
     def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         self.start_train()
         tensor_to_device_start_time = time.perf_counter()
+        # [TODO] comment this is necessary as we move from CPU to GPU
         x = x.to(self.device)
         y = y.to(self.device)
         tensor_to_device_end_time = time.perf_counter()
@@ -194,6 +200,7 @@ class RayDDPWorker:
         loss: torch.Tensor = self.model.criterion(pred, y)
         self.loss_time = time.perf_counter()
 
+        # [TODO] add comment
         loss.backward(retain_graph=True, inputs=[pred])
         self.pre_backward_time = time.perf_counter()
         return pred.grad, None
@@ -203,6 +210,8 @@ class RayDDPWorker:
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         backward_start_time = time.perf_counter()
         bp_grad, _ = grad
+        # [TODO] need to move from CPU to GPU
+        # [TODO] should it already be on the same device?
         bp_grad = bp_grad.to(self.device)
         result = self.model.backward_layer(bp_grad, layer_idx)
         backward_end_time = time.perf_counter()
@@ -213,7 +222,9 @@ class RayDDPWorker:
         self, layer_idx: int, grad: torch.Tensor, check_correctness: bool
     ) -> Optional[torch.Tensor]:
         update_start_time = time.perf_counter()
+        # [TODO] may not be necessary
         grad = grad.to(self.device)
+        # [TODO] add comment
         grad /= self.world_size
         result = self.model.update_layer(grad, layer_idx, check_correctness)
         update_end_time = time.perf_counter()
@@ -375,13 +386,16 @@ def run_torch_ddp(config: Config) -> Tuple[List[List[torch.Tensor]], int]:
         if config.check_correctness:
             weights_dict = manager.dict()
         elapses_dict = manager.dict()
+        # [TODO] is spawn the only way for multiprocessing?
         mp.spawn(
             run_torch_ddp_per_process,
             args=(world_size, weights_dict, elapses_dict, config),
             nprocs=world_size,
             join=True,
         )
-        weights = get_torch_ddp_weights_per_device(weights_dict, world_size)
+        weights = None
+        if config.check_correctness:
+            weights = get_torch_ddp_weights_per_device(weights_dict, world_size)
         avg_elapse = get_torch_ddp_avg_elapse_per_device(elapses_dict)
         return weights, avg_elapse
 
@@ -412,7 +426,8 @@ def run_torch_ddp_per_process(
     os.environ["MASTER_PORT"] = "12345"
 
     # initialize the process group
-    dist.init_process_group("gloo", rank=rank, world_size=world_size)
+    # [TODO] try using nccl
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
     # create model and move it to GPU with id rank
     model = LayeredModel(
@@ -569,7 +584,13 @@ def run_ray_ddp(config: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int
         ys = torch.tensor_split(y, num_actors)
         start = time.perf_counter()
         ref = compiled_dag.execute(*xs, *ys)
+        # [TODO] print timestamp before ray.get
+        # [TODO] use mature profiler
+        # [TODO] simplify the dag
+        # 1. single allreduce in a loop
+        # 2. remove some of the dag nodes
         cur_iter_weights = ray.get(ref)
+        # [None, None, None, ...]
         end = time.perf_counter()
         if config.check_correctness:
             weights.append(cur_iter_weights)
@@ -745,6 +766,7 @@ def parse_config() -> Config:
         required=True,
         help="number of actors",
     )
+    # [TODO] Fix this add arg
     parser.add_argument(
         "--check-correctness",
         type=bool,
@@ -758,6 +780,7 @@ def parse_config() -> Config:
         help="output file path",
     )
     args = parser.parse_args()
+    print(args)
     config = Config(
         num_layers=args.num_layers,
         layer_size=args.layer_size,
@@ -768,6 +791,8 @@ def parse_config() -> Config:
         check_correctness=args.check_correctness,
         output_file=args.output_file,
     )
+    # assert not config.check_correctness
+    config.check_correctness = False
     return config
 
 

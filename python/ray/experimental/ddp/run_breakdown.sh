@@ -6,7 +6,7 @@ num_iters=10
 learning_rate=5e-4
 num_actors=2
 
-num_layer=64
+num_layer=16
 RAY_DEDUP_LOGS=0 \
     python3 ddp_breakdown.py \
     --num-layers $num_layer \
@@ -15,7 +15,7 @@ RAY_DEDUP_LOGS=0 \
     --num-iters $num_iters \
     --learning-rate $learning_rate \
     --num-actors $num_actors \
-    --check-correctness false \
+    --check-correctness False \
     --output-file results/breakdown/lat_$num_layer.csv \
     2>results/breakdown/run_$num_layer.log \
     >results/breakdown/out_$num_layer.log

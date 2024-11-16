@@ -213,6 +213,7 @@ def generate_input_output(config: Config) -> Tuple[torch.Tensor, torch.Tensor]:
     shape = (num_actors * layer_size, layer_size)
     numel = shape[0] * shape[1]
 
+    # [1, 2, 3, ...]
     x = torch.arange(numel, dtype=dtype, requires_grad=True) / numel
     x = x.reshape(shape)
     y = torch.arange(numel, dtype=dtype) / numel
@@ -283,7 +284,9 @@ def run_torch_ddp(config: Config) -> Tuple[List[List[torch.Tensor]], int]:
             nprocs=world_size,
             join=True,
         )
-        weights = get_torch_ddp_weights_per_device(weights_dict, world_size)
+        weights = None
+        if config.check_correctness:
+            weights = get_torch_ddp_weights_per_device(weights_dict, world_size)
         avg_elapse = get_torch_ddp_avg_elapse_per_device(elapses_dict)
         return weights, avg_elapse
 
@@ -405,9 +408,12 @@ def get_torch_ddp_weights_per_device(
     return weights_per_device
 
 
+# [TODO] rename avg to something ...
 def get_torch_ddp_avg_elapse_per_device(elapses_dict: Dict[int, int]) -> int:
     # Return the average elapse of rank 0 for now.
     avg_elapse = elapses_dict[0]
+    # [TODO] average or max
+    avg_elapse = max(elapses_dict.values())
     return avg_elapse
 
 
@@ -562,6 +568,7 @@ def print_elapses(elapses: List[float], name: str, rank: Optional[int] = None) -
         avg: Average elapse without first iteration.
     """
 
+    # [TODO] make 1e6 a constant
     def secs_to_micros(secs: float) -> int:
         """Converts seconds to microseconds (rounded)."""
         return round(secs * 1e6)
@@ -670,6 +677,7 @@ def parse_config() -> Config:
         check_correctness=args.check_correctness,
         output_file=args.output_file,
     )
+    config.check_correctness = False
     return config
 
 
