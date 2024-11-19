@@ -19,7 +19,6 @@ for num_layer in ${num_layers[@]}; do
         --num-iters $num_iters \
         --learning-rate $learning_rate \
         --num-actors $num_actors \
-        --check-correctness false \
         --output-file results/debug/num-layers/lat_$num_layer.csv \
         >results/debug/num-layers/run_$num_layer.log 2>&1
 done

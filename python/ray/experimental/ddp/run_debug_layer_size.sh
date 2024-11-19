@@ -19,7 +19,6 @@ for layer_size in ${layer_sizes[@]}; do
         --num-iters $num_iters \
         --learning-rate $learning_rate \
         --num-actors $num_actors \
-        --check-correctness false \
         --output-file results/debug/layer-size/lat_$layer_size.csv \
         >results/debug/layer-size/run_$layer_size.log 2>&1
 done

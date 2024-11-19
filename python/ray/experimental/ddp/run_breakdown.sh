@@ -15,7 +15,6 @@ RAY_DEDUP_LOGS=0 \
     --num-iters $num_iters \
     --learning-rate $learning_rate \
     --num-actors $num_actors \
-    --check-correctness False \
     --output-file results/breakdown/lat_$num_layer.csv \
     2>results/breakdown/run_$num_layer.log \
     >results/breakdown/out_$num_layer.log
