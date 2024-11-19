@@ -409,7 +409,7 @@ def run_torch_ddp_per_process(
     os.environ["MASTER_PORT"] = "12345"
 
     # initialize the process group
-    dist.init_process_group("gloo", rank=rank, world_size=world_size)
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
     # create model and move it to GPU with id rank
     model = LayeredModel(
