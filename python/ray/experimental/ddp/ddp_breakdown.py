@@ -52,6 +52,8 @@ class Config:
     check_correctness: bool
     # Output file.
     output_file: str
+    # Breakdown performance flag.
+    breakdown_performance: bool
 
 
 # Set RNG seed for deterministic results.
@@ -175,6 +177,7 @@ class RayDDPWorker:
         world_size: Number of actors.
         dtype: Data type of the parameters in the model.
         lr: Learning rate for the optimizer.
+        breakdown_performance: Whether to print performance breakdown.
     """
 
     def __init__(
@@ -184,6 +187,7 @@ class RayDDPWorker:
         world_size: int,
         dtype: torch.dtype,
         lr: float,
+        breakdown_performance: bool,
     ):
         self.num_layers = num_layers
         # Each device has a single GPU.
@@ -195,6 +199,7 @@ class RayDDPWorker:
         self.world_size: int = world_size
 
         # [TODO] remove manual timing and use profiler
+        self.breakdown_performance = breakdown_performance
         self.it = 0
         self.start_time: float = None
         self.tensor_to_device_time: Tuple[float, float] = None
@@ -211,15 +216,17 @@ class RayDDPWorker:
         Start the training process for one iteration. Clear the old gradients,
         stored inputs, and activations from last iteration.
         """
-        self.start_time = time.perf_counter()
+        if self.breakdown_performance:
+            self.start_time = time.perf_counter()
 
         self.model.zero_grad()
         self.model.inputs = []
         self.model.activations = []
 
-        self.forward_times = []
-        self.backward_times = []
-        self.update_times = []
+        if self.breakdown_performance:
+            self.forward_times = []
+            self.backward_times = []
+            self.update_times = []
 
     def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         """
@@ -236,33 +243,43 @@ class RayDDPWorker:
             Gradient of the loss with respect to the prediction.
         """
         self.start_train()
-        tensor_to_device_start_time = time.perf_counter()
+        tensor_to_device_start_time = None
+        if self.breakdown_performance:
+            tensor_to_device_start_time = time.perf_counter()
         # The input x and ground truth y were on CPU. It is necessary to move
         # them to the same device as the model.
         x = x.to(self.device)
         y = y.to(self.device)
-        tensor_to_device_end_time = time.perf_counter()
-        self.tensor_to_device_time = (
-            tensor_to_device_start_time,
-            tensor_to_device_end_time,
-        )
-        self.pre_forward_time = time.perf_counter()
+        tensor_to_device_end_time = None
+        if self.breakdown_performance:
+            tensor_to_device_end_time = time.perf_counter()
+            self.tensor_to_device_time = (
+                tensor_to_device_start_time,
+                tensor_to_device_end_time,
+            )
+            self.pre_forward_time = time.perf_counter()
 
         for i in range(self.num_layers):
-            forward_start_time = time.perf_counter()
+            forward_start_time = None
+            if self.breakdown_performance:
+                forward_start_time = time.perf_counter()
             x = self.model.forward_layer(x, i)
-            forward_end_time = time.perf_counter()
-            self.forward_times.append((forward_start_time, forward_end_time))
+            forward_end_time = None
+            if self.breakdown_performance:
+                forward_end_time = time.perf_counter()
+                self.forward_times.append((forward_start_time, forward_end_time))
 
         pred = x
         loss: torch.Tensor = self.model.criterion(pred, y)
-        self.loss_time = time.perf_counter()
+        if self.breakdown_performance:
+            self.loss_time = time.perf_counter()
 
         # Compute the gradient of the loss with respect to the prediction.
         # Retain the graph (i.e., not free the graph) for subsequent backprop
         # computations.
         loss.backward(retain_graph=True, inputs=[pred])
-        self.pre_backward_time = time.perf_counter()
+        if self.breakdown_performance:
+            self.pre_backward_time = time.perf_counter()
         return pred.grad, None
 
     def backward(
@@ -281,12 +298,16 @@ class RayDDPWorker:
             Tuple of the gradients of the loss with respect to the input and the
             weight of this layer.
         """
-        backward_start_time = time.perf_counter()
+        backward_start_time = None
+        if self.breakdown_performance:
+            backward_start_time = time.perf_counter()
         # No need to move the gradient because it is already on this device.
         bp_grad, _ = grad
         result = self.model.backward_layer(bp_grad, layer_idx)
-        backward_end_time = time.perf_counter()
-        self.backward_times.append((backward_start_time, backward_end_time))
+        backward_end_time = None
+        if self.breakdown_performance:
+            backward_end_time = time.perf_counter()
+            self.backward_times.append((backward_start_time, backward_end_time))
         return result
 
     def update(
@@ -304,14 +325,18 @@ class RayDDPWorker:
             The updated weights of this layer if correctness is checked, otherwise
             None.
         """
-        update_start_time = time.perf_counter()
+        update_start_time = None
+        if self.breakdown_performance:
+            update_start_time = time.perf_counter()
         # No need to move the gradient because it is already on this device.
         # For mathematical equivalence, divide the allreduced gradient by the
         # world size (i.e., the number of actors).
         grad /= self.world_size
         result = self.model.update_layer(grad, layer_idx, check_correctness)
-        update_end_time = time.perf_counter()
-        self.update_times.append((update_start_time, update_end_time))
+        update_end_time = None
+        if self.breakdown_performance:
+            update_end_time = time.perf_counter()
+            self.update_times.append((update_start_time, update_end_time))
         return result
 
     def finish_train(
@@ -329,60 +354,68 @@ class RayDDPWorker:
         Returns:
             The list of all results from weight updates.
         """
-        self.end_time = time.perf_counter()
+        if self.breakdown_performance:
+            self.end_time = time.perf_counter()
 
-        print(f"start time: {self.start_time}")
-        print(
-            f"tensor to device time: start: {self.tensor_to_device_time[0]} end: {self.tensor_to_device_time[1]}"
-        )
-        print(f"pre forward time: {self.pre_forward_time}")
-        for i, (start, end) in enumerate(self.forward_times):
-            print(f"forward time layer {i}: start: {start}, end: {end}")
-        print(f"loss time: {self.loss_time}")
-        print(f"pre backward time: {self.pre_backward_time}")
-        for i, (start, end) in enumerate(self.backward_times):
-            print(f"backward time layer {i}: start: {start}, end: {end}")
-        for i, (start, end) in enumerate(self.update_times):
-            print(f"update time layer {i}: start: {start}, end: {end}")
-        print(f"end time: {self.end_time}")
-        print()
+            print(f"start time: {self.start_time}")
+            print(
+                f"tensor to device time: start: {self.tensor_to_device_time[0]} "
+                f"end: {self.tensor_to_device_time[1]}"
+            )
+            print(f"pre forward time: {self.pre_forward_time}")
+            for i, (start, end) in enumerate(self.forward_times):
+                print(f"forward time layer {i}: start: {start}, end: {end}")
+            print(f"loss time: {self.loss_time}")
+            print(f"pre backward time: {self.pre_backward_time}")
+            for i, (start, end) in enumerate(self.backward_times):
+                print(f"backward time layer {i}: start: {start}, end: {end}")
+            for i, (start, end) in enumerate(self.update_times):
+                print(f"update time layer {i}: start: {start}, end: {end}")
+            print(f"end time: {self.end_time}")
+            print()
 
-        self.start_time = secs_to_micros(self.start_time)
-        self.tensor_to_device_time = (
-            secs_to_micros(self.tensor_to_device_time[0]),
-            secs_to_micros(self.tensor_to_device_time[1]),
-        )
-        self.pre_forward_time = secs_to_micros(self.pre_forward_time)
-        for i, (start, end) in enumerate(self.forward_times):
-            self.forward_times[i] = (secs_to_micros(start), secs_to_micros(end))
-        self.loss_time = secs_to_micros(self.loss_time)
-        self.pre_backward_time = secs_to_micros(self.pre_backward_time)
-        for i, (start, end) in enumerate(self.backward_times):
-            self.backward_times[i] = (secs_to_micros(start), secs_to_micros(end))
-        for i, (start, end) in enumerate(self.update_times):
-            self.update_times[i] = (secs_to_micros(start), secs_to_micros(end))
-        self.end_time = secs_to_micros(self.end_time)
+            self.start_time = secs_to_micros(self.start_time)
+            self.tensor_to_device_time = (
+                secs_to_micros(self.tensor_to_device_time[0]),
+                secs_to_micros(self.tensor_to_device_time[1]),
+            )
+            self.pre_forward_time = secs_to_micros(self.pre_forward_time)
+            for i, (start, end) in enumerate(self.forward_times):
+                self.forward_times[i] = (secs_to_micros(start), secs_to_micros(end))
+            self.loss_time = secs_to_micros(self.loss_time)
+            self.pre_backward_time = secs_to_micros(self.pre_backward_time)
+            for i, (start, end) in enumerate(self.backward_times):
+                self.backward_times[i] = (secs_to_micros(start), secs_to_micros(end))
+            for i, (start, end) in enumerate(self.update_times):
+                self.update_times[i] = (secs_to_micros(start), secs_to_micros(end))
+            self.end_time = secs_to_micros(self.end_time)
 
-        print(f"=============== Iteration {self.it} Elapses =================")
-        print(
-            "tensor to device elapse: "
-            f"{self.tensor_to_device_time[1] - self.tensor_to_device_time[0]}"
-        )
-        print(f"pre forward elapse: {self.pre_forward_time - self.start_time}")
-        for i, (start, end) in enumerate(self.forward_times):
-            print(f"forward layer {i} elapse: {end - start}")
-        print(f"loss elapse: {self.loss_time - self.forward_times[-1][1]}")
-        print(f"pre backward elapse: {self.pre_backward_time - self.loss_time}")
-        for i, (start, end) in enumerate(self.backward_times):
-            print(f"backward layer {i} elapse: {end - start}")
-        for i, (start, end) in enumerate(self.update_times):
-            print(f"allreduce layer {i} elapse: {start - self.backward_times[i][1]}")
-            print(f"update layer {i} elapse: {end - start}")
-        print(f"total elapse: {self.end_time - self.start_time}")
-        print("=====================================================================")
-        print()
+            print(f"=============== Iteration {self.it} Elapses =================")
+            print(
+                "tensor to device elapse: "
+                f"{self.tensor_to_device_time[1] - self.tensor_to_device_time[0]}"
+            )
+            print(f"pre forward elapse: {self.pre_forward_time - self.start_time}")
+            for i, (start, end) in enumerate(self.forward_times):
+                print(f"forward layer {i} elapse: {end - start}")
+            print(f"loss elapse: {self.loss_time - self.forward_times[-1][1]}")
+            print(f"pre backward elapse: {self.pre_backward_time - self.loss_time}")
+            for i, (start, end) in enumerate(self.backward_times):
+                print(f"backward layer {i} elapse: {end - start}")
+            for i, (start, end) in enumerate(self.update_times):
+                print(
+                    f"allreduce layer {i} elapse: {start - self.backward_times[i][1]}"
+                )
+                print(f"update layer {i} elapse: {end - start}")
+            print(f"total elapse: {self.end_time - self.start_time}")
+            print_time = secs_to_micros(time.perf_counter())
+            print(f"print elapse: {print_time - self.end_time}")
+            print(
+                "====================================================================="
+            )
+            print()
 
-        self.it += 1
+            self.it += 1
 
         return updates
 
@@ -692,7 +725,12 @@ def run_ray_ddp(config: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int
     num_actors = config.num_actors
     actors = [
         actor_cls.remote(
-            num_layers, layer_size, num_actors, config.dtype, config.learning_rate
+            num_layers,
+            layer_size,
+            num_actors,
+            config.dtype,
+            config.learning_rate,
+            config.breakdown_performance,
         )
         for _ in range(num_actors)
     ]
@@ -945,6 +983,11 @@ def parse_config() -> Config:
         required=True,
         help="output file path",
     )
+    parser.add_argument(
+        "--breakdown-performance",
+        action="store_true",
+        help="whether to print performance breakdown",
+    )
     args = parser.parse_args()
     config = Config(
         num_layers=args.num_layers,
@@ -955,8 +998,8 @@ def parse_config() -> Config:
         num_actors=args.num_actors,
         check_correctness=args.check_correctness,
         output_file=args.output_file,
+        breakdown_performance=args.breakdown_performance,
     )
-    print(config.check_correctness)
     return config
 
 
