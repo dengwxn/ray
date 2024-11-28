@@ -9,7 +9,7 @@ num_actors=2
 
 # Correctness check
 RAY_DEDUP_LOGS=0 \
-    python3 ddp_breakdown.py \
+    python3 ddp.py \
     --num-layers $num_layers \
     --layer-size $layer_size \
     --dtype $dtype \

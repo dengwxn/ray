@@ -8,7 +8,7 @@ num_actors=2
 num_layer=32
 
 RAY_DEDUP_LOGS=0 \
-    python3 ddp_breakdown.py \
+    python3 ddp.py \
     --num-layers $num_layer \
     --layer-size $layer_size \
     --dtype $dtype \

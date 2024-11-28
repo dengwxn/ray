@@ -9,7 +9,7 @@ num_layer=64
 
 RAY_DEDUP_LOGS=0 \
     nsys profile \
-    python3 ddp_breakdown.py \
+    python3 ddp.py \
     --num-layers $num_layer \
     --layer-size $layer_size \
     --dtype $dtype \

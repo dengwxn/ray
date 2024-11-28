@@ -9,7 +9,7 @@ num_actors=2
 num_layers=(1 2 3 4 6 8 12 16 24 32 48 64)
 for num_layer in ${num_layers[@]}; do
     RAY_DEDUP_LOGS=0 \
-        python3 ddp_breakdown.py \
+        python3 ddp.py \
         --num-layers $num_layer \
         --layer-size $layer_size \
         --dtype $dtype \

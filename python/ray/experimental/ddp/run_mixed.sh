@@ -10,7 +10,7 @@ layer_sizes=(10 20 40 80 160 320 640 1280 1840 2560 3840 5120)
 for num_layer in ${num_layers[@]}; do
     for layer_size in ${layer_sizes[@]}; do
         RAY_DEDUP_LOGS=0 \
-            python3 ddp_breakdown.py \
+            python3 ddp.py \
             --num-layers $num_layer \
             --layer-size $layer_size \
             --dtype $dtype \
