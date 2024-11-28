@@ -1,5 +1,7 @@
 #!/bin/bash
 
+mkdir -p results/layer-size
+
 dtype=float32
 num_iters=10
 learning_rate=5e-4

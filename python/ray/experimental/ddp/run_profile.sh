@@ -1,5 +1,7 @@
 #!/bin/bash
 
+mkdir -p results/profile
+
 layer_size=2560
 dtype=float32
 num_iters=10

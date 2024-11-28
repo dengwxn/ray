@@ -1,13 +1,16 @@
 #!/bin/bash
 
+mkdir -p results/mixed
+
 dtype=float32
 num_iters=10
 learning_rate=5e-4
 num_actors=2
 
 num_layers=(2 4 8 16 32 64)
-layer_sizes=(10 20 40 80 160 320 640 1280 1840 2560 3840 5120)
+layer_sizes=(10 20 40 80 160 320 640 1280 1840 2560 3840)
 for num_layer in ${num_layers[@]}; do
+    mkdir -p results/mixed/$num_layer-layers
     for layer_size in ${layer_sizes[@]}; do
         RAY_DEDUP_LOGS=0 \
             python3 ddp.py \

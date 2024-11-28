@@ -3,7 +3,7 @@ import os
 import time
 import argparse
 from dataclasses import dataclass
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Any
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -177,6 +177,7 @@ class RayDDPWorker:
         world_size: Number of actors.
         dtype: Data type of the parameters in the model.
         lr: Learning rate for the optimizer.
+        check_correctness: Whether correctness is checked.
         breakdown_performance: Whether to print performance breakdown.
     """
 
@@ -187,6 +188,7 @@ class RayDDPWorker:
         world_size: int,
         dtype: torch.dtype,
         lr: float,
+        check_correctness: bool,
         breakdown_performance: bool,
     ):
         self.num_layers = num_layers
@@ -198,11 +200,11 @@ class RayDDPWorker:
         )
         self.world_size: int = world_size
 
+        self.check_correctness = check_correctness
         # [TODO] remove manual timing and use profiler
         self.breakdown_performance = breakdown_performance
         self.it = 0
         self.start_time: float = None
-        self.tensor_to_device_time: Tuple[float, float] = None
         self.pre_forward_time: float = None
         self.forward_times: List[Tuple[float, Tuple]] = None
         self.loss_time: float = None
@@ -210,6 +212,21 @@ class RayDDPWorker:
         self.backward_times: List[Tuple[float, float]] = None
         self.update_times: List[Tuple[float, float]] = None
         self.end_time: float = None
+
+        self.x: torch.Tensor = None
+        self.y: torch.Tensor = None
+
+    def tensor_to_device(self, x: torch.Tensor, y: torch.Tensor) -> None:
+        """
+        Move the input and ground truth to the device. The input and ground truth
+        were on the CPU so they need to be moved.
+
+        Args:
+            x: Input.
+            y: Ground truth.
+        """
+        self.x = x.to(self.device)
+        self.y = y.to(self.device)
 
     def start_train(self) -> None:
         """
@@ -228,35 +245,23 @@ class RayDDPWorker:
             self.backward_times = []
             self.update_times = []
 
-    def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    def forward(self, placeholder: Any) -> torch.Tensor:
         """
         Forward pass for the model.
-        1. Compute the prediction with the given input.
-        2. Compute the loss from the prediction and the given ground truth.
+        1. Compute the prediction with the input.
+        2. Compute the loss from the prediction and the ground truth.
         3. Compute and return the gradient of the loss with respect to the prediction.
 
         Args:
-            x: Input.
-            y: Ground truth.
+            placeholder: Unused placeholder for the input.
 
         Returns:
             Gradient of the loss with respect to the prediction.
         """
         self.start_train()
-        tensor_to_device_start_time = None
+        x = self.x
+        y = self.y
         if self.breakdown_performance:
-            tensor_to_device_start_time = time.perf_counter()
-        # The input x and ground truth y were on CPU. It is necessary to move
-        # them to the same device as the model.
-        x = x.to(self.device)
-        y = y.to(self.device)
-        tensor_to_device_end_time = None
-        if self.breakdown_performance:
-            tensor_to_device_end_time = time.perf_counter()
-            self.tensor_to_device_time = (
-                tensor_to_device_start_time,
-                tensor_to_device_end_time,
-            )
             self.pre_forward_time = time.perf_counter()
 
         for i in range(self.num_layers):
@@ -310,16 +315,13 @@ class RayDDPWorker:
             self.backward_times.append((backward_start_time, backward_end_time))
         return result
 
-    def update(
-        self, layer_idx: int, grad: torch.Tensor, check_correctness: bool
-    ) -> Optional[torch.Tensor]:
+    def update(self, layer_idx: int, grad: torch.Tensor) -> Optional[torch.Tensor]:
         """
         Update the weights of the specified layer with the given allreduced gradient.
 
         Args:
             layer_idx: Index of the layer.
             grad: Allreduced gradient for this layer.
-            check_correctness: Whether correctness is checked.
 
         Returns:
             The updated weights of this layer if correctness is checked, otherwise
@@ -332,7 +334,7 @@ class RayDDPWorker:
         # For mathematical equivalence, divide the allreduced gradient by the
         # world size (i.e., the number of actors).
         grad /= self.world_size
-        result = self.model.update_layer(grad, layer_idx, check_correctness)
+        result = self.model.update_layer(grad, layer_idx, self.check_correctness)
         update_end_time = None
         if self.breakdown_performance:
             update_end_time = time.perf_counter()
@@ -358,10 +360,6 @@ class RayDDPWorker:
             self.end_time = time.perf_counter()
 
             print(f"start time: {self.start_time}")
-            print(
-                f"tensor to device time: start: {self.tensor_to_device_time[0]} "
-                f"end: {self.tensor_to_device_time[1]}"
-            )
             print(f"pre forward time: {self.pre_forward_time}")
             for i, (start, end) in enumerate(self.forward_times):
                 print(f"forward time layer {i}: start: {start}, end: {end}")
@@ -375,10 +373,6 @@ class RayDDPWorker:
             print()
 
             self.start_time = secs_to_micros(self.start_time)
-            self.tensor_to_device_time = (
-                secs_to_micros(self.tensor_to_device_time[0]),
-                secs_to_micros(self.tensor_to_device_time[1]),
-            )
             self.pre_forward_time = secs_to_micros(self.pre_forward_time)
             for i, (start, end) in enumerate(self.forward_times):
                 self.forward_times[i] = (secs_to_micros(start), secs_to_micros(end))
@@ -391,10 +385,6 @@ class RayDDPWorker:
             self.end_time = secs_to_micros(self.end_time)
 
             print(f"=============== Iteration {self.it} Elapses =================")
-            print(
-                "tensor to device elapse: "
-                f"{self.tensor_to_device_time[1] - self.tensor_to_device_time[0]}"
-            )
             print(f"pre forward elapse: {self.pre_forward_time - self.start_time}")
             for i, (start, end) in enumerate(self.forward_times):
                 print(f"forward layer {i} elapse: {end - start}")
@@ -417,7 +407,7 @@ class RayDDPWorker:
 
             self.it += 1
 
-        return updates
+        return updates if self.check_correctness else None
 
     def get_grad_to_reduce(
         self, grad: Tuple[torch.Tensor, torch.Tensor]
@@ -730,19 +720,15 @@ def run_ray_ddp(config: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int
             num_actors,
             config.dtype,
             config.learning_rate,
+            config.check_correctness,
             config.breakdown_performance,
         )
         for _ in range(num_actors)
     ]
 
     with InputNode() as inp:
-        losses = []
-        for i, actor in enumerate(actors):
-            x = inp[i]
-            y = inp[num_actors + i]
-            losses.append(actor.forward.bind(x, y))
+        grads = [actor.forward.bind(inp) for actor in actors]
         output = []
-        grads = losses
         for j in reversed(range(num_layers)):
             for i, actor in enumerate(actors):
                 grads[i] = actor.backward.bind(j, grads[i])
@@ -753,7 +739,7 @@ def run_ray_ddp(config: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int
                 ]
             )
             updates = [
-                actor.update.bind(j, reduced_grad, config.check_correctness)
+                actor.update.bind(j, reduced_grad)
                 for actor, reduced_grad in zip(actors, reduced_grads)
             ]
             output.append(updates)
@@ -766,19 +752,26 @@ def run_ray_ddp(config: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int
         dag = MultiOutputNode(ends)
 
     compiled_dag = dag.experimental_compile()
+
+    x, y = generate_input_output(config)
+    xs = torch.tensor_split(x, num_actors)
+    ys = torch.tensor_split(y, num_actors)
+    move_tensor_refs = [
+        actor.tensor_to_device.remote(xs[i], ys[i]) for i, actor in enumerate(actors)
+    ]
+    ray.get(move_tensor_refs)
+
     weights = None
     if config.check_correctness:
         weights = []
     elapses = []
     for i in range(config.num_iters):
-        x, y = generate_input_output(config)
-        xs = torch.tensor_split(x, num_actors)
-        ys = torch.tensor_split(y, num_actors)
         start = time.perf_counter()
-        ref = compiled_dag.execute(*xs, *ys)
+        # Use None as a placeholder.
+        ref = compiled_dag.execute(None)
         # [TODO] print timestamp before ray.get
         # [TODO] use mature profiler
-        # If correctness is not checked, the results are [None, None, ...].
+        # If correctness is not checked, the result is None.
         cur_iter_weights = ray.get(ref)
         end = time.perf_counter()
         if config.check_correctness:

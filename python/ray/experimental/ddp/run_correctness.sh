@@ -1,5 +1,7 @@
 #!/bin/bash
 
+mkdir -p results/correctness
+
 num_layers=2
 layer_size=1024
 dtype=float32

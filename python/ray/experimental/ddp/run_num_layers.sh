@@ -1,5 +1,7 @@
 #!/bin/bash
 
+mkdir -p results/num-layers
+
 layer_size=1280
 dtype=float32
 num_iters=10
