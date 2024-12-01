@@ -1,7 +1,6 @@
 #!/bin/bash
 
-mkdir -p results/correctness
-
+result=results/correctness
 num_layers=2
 layer_size=1024
 dtype=float32
@@ -9,15 +8,16 @@ num_iters=10
 learning_rate=5e-4
 num_actors=2
 
-# Correctness check
+mkdir -p $result
+
 RAY_DEDUP_LOGS=0 \
-    python3 ddp.py \
+    python -m ray.experimental.ddp.src.ddp \
+    --dtype $dtype \
+    --num-actors $num_actors \
     --num-layers $num_layers \
     --layer-size $layer_size \
-    --dtype $dtype \
     --num-iters $num_iters \
     --learning-rate $learning_rate \
-    --num-actors $num_actors \
+    --output-file $result/latency.csv \
     --check-correctness \
-    --output-file results/correctness/lat.csv \
-    >results/correctness/run.log 2>&1
+    >$result/run.log 2>&1
