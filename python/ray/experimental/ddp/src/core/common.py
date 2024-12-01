@@ -1,4 +1,5 @@
-from typing import Tuple
+import logging
+from typing import List, Optional, Tuple
 
 import torch
 
@@ -35,3 +36,35 @@ def generate_input_output(config: Config) -> Tuple[torch.Tensor, torch.Tensor]:
     y = y.reshape(shape)
 
     return x, y
+
+
+def print_elapses(elapses: List[float], name: str, rank: Optional[int] = None) -> int:
+    """
+    Print individual elapses and their average.
+
+    Args:
+        elapses: List of elapses for all iterations
+        name: Name of the approach (Ray DDP, torch, or torch DDP).
+        rank: Rank in torch DDP.
+
+    Returns:
+        avg: Average elapse without first iteration.
+    """
+
+    logger = logging.getLogger(__name__)
+    logger.info(name)
+    for i, elapse in enumerate(elapses):
+        if rank:
+            logger.info(
+                f"Iteration: {i}, rank: {rank}, elapse: {secs_to_micros(elapse)} us"
+            )
+        else:
+            logger.info(f"Iteration: {i}, elapse: {secs_to_micros(elapse)} us")
+    total = sum(elapses)
+    avg = total / len(elapses)
+    logger.info(f"Average elapse: {secs_to_micros(avg)} us")
+    total -= elapses[0]
+    avg = total / (len(elapses) - 1)
+    avg = secs_to_micros(avg)
+    logger.info(f"Average elapse without iteration 0: {avg} us")
+    return avg

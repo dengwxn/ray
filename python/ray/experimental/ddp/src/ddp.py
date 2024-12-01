@@ -1,7 +1,7 @@
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -12,7 +12,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 import ray
 from .core.actor import RayDDPWorker
-from .core.common import generate_input_output, secs_to_micros
+from .core.common import generate_input_output, print_elapses
 from .core.config import Config, parse_config
 from .core.correctness import (
     compare_weights,
@@ -120,8 +120,8 @@ def run_torch_ddp(config: Config) -> Tuple[Optional[List[List[torch.Tensor]]], i
         weights = None
         if config.check_correctness:
             weights = get_torch_ddp_weights_per_device(weights_dict, world_size)
-        avg_elapse = get_torch_ddp_e2e_elapse(elapses_dict)
-        return weights, avg_elapse
+        max_elapse = max(elapses_dict.values())
+        return weights, max_elapse
 
 
 def run_torch_ddp_per_process(
@@ -224,21 +224,6 @@ def run_torch_ddp_per_process(
     elapses_dict[rank] = avg_elapse
 
 
-def get_torch_ddp_e2e_elapse(elapses_dict: Dict[int, int]) -> int:
-    """
-    Get the end-to-end elapse for all devices. The maximum elapse across all
-    devices is used to approximate the end-to-end elapse.
-
-    Args:
-        elapses_dict: Dictionary that maps ranks (device ids) to its average
-            elapse across iterations.
-
-    Returns:
-        The approximate end-to-end elapse for all devices.
-    """
-    return max(elapses_dict.values())
-
-
 def run_ray_ddp(config: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
     """
     Run DDP using compiled graph and allreduce in Ray.
@@ -334,37 +319,6 @@ def run_ray_ddp(config: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int
     return weights, avg_elapse
 
 
-def print_elapses(elapses: List[float], name: str, rank: Optional[int] = None) -> int:
-    """
-    Print individual elapses and their average.
-
-    Args:
-        elapses: List of elapses for all iterations
-        name: Name of the approach (Ray DDP, torch, or torch DDP).
-        rank: Rank in torch DDP.
-
-    Returns:
-        avg: Average elapse without first iteration.
-    """
-
-    logger.info(name)
-    for i, elapse in enumerate(elapses):
-        if rank:
-            logger.info(
-                f"Iteration: {i}, rank: {rank}, elapse: {secs_to_micros(elapse)} us"
-            )
-        else:
-            logger.info(f"Iteration: {i}, elapse: {secs_to_micros(elapse)} us")
-    total = sum(elapses)
-    avg = total / len(elapses)
-    logger.info(f"Average elapse: {secs_to_micros(avg)} us")
-    total -= elapses[0]
-    avg = total / (len(elapses) - 1)
-    avg = secs_to_micros(avg)
-    logger.info(f"Average elapse without iteration 0: {avg} us")
-    return avg
-
-
 def main(config: Config) -> None:
     """
     Run and compare the performance of Ray DDP, PyTorch, and PyTorch DDP.
@@ -380,13 +334,21 @@ def main(config: Config) -> None:
     torch_ddp_weights, torch_ddp_elapse = run_torch_ddp(config)
     if config.check_correctness:
         compare_weights(
-            ray_ddp_weights, torch_weights, "ray ddp vs torch", allow_error=True
+            ray_ddp_weights,
+            torch_weights,
+            "ray ddp vs torch",
+            allow_error=True,
         )
-        compare_weights(ray_ddp_weights, torch_ddp_weights, "ray ddp vs torch ddp")
+        compare_weights(
+            ray_ddp_weights,
+            torch_ddp_weights,
+            "ray ddp vs torch ddp",
+        )
     with open(config.output_file, "w") as file:
         file.write("ray-ddp,torch,torch-ddp\n")
         file.write(f"{ray_ddp_elapse},{torch_elapse},{torch_ddp_elapse}\n")
 
 
 if __name__ == "__main__":
-    main(parse_config())
+    config = parse_config()
+    main(config)
