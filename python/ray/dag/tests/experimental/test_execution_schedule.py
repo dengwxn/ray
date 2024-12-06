@@ -7,16 +7,17 @@ import pytest
 from ray.tests.conftest import *  # noqa
 from ray.dag import InputNode, MultiOutputNode, ClassMethodNode
 from ray.dag.dag_node_operation import (
-    _DAGNodeOperationType,
     _DAGOperationGraphNode,
     _DAGNodeOperation,
+    _extract_execution_schedule,
     _select_next_nodes,
     _build_dag_node_operation_graph,
     _add_edge,
     _generate_actor_to_execution_schedule,
 )
 from ray.dag.compiled_dag_node import CompiledTask
-from typing import List, Dict
+from ray.dag.sync_group import _SynchronousGroup
+from typing import Dict, List, Set
 from ray.actor import ActorHandle
 
 if sys.platform != "linux" and sys.platform != "darwin":
@@ -35,63 +36,40 @@ def mock_init(self):
     pass
 
 
+class MockSyncGroup(_SynchronousGroup):
+    def __init__(self, task_idxs: List[int], ready_task_idxs: Set[int] = None):
+        super().__init__()
+        self.task_idxs = task_idxs
+        if ready_task_idxs is not None:
+            self.ready_task_idxs = ready_task_idxs
+
+    def execute(self, *args, **kwargs):
+        raise NotImplementedError
+
+
 def generate_dag_graph_nodes(
     exec_task_idx,
     task_idx,
     actor_handle,
+    sync_group=None,
     requires_nccl_read=False,
     requires_nccl_write=False,
     requires_nccl_collective=False,
-) -> Dict[_DAGNodeOperationType, _DAGOperationGraphNode]:
-    type_to_node: Dict[_DAGNodeOperationType, _DAGOperationGraphNode] = {}
-    OpType = _DAGNodeOperationType
-    if requires_nccl_read:
-        type_to_node[OpType.NCCL_READ] = _DAGOperationGraphNode(
-            _DAGNodeOperation(exec_task_idx, OpType.NCCL_READ),
-            task_idx,
-            actor_handle,
-            requires_nccl_read,
-            False,
-            False,
-        )
-    type_to_node[OpType.COMPUTE] = _DAGOperationGraphNode(
-        _DAGNodeOperation(exec_task_idx, OpType.COMPUTE),
+) -> _DAGOperationGraphNode:
+    node = _DAGOperationGraphNode(
+        _DAGNodeOperation(exec_task_idx),
         task_idx,
         actor_handle,
-        False,
-        False,
+        sync_group,
+        requires_nccl_read,
+        requires_nccl_write,
         requires_nccl_collective,
     )
-    if requires_nccl_write:
-        type_to_node[OpType.NCCL_WRITE] = _DAGOperationGraphNode(
-            _DAGNodeOperation(exec_task_idx, OpType.NCCL_WRITE),
-            task_idx,
-            actor_handle,
-            False,
-            requires_nccl_write,
-            False,
-        )
-    return type_to_node
+    return node
 
 
-def set_collective_idxs(
-    graph: Dict[int, Dict[_DAGNodeOperationType, _DAGOperationGraphNode]],
-    dag_idxs: List[int],
-) -> None:
-    OpType = _DAGNodeOperationType
-    collective_idxs = {(dag_idx, OpType.COMPUTE) for dag_idx in dag_idxs}
-    for dag_idx in dag_idxs:
-        graph[dag_idx][OpType.COMPUTE].collective_idxs = collective_idxs
-
-
-def set_ready_collective_idxs(
-    graph: Dict[int, Dict[_DAGNodeOperationType, _DAGOperationGraphNode]],
-    dag_idxs: List[int],
-) -> None:
-    OpType = _DAGNodeOperationType
-    ready_collective_idxs = {(dag_idx, OpType.COMPUTE) for dag_idx in dag_idxs}
-    for dag_idx in dag_idxs:
-        graph[dag_idx][OpType.COMPUTE].ready_collective_idxs = ready_collective_idxs
+def _generate_and_extract_execution_schedule(graph):
+    return _extract_execution_schedule(_generate_actor_to_execution_schedule(graph))
 
 
 class TestSelectNextNodes:
@@ -116,7 +94,6 @@ class TestSelectNextNodes:
         list should be selected first; therefore, the one on the left side will
         be selected first.
         """
-        OpType = _DAGNodeOperationType
         monkeypatch.setattr(ActorHandle, "__init__", mock_actor_handle_init)
 
         fake_actor = ActorHandle("fake_actor")
@@ -124,7 +101,7 @@ class TestSelectNextNodes:
         # actor's `executable_tasks` list is 0.
         task_idx_1 = 1
         dag_node_1 = _DAGOperationGraphNode(
-            _DAGNodeOperation(0, OpType.COMPUTE),
+            _DAGNodeOperation(0),
             task_idx_1,
             fake_actor,
         )
@@ -132,7 +109,7 @@ class TestSelectNextNodes:
         # actor's `executable_tasks` list is 1.
         task_idx_2 = 2
         dag_node_2 = _DAGOperationGraphNode(
-            _DAGNodeOperation(1, OpType.COMPUTE),
+            _DAGNodeOperation(1),
             task_idx_2,
             fake_actor,
         )
@@ -142,9 +119,17 @@ class TestSelectNextNodes:
                 dag_node_2,
             ],
         }
-        next_nodes = _select_next_nodes(mock_actor_to_candidates, None)
+        # The graph is not accessed because there are no synchronous groups.
+        next_nodes = _select_next_nodes(mock_actor_to_candidates, dict())
         assert len(next_nodes) == 1
         assert next_nodes[0] == dag_node_1
+
+        next_nodes = _select_next_nodes(mock_actor_to_candidates, dict())
+        assert len(next_nodes) == 1
+        assert next_nodes[0] == dag_node_2
+
+        next_nodes = _select_next_nodes(mock_actor_to_candidates, dict())
+        assert next_nodes is None
 
     def test_only_one_nccl_write(self, monkeypatch):
         """
@@ -159,36 +144,40 @@ class TestSelectNextNodes:
         READ and COMPUTE operations on fake_actor_1 have already been added to the
         execution schedule.
         """
-        OpType = _DAGNodeOperationType
         monkeypatch.setattr(ActorHandle, "__init__", mock_actor_handle_init)
 
         fake_actor_1, task_idx_1, exec_task_idx_1 = ActorHandle("fake_actor_1"), 1, 0
         fake_actor_2, task_idx_2, exec_task_idx_2 = ActorHandle("fake_actor_2"), 2, 0
+        sync_group = MockSyncGroup([task_idx_1, task_idx_2], {task_idx_1, task_idx_2})
         mock_graph = {
             task_idx_1: generate_dag_graph_nodes(
-                exec_task_idx_1, task_idx_1, fake_actor_1, requires_nccl_write=True
+                exec_task_idx_1,
+                task_idx_1,
+                fake_actor_1,
+                sync_group,
+                requires_nccl_write=True,
             ),
             task_idx_2: generate_dag_graph_nodes(
-                exec_task_idx_2, task_idx_2, fake_actor_2, requires_nccl_read=True
+                exec_task_idx_2,
+                task_idx_2,
+                fake_actor_2,
+                sync_group,
+                requires_nccl_read=True,
             ),
         }
-        del mock_graph[task_idx_1][OpType.COMPUTE]
 
-        _add_edge(
-            mock_graph[task_idx_1][OpType.NCCL_WRITE],
-            mock_graph[task_idx_2][OpType.NCCL_READ],
-        )
-        _add_edge(
-            mock_graph[task_idx_2][OpType.NCCL_READ],
-            mock_graph[task_idx_2][OpType.COMPUTE],
-        )
         mock_actor_to_candidates = {
-            fake_actor_1: [mock_graph[task_idx_1][OpType.NCCL_WRITE]],
+            fake_actor_2: [mock_graph[task_idx_2]],
         }
         next_nodes = _select_next_nodes(mock_actor_to_candidates, mock_graph)
         assert len(next_nodes) == 2
-        assert next_nodes[0] == mock_graph[task_idx_1][OpType.NCCL_WRITE]
-        assert next_nodes[1] == mock_graph[task_idx_2][OpType.NCCL_READ]
+        assert set(next_nodes) == {
+            mock_graph[task_idx_1],
+            mock_graph[task_idx_2],
+        }
+
+        next_nodes = _select_next_nodes(mock_actor_to_candidates, mock_graph)
+        assert next_nodes is None
 
     def test_two_nccl_writes(self, monkeypatch):
         """
@@ -205,16 +194,25 @@ class TestSelectNextNodes:
         and COMPUTE operations on both the DAG nodes with smaller bind_index on
         fake_actor_1 and fake_actor_2 have already been added to the execution schedule.
         """
-        OpType = _DAGNodeOperationType
         monkeypatch.setattr(ActorHandle, "__init__", mock_actor_handle_init)
 
         fake_actor_1 = ActorHandle("fake_actor_1")
         task_idx_1_0, exec_task_idx_1_0 = 1, 0
         task_idx_1_1, exec_task_idx_1_1 = 3, 1
         fake_actor_2 = ActorHandle("fake_actor_2")
-        task_idx_2_0, exec_task_idx_2_0 = 2, 0
-        task_idx_2_1, exec_task_idx_2_1 = 4, 1
+        task_idx_2_0, exec_task_idx_2_0 = 2, 1
+        task_idx_2_1, exec_task_idx_2_1 = 4, 2
 
+        sync_group_1 = MockSyncGroup(
+            [task_idx_1_0, task_idx_2_1], {task_idx_1_0, task_idx_2_1}
+        )
+        sync_group_2 = MockSyncGroup(
+            [task_idx_2_0, task_idx_1_1], {task_idx_2_0, task_idx_1_1}
+        )
+
+        # [TODO:andyub] This is no longer deterministic.
+        # When a.send, b.send are both candidates, we can either get a schedule like
+        # [a.send & b.recv, b.send & a.recv] or [b.send & a.recv, a.send & b.recv].
         # Run the test 10 times to ensure that the result of `_select_next_nodes`
         # is deterministic.
         for _ in range(20):
@@ -223,55 +221,53 @@ class TestSelectNextNodes:
                     exec_task_idx_1_0,
                     task_idx_1_0,
                     fake_actor_1,
+                    sync_group_1,
                     requires_nccl_write=True,
                 ),
                 task_idx_1_1: generate_dag_graph_nodes(
                     exec_task_idx_1_1,
                     task_idx_1_1,
                     fake_actor_1,
+                    sync_group_2,
                     requires_nccl_read=True,
                 ),
                 task_idx_2_0: generate_dag_graph_nodes(
                     exec_task_idx_2_0,
                     task_idx_2_0,
                     fake_actor_2,
+                    sync_group_2,
                     requires_nccl_write=True,
                 ),
                 task_idx_2_1: generate_dag_graph_nodes(
                     exec_task_idx_2_1,
                     task_idx_2_1,
                     fake_actor_2,
+                    sync_group_1,
                     requires_nccl_read=True,
                 ),
             }
-            del mock_graph[task_idx_1_0][OpType.COMPUTE]
-            del mock_graph[task_idx_2_0][OpType.COMPUTE]
 
-            _add_edge(
-                mock_graph[task_idx_1_0][OpType.NCCL_WRITE],
-                mock_graph[task_idx_2_1][OpType.NCCL_READ],
-            )
-            _add_edge(
-                mock_graph[task_idx_2_0][OpType.NCCL_WRITE],
-                mock_graph[task_idx_1_1][OpType.NCCL_READ],
-            )
-            _add_edge(
-                mock_graph[task_idx_2_1][OpType.NCCL_READ],
-                mock_graph[task_idx_2_1][OpType.COMPUTE],
-            )
-            _add_edge(
-                mock_graph[task_idx_1_1][OpType.NCCL_READ],
-                mock_graph[task_idx_1_1][OpType.COMPUTE],
-            )
             mock_actor_to_candidates = {
-                fake_actor_1: [mock_graph[task_idx_1_0][OpType.NCCL_WRITE]],
-                fake_actor_2: [mock_graph[task_idx_2_0][OpType.NCCL_WRITE]],
+                fake_actor_1: [mock_graph[task_idx_1_0]],
+                fake_actor_2: [mock_graph[task_idx_2_0]],
             }
 
             next_nodes = _select_next_nodes(mock_actor_to_candidates, mock_graph)
             assert len(next_nodes) == 2
-            assert next_nodes[0] == mock_graph[task_idx_1_0][OpType.NCCL_WRITE]
-            assert next_nodes[1] == mock_graph[task_idx_2_1][OpType.NCCL_READ]
+            assert set(next_nodes) == {
+                mock_graph[task_idx_1_0],
+                mock_graph[task_idx_2_1],
+            }
+
+            next_nodes = _select_next_nodes(mock_actor_to_candidates, mock_graph)
+            assert len(next_nodes) == 2
+            assert set(next_nodes) == {
+                mock_graph[task_idx_2_0],
+                mock_graph[task_idx_1_1],
+            }
+
+            next_nodes = _select_next_nodes(mock_actor_to_candidates, mock_graph)
+            assert next_nodes is None
 
     def test_only_one_nccl_collective(self, monkeypatch):
         """
@@ -283,37 +279,44 @@ class TestSelectNextNodes:
                |                            |
                -> fake_actor_2.allreduce_1 ->
         """
-        OpType = _DAGNodeOperationType
         monkeypatch.setattr(ActorHandle, "__init__", mock_actor_handle_init)
 
         fake_actor_1, task_idx_1, exec_task_idx_1 = ActorHandle("fake_actor_1"), 1, 0
         fake_actor_2, task_idx_2, exec_task_idx_2 = ActorHandle("fake_actor_2"), 2, 0
+        sync_group = MockSyncGroup([task_idx_1, task_idx_2], {task_idx_1, task_idx_2})
 
         mock_graph = {
             task_idx_1: generate_dag_graph_nodes(
-                exec_task_idx_1, task_idx_1, fake_actor_1, requires_nccl_collective=True
+                exec_task_idx_1,
+                task_idx_1,
+                fake_actor_1,
+                sync_group,
+                requires_nccl_collective=True,
             ),
             task_idx_2: generate_dag_graph_nodes(
-                exec_task_idx_2, task_idx_2, fake_actor_2, requires_nccl_collective=True
+                exec_task_idx_2,
+                task_idx_2,
+                fake_actor_2,
+                sync_group,
+                requires_nccl_collective=True,
             ),
         }
-        set_collective_idxs(mock_graph, [task_idx_1, task_idx_2])
-        set_ready_collective_idxs(mock_graph, [task_idx_1, task_idx_2])
 
         mock_actor_to_candidates = {
-            fake_actor_1: [mock_graph[task_idx_1][OpType.COMPUTE]],
+            fake_actor_1: [mock_graph[task_idx_1]],
+            fake_actor_2: [mock_graph[task_idx_2]],
         }
         next_nodes = _select_next_nodes(mock_actor_to_candidates, mock_graph)
         assert set(next_nodes) == {
-            mock_graph[task_idx_1][OpType.COMPUTE],
-            mock_graph[task_idx_2][OpType.COMPUTE],
+            mock_graph[task_idx_1],
+            mock_graph[task_idx_2],
         }
 
     def test_two_nccl_collectives(self, monkeypatch):
         """
         Simulate the case where there are two candidates that are NCCL collective
         operations. In this case, `_select_next_nodes` should return all the NCCL
-        collective nodes that are bond earlier.
+        collective nodes that are bound earlier.
 
         driver -> fake_actor_1.allreduce_1 -> driver
                |                            |
@@ -323,7 +326,6 @@ class TestSelectNextNodes:
                |                            |
                -> fake_actor_4.allreduce_2 ->
         """
-        OpType = _DAGNodeOperationType
         monkeypatch.setattr(ActorHandle, "__init__", mock_actor_handle_init)
 
         fake_actor_1, task_idx_1, exec_task_idx_1 = ActorHandle("fake_actor_1"), 1, 0
@@ -331,39 +333,60 @@ class TestSelectNextNodes:
         fake_actor_3, task_idx_3, exec_task_idx_3 = ActorHandle("fake_actor_3"), 3, 0
         fake_actor_4, task_idx_4, exec_task_idx_4 = ActorHandle("fake_actor_4"), 4, 0
 
+        sync_group_1 = MockSyncGroup([task_idx_1, task_idx_2], {task_idx_1, task_idx_2})
+        sync_group_2 = MockSyncGroup([task_idx_3, task_idx_4], {task_idx_3, task_idx_4})
+
         mock_graph = {
             task_idx_1: generate_dag_graph_nodes(
-                exec_task_idx_1, task_idx_1, fake_actor_1, requires_nccl_collective=True
+                exec_task_idx_1,
+                task_idx_1,
+                fake_actor_1,
+                sync_group_1,
+                requires_nccl_collective=True,
             ),
             task_idx_2: generate_dag_graph_nodes(
-                exec_task_idx_2, task_idx_2, fake_actor_2, requires_nccl_collective=True
+                exec_task_idx_2,
+                task_idx_2,
+                fake_actor_2,
+                sync_group_1,
+                requires_nccl_collective=True,
             ),
             task_idx_3: generate_dag_graph_nodes(
-                exec_task_idx_3, task_idx_3, fake_actor_3, requires_nccl_collective=True
+                exec_task_idx_3,
+                task_idx_3,
+                fake_actor_3,
+                sync_group_2,
+                requires_nccl_collective=True,
             ),
             task_idx_4: generate_dag_graph_nodes(
-                exec_task_idx_4, task_idx_4, fake_actor_4, requires_nccl_collective=True
+                exec_task_idx_4,
+                task_idx_4,
+                fake_actor_4,
+                sync_group_2,
+                requires_nccl_collective=True,
             ),
         }
-        set_collective_idxs(mock_graph, [task_idx_1, task_idx_2])
-        set_ready_collective_idxs(mock_graph, [task_idx_1, task_idx_2])
-        set_collective_idxs(mock_graph, [task_idx_3, task_idx_4])
-        set_ready_collective_idxs(mock_graph, [task_idx_3, task_idx_4])
-
         mock_actor_to_candidates = {
-            fake_actor_2: [mock_graph[task_idx_2][OpType.COMPUTE]],
-            fake_actor_4: [mock_graph[task_idx_4][OpType.COMPUTE]],
+            fake_actor_1: [mock_graph[task_idx_1]],
+            fake_actor_2: [],
+            fake_actor_3: [],
+            fake_actor_4: [mock_graph[task_idx_4]],
         }
+
         next_nodes = _select_next_nodes(mock_actor_to_candidates, mock_graph)
         assert set(next_nodes) == {
-            mock_graph[task_idx_1][OpType.COMPUTE],
-            mock_graph[task_idx_2][OpType.COMPUTE],
+            mock_graph[task_idx_1],
+            mock_graph[task_idx_2],
         }
+
         next_nodes = _select_next_nodes(mock_actor_to_candidates, mock_graph)
         assert set(next_nodes) == {
-            mock_graph[task_idx_3][OpType.COMPUTE],
-            mock_graph[task_idx_4][OpType.COMPUTE],
+            mock_graph[task_idx_3],
+            mock_graph[task_idx_4],
         }
+
+        next_nodes = _select_next_nodes(mock_actor_to_candidates, mock_graph)
+        assert next_nodes is None
 
 
 class TestBuildDAGNodeOperationGraph:
@@ -375,7 +398,7 @@ class TestBuildDAGNodeOperationGraph:
 
     def check_edge_between_compute_nodes(
         self,
-        graph: Dict[int, Dict[_DAGNodeOperationType, _DAGOperationGraphNode]],
+        graph: Dict[int, _DAGOperationGraphNode],
         task_idx_1: int,
         task_idx_2: int,
     ):
@@ -392,11 +415,10 @@ class TestBuildDAGNodeOperationGraph:
                 `bind_index` of the second task is equal to the `bind_index` of the
                 first task plus one.
         """
-        OpType = _DAGNodeOperationType
-        compute_node_1 = graph[task_idx_1][OpType.COMPUTE]
-        compute_node_2 = graph[task_idx_2][OpType.COMPUTE]
-        assert (task_idx_2, OpType.COMPUTE) in compute_node_1.out_edges
-        assert (task_idx_1, OpType.COMPUTE) in compute_node_2.in_edges
+        compute_node_1 = graph[task_idx_1]
+        compute_node_2 = graph[task_idx_2]
+        assert task_idx_2 in compute_node_1.out_edges
+        assert task_idx_1 in compute_node_2.in_edges
 
     def test_edge_between_writer_and_reader(self, monkeypatch):
         """
@@ -419,12 +441,8 @@ class TestBuildDAGNodeOperationGraph:
         idx_to_task[1].downstream_task_idxs = {2: fake_actor_2}
 
         actor_to_operation_nodes = {
-            fake_actor_1: [
-                list(generate_dag_graph_nodes(0, task_idx_1, fake_actor_1).values())
-            ],
-            fake_actor_2: [
-                list(generate_dag_graph_nodes(0, task_idx_2, fake_actor_2).values())
-            ],
+            fake_actor_1: [generate_dag_graph_nodes(0, task_idx_1, fake_actor_1)],
+            fake_actor_2: [generate_dag_graph_nodes(0, task_idx_2, fake_actor_2)],
         }
         graph = _build_dag_node_operation_graph(idx_to_task, actor_to_operation_nodes)
         assert len(graph) == 2
@@ -454,8 +472,8 @@ class TestBuildDAGNodeOperationGraph:
 
         actor_to_operation_nodes = {
             fake_actor: [
-                list(generate_dag_graph_nodes(0, task_idx_1, fake_actor).values()),
-                list(generate_dag_graph_nodes(1, task_idx_2, fake_actor).values()),
+                generate_dag_graph_nodes(0, task_idx_1, fake_actor),
+                generate_dag_graph_nodes(1, task_idx_2, fake_actor),
             ],
         }
         graph = _build_dag_node_operation_graph(idx_to_task, actor_to_operation_nodes)
@@ -492,12 +510,12 @@ class TestBuildDAGNodeOperationGraph:
 
         actor_to_operation_nodes = {
             fake_actor_1: [
-                list(generate_dag_graph_nodes(0, task_idx_1, fake_actor_1).values()),
-                list(generate_dag_graph_nodes(1, task_idx_3, fake_actor_1).values()),
+                generate_dag_graph_nodes(0, task_idx_1, fake_actor_1),
+                generate_dag_graph_nodes(1, task_idx_3, fake_actor_1),
             ],
             fake_actor_2: [
-                list(generate_dag_graph_nodes(0, task_idx_2, fake_actor_2).values()),
-                list(generate_dag_graph_nodes(1, task_idx_4, fake_actor_2).values()),
+                generate_dag_graph_nodes(0, task_idx_2, fake_actor_2),
+                generate_dag_graph_nodes(1, task_idx_4, fake_actor_2),
             ],
         }
         graph = _build_dag_node_operation_graph(idx_to_task, actor_to_operation_nodes)
@@ -513,31 +531,12 @@ class TestGenerateActorToExecutionSchedule:
     correct execution schedule for each actor.
     """
 
-    def add_edge_between_read_compute_write(
-        self, ops: Dict[_DAGNodeOperationType, _DAGOperationGraphNode]
-    ):
-        """
-        [CL]
-        Add edges between READ and COMPUTE, and between COMPUTE and WRITE operations
-        on the same actor.
-
-        Args:
-            operations: A dictionary where the key is the operation type and the value
-                is the operation node.
-        """
-        OpType = _DAGNodeOperationType
-        if OpType.NCCL_READ in ops:
-            _add_edge(ops[OpType.NCCL_READ], ops[OpType.COMPUTE])
-        if OpType.NCCL_WRITE in ops:
-            _add_edge(ops[OpType.COMPUTE], ops[OpType.NCCL_WRITE])
-
     def add_data_dependeny(
         self,
-        ops_writer: Dict[_DAGNodeOperationType, _DAGOperationGraphNode],
-        ops_reader: Dict[_DAGNodeOperationType, _DAGOperationGraphNode],
+        ops_writer: _DAGOperationGraphNode,
+        ops_reader: _DAGOperationGraphNode,
     ):
         """
-        [CL]
         Add a data dependency between the WRITE operation of the writer and the READ
         operation of the reader.
 
@@ -547,17 +546,12 @@ class TestGenerateActorToExecutionSchedule:
             reader_operations: A dictionary where the key is the operation type and the
                 value is the operation node of the reader.
         """
-        OpType = _DAGNodeOperationType
-        if OpType.NCCL_WRITE in ops_writer:
-            assert OpType.NCCL_READ in ops_reader
-            _add_edge(ops_writer[OpType.NCCL_WRITE], ops_reader[OpType.NCCL_READ])
-        else:
-            _add_edge(ops_writer[OpType.COMPUTE], ops_reader[OpType.COMPUTE])
+        _add_edge(ops_writer, ops_reader)
 
     def add_control_dependency(
         self,
-        ops_prev: Dict[_DAGNodeOperationType, _DAGOperationGraphNode],
-        ops_next: Dict[_DAGNodeOperationType, _DAGOperationGraphNode],
+        ops_prev: _DAGOperationGraphNode,
+        ops_next: _DAGOperationGraphNode,
     ):
         """
         Add a control dependency between the COMPUTE operation of the task with
@@ -570,8 +564,7 @@ class TestGenerateActorToExecutionSchedule:
             operations_2: A dictionary where the key is the operation type and the value
                 is the operation node of the task with bind_index i+1.
         """
-        OpType = _DAGNodeOperationType
-        _add_edge(ops_prev[OpType.COMPUTE], ops_next[OpType.COMPUTE])
+        _add_edge(ops_prev, ops_next)
 
     def test_single_actor_1(self, monkeypatch):
         """
@@ -582,7 +575,6 @@ class TestGenerateActorToExecutionSchedule:
         `bind_index` should be executed before the operations with larger
         `bind_index` on the same actor.
         """
-        OpType = _DAGNodeOperationType
         monkeypatch.setattr(ActorHandle, "__init__", mock_actor_handle_init)
 
         fake_actor = ActorHandle("fake_actor")
@@ -596,17 +588,15 @@ class TestGenerateActorToExecutionSchedule:
                 exec_task_idx_2, task_idx_2, fake_actor
             ),
         }
-        self.add_edge_between_read_compute_write(graph[task_idx_1])
-        self.add_edge_between_read_compute_write(graph[task_idx_2])
         self.add_data_dependeny(graph[task_idx_1], graph[task_idx_2])
         self.add_control_dependency(graph[task_idx_1], graph[task_idx_2])
 
-        actor_to_execution_schedule = _generate_actor_to_execution_schedule(graph)
+        actor_to_execution_schedule = _generate_and_extract_execution_schedule(graph)
         assert len(actor_to_execution_schedule) == 1
         assert len(actor_to_execution_schedule[fake_actor]) == 2
         assert actor_to_execution_schedule[fake_actor] == [
-            graph[task_idx_1][OpType.COMPUTE].op,
-            graph[task_idx_2][OpType.COMPUTE].op,
+            graph[task_idx_1].op,
+            graph[task_idx_2].op,
         ]
 
     def test_single_actor_2(self, monkeypatch):
@@ -620,7 +610,6 @@ class TestGenerateActorToExecutionSchedule:
         with the smaller `bind_index` should be selected first. That is,
         `task_idx_2.READ` should be selected first.
         """
-        OpType = _DAGNodeOperationType
         monkeypatch.setattr(ActorHandle, "__init__", mock_actor_handle_init)
 
         fake_actor = ActorHandle("fake_actor")
@@ -639,21 +628,18 @@ class TestGenerateActorToExecutionSchedule:
                 exec_task_idx_3, task_idx_3, fake_actor
             ),
         }
-        self.add_edge_between_read_compute_write(graph[task_idx_1])
-        self.add_edge_between_read_compute_write(graph[task_idx_2])
-        self.add_edge_between_read_compute_write(graph[task_idx_3])
         self.add_data_dependeny(graph[task_idx_1], graph[task_idx_2])
         self.add_data_dependeny(graph[task_idx_1], graph[task_idx_3])
         self.add_control_dependency(graph[task_idx_1], graph[task_idx_2])
         self.add_control_dependency(graph[task_idx_2], graph[task_idx_3])
 
-        actor_to_execution_schedule = _generate_actor_to_execution_schedule(graph)
+        actor_to_execution_schedule = _generate_and_extract_execution_schedule(graph)
         assert len(actor_to_execution_schedule) == 1
         assert len(actor_to_execution_schedule[fake_actor]) == 3
         assert actor_to_execution_schedule[fake_actor] == [
-            graph[task_idx_1][OpType.COMPUTE].op,
-            graph[task_idx_2][OpType.COMPUTE].op,
-            graph[task_idx_3][OpType.COMPUTE].op,
+            graph[task_idx_1].op,
+            graph[task_idx_2].op,
+            graph[task_idx_3].op,
         ]
 
     def test_two_actors_no_nccl(self, monkeypatch):
@@ -667,7 +653,6 @@ class TestGenerateActorToExecutionSchedule:
         `bind_index` should be executed before the operations with larger
         `bind_index` on the same actor.
         """
-        OpType = _DAGNodeOperationType
         monkeypatch.setattr(ActorHandle, "__init__", mock_actor_handle_init)
 
         fake_actor_1 = ActorHandle("fake_actor_1")
@@ -680,39 +665,35 @@ class TestGenerateActorToExecutionSchedule:
 
         graph = {
             task_idx_1_1: generate_dag_graph_nodes(
-                exec_task_idx_1_1, task_idx_1_1, fake_actor_1, False
+                exec_task_idx_1_1, task_idx_1_1, fake_actor_1
             ),
             task_idx_2_1: generate_dag_graph_nodes(
-                exec_task_idx_2_1, task_idx_2_1, fake_actor_2, False
+                exec_task_idx_2_1, task_idx_2_1, fake_actor_2
             ),
             task_idx_2_2: generate_dag_graph_nodes(
-                exec_task_idx_2_2, task_idx_2_2, fake_actor_2, False
+                exec_task_idx_2_2, task_idx_2_2, fake_actor_2
             ),
             task_idx_1_2: generate_dag_graph_nodes(
-                exec_task_idx_1_2, task_idx_1_2, fake_actor_1, False
+                exec_task_idx_1_2, task_idx_1_2, fake_actor_1
             ),
         }
-        self.add_edge_between_read_compute_write(graph[task_idx_1_1])
-        self.add_edge_between_read_compute_write(graph[task_idx_1_2])
-        self.add_edge_between_read_compute_write(graph[task_idx_2_1])
-        self.add_edge_between_read_compute_write(graph[task_idx_2_2])
         self.add_data_dependeny(graph[task_idx_1_1], graph[task_idx_2_2])
         self.add_data_dependeny(graph[task_idx_2_1], graph[task_idx_1_2])
         self.add_control_dependency(graph[task_idx_1_1], graph[task_idx_1_2])
         self.add_control_dependency(graph[task_idx_2_1], graph[task_idx_2_2])
 
-        actor_to_execution_schedule = _generate_actor_to_execution_schedule(graph)
+        actor_to_execution_schedule = _generate_and_extract_execution_schedule(graph)
         assert len(actor_to_execution_schedule) == 2
         assert len(actor_to_execution_schedule[fake_actor_1]) == 2
         assert len(actor_to_execution_schedule[fake_actor_2]) == 2
 
         assert actor_to_execution_schedule[fake_actor_1] == [
-            graph[task_idx_1_1][OpType.COMPUTE].op,
-            graph[task_idx_1_2][OpType.COMPUTE].op,
+            graph[task_idx_1_1].op,
+            graph[task_idx_1_2].op,
         ]
         assert actor_to_execution_schedule[fake_actor_2] == [
-            graph[task_idx_2_1][OpType.COMPUTE].op,
-            graph[task_idx_2_2][OpType.COMPUTE].op,
+            graph[task_idx_2_1].op,
+            graph[task_idx_2_2].op,
         ]
 
     def test_two_actors_with_nccl(self, monkeypatch):
@@ -725,7 +706,6 @@ class TestGenerateActorToExecutionSchedule:
         using NCCL. When the task_idx_1.WRITE operation is picked, the task_idx_2.READ
         operation is also added to the execution schedule because of the NCCL operation.
         """
-        OpType = _DAGNodeOperationType
         monkeypatch.setattr(ActorHandle, "__init__", mock_actor_handle_init)
 
         fake_actor_1 = ActorHandle("fake_actor_1")
@@ -736,47 +716,54 @@ class TestGenerateActorToExecutionSchedule:
         task_idx_2_1, exec_task_idx_2_1 = 2, 0
         task_idx_2_2, exec_task_idx_2_2 = 3, 1
 
+        sync_group_1 = MockSyncGroup([task_idx_1_1, task_idx_2_2])
+        sync_group_2 = MockSyncGroup([task_idx_2_1, task_idx_1_2])
+
         graph = {
             task_idx_1_1: generate_dag_graph_nodes(
-                exec_task_idx_1_1, task_idx_1_1, fake_actor_1, requires_nccl_write=True
+                exec_task_idx_1_1,
+                task_idx_1_1,
+                fake_actor_1,
+                sync_group_1,
+                requires_nccl_write=True,
             ),
             task_idx_2_1: generate_dag_graph_nodes(
-                exec_task_idx_2_1, task_idx_2_1, fake_actor_2, requires_nccl_write=True
+                exec_task_idx_2_1,
+                task_idx_2_1,
+                fake_actor_2,
+                sync_group_2,
+                requires_nccl_write=True,
             ),
             task_idx_2_2: generate_dag_graph_nodes(
-                exec_task_idx_2_2, task_idx_2_2, fake_actor_2, requires_nccl_read=True
+                exec_task_idx_2_2,
+                task_idx_2_2,
+                fake_actor_2,
+                sync_group_1,
+                requires_nccl_read=True,
             ),
             task_idx_1_2: generate_dag_graph_nodes(
-                exec_task_idx_1_2, task_idx_1_2, fake_actor_1, requires_nccl_read=True
+                exec_task_idx_1_2,
+                task_idx_1_2,
+                fake_actor_1,
+                sync_group_2,
+                requires_nccl_read=True,
             ),
         }
-        self.add_edge_between_read_compute_write(graph[task_idx_1_1])
-        self.add_edge_between_read_compute_write(graph[task_idx_1_2])
-        self.add_edge_between_read_compute_write(graph[task_idx_2_1])
-        self.add_edge_between_read_compute_write(graph[task_idx_2_2])
-        self.add_data_dependeny(graph[task_idx_1_1], graph[task_idx_2_2])
-        self.add_data_dependeny(graph[task_idx_2_1], graph[task_idx_1_2])
-        self.add_control_dependency(graph[task_idx_1_1], graph[task_idx_1_2])
-        self.add_control_dependency(graph[task_idx_2_1], graph[task_idx_2_2])
 
-        actor_to_execution_schedule = _generate_actor_to_execution_schedule(graph)
+        actor_to_execution_schedule = _generate_and_extract_execution_schedule(graph)
         assert len(actor_to_execution_schedule) == 2
-        assert len(actor_to_execution_schedule[fake_actor_1]) == 4
-        assert len(actor_to_execution_schedule[fake_actor_2]) == 4
+        assert len(actor_to_execution_schedule[fake_actor_1]) == 2
+        assert len(actor_to_execution_schedule[fake_actor_2]) == 2
 
         assert actor_to_execution_schedule[fake_actor_1] == [
-            graph[task_idx_1_1][OpType.COMPUTE].op,
-            graph[task_idx_1_1][OpType.NCCL_WRITE].op,
-            graph[task_idx_1_2][OpType.NCCL_READ].op,
-            graph[task_idx_1_2][OpType.COMPUTE].op,
+            graph[task_idx_1_1].op,
+            graph[task_idx_1_2].op,
         ]
         assert actor_to_execution_schedule[fake_actor_2] == [
-            graph[task_idx_2_1][OpType.COMPUTE].op,
             # The order of `task_idx_2_2.NCCL_READ` and `task_idx_2_2.COMPUTE`
             # is important.
-            graph[task_idx_2_2][OpType.NCCL_READ].op,
-            graph[task_idx_2_1][OpType.NCCL_WRITE].op,
-            graph[task_idx_2_2][OpType.COMPUTE].op,
+            graph[task_idx_2_2].op,
+            graph[task_idx_2_1].op,
         ]
 
     def test_simulate_pp_2workers_2batches_1f1b_no_nccl(self, monkeypatch):
@@ -791,7 +778,6 @@ class TestGenerateActorToExecutionSchedule:
         `bind_index` should be executed before the operations with larger
         `bind_index` on the same actor.
         """
-        OpType = _DAGNodeOperationType
         monkeypatch.setattr(ActorHandle, "__init__", mock_actor_handle_init)
 
         worker_1 = ActorHandle("worker_1")
@@ -832,14 +818,6 @@ class TestGenerateActorToExecutionSchedule:
                 exec_task_idx_2_4, task_idx_2_4, worker_2
             ),
         }
-        self.add_edge_between_read_compute_write(graph[task_idx_1_1])
-        self.add_edge_between_read_compute_write(graph[task_idx_1_2])
-        self.add_edge_between_read_compute_write(graph[task_idx_1_3])
-        self.add_edge_between_read_compute_write(graph[task_idx_1_4])
-        self.add_edge_between_read_compute_write(graph[task_idx_2_1])
-        self.add_edge_between_read_compute_write(graph[task_idx_2_2])
-        self.add_edge_between_read_compute_write(graph[task_idx_2_3])
-        self.add_edge_between_read_compute_write(graph[task_idx_2_4])
         self.add_data_dependeny(graph[task_idx_1_1], graph[task_idx_2_1])
         self.add_data_dependeny(graph[task_idx_2_1], graph[task_idx_2_2])
         self.add_data_dependeny(graph[task_idx_2_2], graph[task_idx_1_3])
@@ -853,21 +831,21 @@ class TestGenerateActorToExecutionSchedule:
         self.add_control_dependency(graph[task_idx_2_2], graph[task_idx_2_3])
         self.add_control_dependency(graph[task_idx_2_3], graph[task_idx_2_4])
 
-        actor_to_execution_schedule = _generate_actor_to_execution_schedule(graph)
+        actor_to_execution_schedule = _generate_and_extract_execution_schedule(graph)
         assert len(actor_to_execution_schedule) == 2
         assert len(actor_to_execution_schedule[worker_1]) == 4
         assert len(actor_to_execution_schedule[worker_2]) == 4
         assert actor_to_execution_schedule[worker_1] == [
-            graph[task_idx_1_1][OpType.COMPUTE].op,
-            graph[task_idx_1_2][OpType.COMPUTE].op,
-            graph[task_idx_1_3][OpType.COMPUTE].op,
-            graph[task_idx_1_4][OpType.COMPUTE].op,
+            graph[task_idx_1_1].op,
+            graph[task_idx_1_2].op,
+            graph[task_idx_1_3].op,
+            graph[task_idx_1_4].op,
         ]
         assert actor_to_execution_schedule[worker_2] == [
-            graph[task_idx_2_1][OpType.COMPUTE].op,
-            graph[task_idx_2_2][OpType.COMPUTE].op,
-            graph[task_idx_2_3][OpType.COMPUTE].op,
-            graph[task_idx_2_4][OpType.COMPUTE].op,
+            graph[task_idx_2_1].op,
+            graph[task_idx_2_2].op,
+            graph[task_idx_2_3].op,
+            graph[task_idx_2_4].op,
         ]
 
     def test_simulate_pp_2workers_2batches_1f1b_with_nccl(self, monkeypatch):
@@ -875,97 +853,241 @@ class TestGenerateActorToExecutionSchedule:
         This test simulates a simple 1F1B pipeline parallelism for training with
         2 workers and 2 batches.
 
-        w1: fwd_b1  fwd_b2          bwd_b1          bwd_b2
-        w2:         fwd_b1  bwd_b1  fwd_b2  bwd_b2
+        w1: fwd_b1 send fwd_b2 send   recv bwd_b1             recv bwd_b2
+        w2:        recv fwd_b1 bwd_b1 send recv fwd_b2 bwd_b2 send
 
         The communication between workers is done using NCCL. The communication
         within the worker actor is done using IntraProcessChannel.
         """
-        OpType = _DAGNodeOperationType
         monkeypatch.setattr(ActorHandle, "__init__", mock_actor_handle_init)
 
         worker_1 = ActorHandle("worker_1")
-        task_idx_1_1, exec_task_idx_1_1 = 1, 0
-        task_idx_1_2, exec_task_idx_1_2 = 2, 1
-        task_idx_1_3, exec_task_idx_1_3 = 3, 2
-        task_idx_1_4, exec_task_idx_1_4 = 4, 3
+        task_idx_1_1, exec_task_idx_1_1 = 1, 4
+        task_idx_1_3, exec_task_idx_1_3 = 2, 5
+        task_idx_1_6, exec_task_idx_1_6 = 3, 6
+        task_idx_1_8, exec_task_idx_1_8 = 4, 7
+        # worker 1 NCCL P2P operations.
+        task_idx_1_2, exec_task_idx_1_2 = 9, 0
+        task_idx_1_4, exec_task_idx_1_4 = 10, 1
+        task_idx_1_5, exec_task_idx_1_5 = 11, 2
+        task_idx_1_7, exec_task_idx_1_7 = 12, 3
         worker_2 = ActorHandle("worker_2")
-        task_idx_2_1, exec_task_idx_2_1 = 5, 0
-        task_idx_2_2, exec_task_idx_2_2 = 6, 1
-        task_idx_2_3, exec_task_idx_2_3 = 7, 2
-        task_idx_2_4, exec_task_idx_2_4 = 8, 3
+        task_idx_2_2, exec_task_idx_2_2 = 5, 4
+        task_idx_2_3, exec_task_idx_2_3 = 6, 5
+        task_idx_2_6, exec_task_idx_2_6 = 7, 6
+        task_idx_2_7, exec_task_idx_2_7 = 8, 7
+        # worker 2 NCCL P2P operations.
+        task_idx_2_1, exec_task_idx_2_1 = 13, 0
+        task_idx_2_4, exec_task_idx_2_4 = 14, 1
+        task_idx_2_5, exec_task_idx_2_5 = 15, 2
+        task_idx_2_8, exec_task_idx_2_8 = 16, 3
+
+        sync_group_1 = MockSyncGroup([task_idx_1_2, task_idx_2_1])
+        sync_group_2 = MockSyncGroup([task_idx_1_4, task_idx_2_5])
+        sync_group_3 = MockSyncGroup([task_idx_2_4, task_idx_1_5])
+        sync_group_4 = MockSyncGroup([task_idx_2_8, task_idx_1_7])
+
         graph = {
             task_idx_1_1: generate_dag_graph_nodes(
-                exec_task_idx_1_1, task_idx_1_1, worker_1, requires_nccl_write=True
-            ),
-            task_idx_1_2: generate_dag_graph_nodes(
-                exec_task_idx_1_2, task_idx_1_2, worker_1, requires_nccl_write=True
+                exec_task_idx_1_1,
+                task_idx_1_1,
+                worker_1,
             ),
             task_idx_1_3: generate_dag_graph_nodes(
-                exec_task_idx_1_3, task_idx_1_3, worker_1, requires_nccl_read=True
+                exec_task_idx_1_3,
+                task_idx_1_3,
+                worker_1,
             ),
-            task_idx_1_4: generate_dag_graph_nodes(
-                exec_task_idx_1_4, task_idx_1_4, worker_1, requires_nccl_read=True
+            task_idx_1_6: generate_dag_graph_nodes(
+                exec_task_idx_1_6,
+                task_idx_1_6,
+                worker_1,
             ),
-            task_idx_2_1: generate_dag_graph_nodes(
-                exec_task_idx_2_1, task_idx_2_1, worker_2, requires_nccl_read=True
+            task_idx_1_8: generate_dag_graph_nodes(
+                exec_task_idx_1_8,
+                task_idx_1_8,
+                worker_1,
             ),
             task_idx_2_2: generate_dag_graph_nodes(
-                exec_task_idx_2_2, task_idx_2_2, worker_2, requires_nccl_write=True
+                exec_task_idx_2_2,
+                task_idx_2_2,
+                worker_2,
             ),
             task_idx_2_3: generate_dag_graph_nodes(
-                exec_task_idx_2_3, task_idx_2_3, worker_2, requires_nccl_read=True
+                exec_task_idx_2_3,
+                task_idx_2_3,
+                worker_2,
+            ),
+            task_idx_2_6: generate_dag_graph_nodes(
+                exec_task_idx_2_6,
+                task_idx_2_6,
+                worker_2,
+            ),
+            task_idx_2_7: generate_dag_graph_nodes(
+                exec_task_idx_2_7,
+                task_idx_2_7,
+                worker_2,
+            ),
+            task_idx_1_2: generate_dag_graph_nodes(
+                exec_task_idx_1_2,
+                task_idx_1_2,
+                worker_1,
+                sync_group_1,
+                requires_nccl_write=True,
+            ),
+            task_idx_1_4: generate_dag_graph_nodes(
+                exec_task_idx_1_4,
+                task_idx_1_4,
+                worker_1,
+                sync_group_2,
+                requires_nccl_write=True,
+            ),
+            task_idx_1_5: generate_dag_graph_nodes(
+                exec_task_idx_1_5,
+                task_idx_1_5,
+                worker_1,
+                sync_group_3,
+                requires_nccl_read=True,
+            ),
+            task_idx_1_7: generate_dag_graph_nodes(
+                exec_task_idx_1_7,
+                task_idx_1_7,
+                worker_1,
+                sync_group_4,
+                requires_nccl_read=True,
+            ),
+            task_idx_2_1: generate_dag_graph_nodes(
+                exec_task_idx_2_1,
+                task_idx_2_1,
+                worker_2,
+                sync_group_1,
+                requires_nccl_read=True,
             ),
             task_idx_2_4: generate_dag_graph_nodes(
-                exec_task_idx_2_4, task_idx_2_4, worker_2, requires_nccl_write=True
+                exec_task_idx_2_4,
+                task_idx_2_4,
+                worker_2,
+                sync_group_3,
+                requires_nccl_write=True,
+            ),
+            task_idx_2_5: generate_dag_graph_nodes(
+                exec_task_idx_2_5,
+                task_idx_2_5,
+                worker_2,
+                sync_group_2,
+                requires_nccl_read=True,
+            ),
+            task_idx_2_8: generate_dag_graph_nodes(
+                exec_task_idx_2_8,
+                task_idx_2_8,
+                worker_2,
+                sync_group_4,
+                requires_nccl_write=True,
             ),
         }
-        self.add_edge_between_read_compute_write(graph[task_idx_1_1])
-        self.add_edge_between_read_compute_write(graph[task_idx_1_2])
-        self.add_edge_between_read_compute_write(graph[task_idx_1_3])
-        self.add_edge_between_read_compute_write(graph[task_idx_1_4])
-        self.add_edge_between_read_compute_write(graph[task_idx_2_1])
-        self.add_edge_between_read_compute_write(graph[task_idx_2_2])
-        self.add_edge_between_read_compute_write(graph[task_idx_2_3])
-        self.add_edge_between_read_compute_write(graph[task_idx_2_4])
-        self.add_data_dependeny(graph[task_idx_1_1], graph[task_idx_2_1])
+        self.add_data_dependeny(graph[task_idx_1_1], graph[task_idx_1_2])
+        self.add_data_dependeny(graph[task_idx_1_3], graph[task_idx_1_4])
+        self.add_data_dependeny(graph[task_idx_1_5], graph[task_idx_1_6])
+        self.add_data_dependeny(graph[task_idx_1_7], graph[task_idx_1_8])
         self.add_data_dependeny(graph[task_idx_2_1], graph[task_idx_2_2])
-        self.add_data_dependeny(graph[task_idx_2_2], graph[task_idx_1_3])
-        self.add_data_dependeny(graph[task_idx_1_2], graph[task_idx_2_3])
         self.add_data_dependeny(graph[task_idx_2_3], graph[task_idx_2_4])
-        self.add_data_dependeny(graph[task_idx_2_4], graph[task_idx_1_4])
-        self.add_control_dependency(graph[task_idx_1_1], graph[task_idx_1_2])
-        self.add_control_dependency(graph[task_idx_1_2], graph[task_idx_1_3])
-        self.add_control_dependency(graph[task_idx_1_3], graph[task_idx_1_4])
-        self.add_control_dependency(graph[task_idx_2_1], graph[task_idx_2_2])
+        self.add_data_dependeny(graph[task_idx_2_5], graph[task_idx_2_6])
+        self.add_data_dependeny(graph[task_idx_2_7], graph[task_idx_2_8])
+        self.add_control_dependency(graph[task_idx_1_1], graph[task_idx_1_3])
+        self.add_control_dependency(graph[task_idx_1_3], graph[task_idx_1_6])
+        self.add_control_dependency(graph[task_idx_1_6], graph[task_idx_1_8])
         self.add_control_dependency(graph[task_idx_2_2], graph[task_idx_2_3])
-        self.add_control_dependency(graph[task_idx_2_3], graph[task_idx_2_4])
+        self.add_control_dependency(graph[task_idx_2_3], graph[task_idx_2_6])
+        self.add_control_dependency(graph[task_idx_2_6], graph[task_idx_2_7])
 
-        actor_to_execution_schedule = _generate_actor_to_execution_schedule(graph)
+        actor_to_execution_schedule = _generate_and_extract_execution_schedule(graph)
         assert len(actor_to_execution_schedule) == 2
         assert len(actor_to_execution_schedule[worker_1]) == 8
         assert len(actor_to_execution_schedule[worker_2]) == 8
         assert actor_to_execution_schedule[worker_1] == [
-            graph[task_idx_1_1][OpType.COMPUTE].op,
-            graph[task_idx_1_1][OpType.NCCL_WRITE].op,
-            graph[task_idx_1_2][OpType.COMPUTE].op,
-            graph[task_idx_1_2][OpType.NCCL_WRITE].op,
-            graph[task_idx_1_3][OpType.NCCL_READ].op,
-            graph[task_idx_1_3][OpType.COMPUTE].op,
-            graph[task_idx_1_4][OpType.NCCL_READ].op,
-            graph[task_idx_1_4][OpType.COMPUTE].op,
+            graph[task_idx_1_1].op,
+            graph[task_idx_1_2].op,
+            graph[task_idx_1_3].op,
+            graph[task_idx_1_4].op,
+            graph[task_idx_1_5].op,
+            graph[task_idx_1_6].op,
+            graph[task_idx_1_7].op,
+            graph[task_idx_1_8].op,
         ]
         assert actor_to_execution_schedule[worker_2] == [
-            graph[task_idx_2_1][OpType.NCCL_READ].op,
-            graph[task_idx_2_1][OpType.COMPUTE].op,
-            graph[task_idx_2_2][OpType.COMPUTE].op,
+            graph[task_idx_2_1].op,
+            graph[task_idx_2_2].op,
+            graph[task_idx_2_3].op,
             # The order of `task_idx_2_3.NCCL_READ` and `task_idx_2_2.NCCL_WRITE`
             # is important.
-            graph[task_idx_2_3][OpType.NCCL_READ].op,
-            graph[task_idx_2_2][OpType.NCCL_WRITE].op,
-            graph[task_idx_2_3][OpType.COMPUTE].op,
-            graph[task_idx_2_4][OpType.COMPUTE].op,
-            graph[task_idx_2_4][OpType.NCCL_WRITE].op,
+            graph[task_idx_2_5].op,
+            graph[task_idx_2_4].op,
+            graph[task_idx_2_6].op,
+            graph[task_idx_2_7].op,
+            graph[task_idx_2_8].op,
+        ]
+
+    def test_two_nccl_collectives(self, monkeypatch):
+        """
+        Simulate the case where there are two NCCL collective operations, one after
+        the another.
+
+        driver -> fake_actor_1.allreduce_1 -> fake_actor_1.allreduce_2 -> driver
+               |                            |                           |
+               -> fake_actor_2.allreduce_1 -> fake_actor_2.allreduce_2 ->
+        """
+        monkeypatch.setattr(ActorHandle, "__init__", mock_actor_handle_init)
+
+        fake_actor_1 = ActorHandle("fake_actor_1")
+        task_idx_1, exec_task_idx_1 = 1, 0
+        task_idx_3, exec_task_idx_3 = 3, 1
+        fake_actor_2 = ActorHandle("fake_actor_2")
+        task_idx_2, exec_task_idx_2 = 2, 0
+        task_idx_4, exec_task_idx_4 = 4, 1
+
+        sync_group_1 = MockSyncGroup([task_idx_1, task_idx_2])
+        sync_group_2 = MockSyncGroup([task_idx_3, task_idx_4])
+
+        graph = {
+            task_idx_1: generate_dag_graph_nodes(
+                exec_task_idx_1,
+                task_idx_1,
+                fake_actor_1,
+                sync_group_1,
+                requires_nccl_collective=True,
+            ),
+            task_idx_2: generate_dag_graph_nodes(
+                exec_task_idx_2,
+                task_idx_2,
+                fake_actor_2,
+                sync_group_1,
+                requires_nccl_collective=True,
+            ),
+            task_idx_3: generate_dag_graph_nodes(
+                exec_task_idx_3,
+                task_idx_3,
+                fake_actor_1,
+                sync_group_2,
+                requires_nccl_collective=True,
+            ),
+            task_idx_4: generate_dag_graph_nodes(
+                exec_task_idx_4,
+                task_idx_4,
+                fake_actor_2,
+                sync_group_2,
+                requires_nccl_collective=True,
+            ),
+        }
+
+        actor_to_execution_schedule = _generate_and_extract_execution_schedule(graph)
+        assert len(actor_to_execution_schedule) == 2
+        assert actor_to_execution_schedule[fake_actor_1] == [
+            graph[task_idx_1].op,
+            graph[task_idx_3].op,
+        ]
+        assert actor_to_execution_schedule[fake_actor_2] == [
+            graph[task_idx_2].op,
+            graph[task_idx_4].op,
         ]
 
 

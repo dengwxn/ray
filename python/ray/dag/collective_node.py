@@ -8,7 +8,8 @@ from ray.dag import (
     DAGNode,
     ClassMethodNode,
 )
-from ray.dag.constants import COLLECTIVE_OPERATION_KEY
+from ray.dag.constants import COLLECTIVE_GROUP_KEY
+from ray.dag.sync_group import _SynchronousGroup
 from ray.experimental.channel import ChannelContext
 from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
 from ray.experimental.channel.torch_tensor_type import GPUCommunicator, TorchTensorType
@@ -16,9 +17,9 @@ from ray.experimental.util.types import _CollectiveOp, ReduceOp
 from ray.util.annotations import DeveloperAPI
 
 
-class _CollectiveOperation:
+class _CollectiveGroup(_SynchronousGroup):
     """
-    Represent metadata for a NCCL collective operation.
+    Represent metadata for a group of actors in a NCCL collective operation.
 
     Args:
         input_nodes: A list of input nodes to the collective operation.
@@ -37,14 +38,15 @@ class _CollectiveOperation:
         op: _CollectiveOp,
         transport: Optional[Union[str, GPUCommunicator]] = None,
     ):
-        self._input_nodes: List[DAGNode] = input_nodes
-        if len(self._input_nodes) == 0:
+        super().__init__()
+
+        if len(input_nodes) == 0:
             raise ValueError("Expected input nodes for a collective operation")
-        if len(set(self._input_nodes)) != len(self._input_nodes):
+        if len(set(input_nodes)) != len(input_nodes):
             raise ValueError("Expected unique input nodes for a collective operation")
 
         self._actor_handles: List["ray.actor.ActorHandle"] = []
-        for input_node in self._input_nodes:
+        for input_node in input_nodes:
             actor_handle = input_node._get_actor_handle()
             if actor_handle is None:
                 raise ValueError("Expected an actor handle from the input node")
@@ -52,7 +54,7 @@ class _CollectiveOperation:
         if len(set(self._actor_handles)) != len(self._actor_handles):
             invalid_input_nodes = [
                 input_node
-                for input_node in self._input_nodes
+                for input_node in input_nodes
                 if self._actor_handles.count(input_node._get_actor_handle()) > 1
             ]
             raise ValueError(
@@ -76,7 +78,6 @@ class _CollectiveOperation:
     def __str__(self) -> str:
         return (
             f"CollectiveGroup("
-            f"_input_nodes={self._input_nodes}, "
             f"_actor_handles={self._actor_handles}, "
             f"_op={self._op}, "
             f"_type_hint={self._type_hint})"
@@ -161,11 +162,11 @@ class CollectiveOutputNode(ClassMethodNode):
             raise ValueError("Expected a single input node")
         self._input_node = method_args[0]
         # Parse the collective operation.
-        self._collective_op: _CollectiveOperation = other_args_to_resolve.get(
-            COLLECTIVE_OPERATION_KEY, None
+        self._collective_group: _CollectiveGroup = other_args_to_resolve.get(
+            COLLECTIVE_GROUP_KEY, None
         )
-        if self._collective_op is None:
-            raise ValueError("Expected a collective operation")
+        if self._collective_group is None:
+            raise ValueError("Expected a collective group")
         self.set_requires_nccl_collective(True)
 
     def _copy_impl(
@@ -189,5 +190,9 @@ class CollectiveOutputNode(ClassMethodNode):
         )
 
     @property
-    def collective_op(self) -> _CollectiveOperation:
-        return self._collective_op
+    def collective_group(self) -> _CollectiveGroup:
+        return self._collective_group
+
+    @property
+    def sync_group(self) -> _CollectiveGroup:
+        return self._collective_group

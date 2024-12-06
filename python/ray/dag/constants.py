@@ -4,10 +4,15 @@ import os
 PARENT_CLASS_NODE_KEY = "parent_class_node"
 PREV_CLASS_METHOD_CALL_KEY = "prev_class_method_call"
 BIND_INDEX_KEY = "bind_index"
+WRITE_BIND_INDEX_INCREMENT = 0.3
+READ_BIND_INDEX_DECREMENT = 0.3
 IS_CLASS_METHOD_OUTPUT_KEY = "is_class_method_output"
 
+# Reserved keys used to handle NCCL P2P send/recv nodes in Ray DAG building.
+P2P_GROUP_KEY = "p2p_group"
+
 # Reserved keys used to handle CollectiveOutputNode in Ray DAG building.
-COLLECTIVE_OPERATION_KEY = "collective_operation"
+COLLECTIVE_GROUP_KEY = "collective_operation"
 
 # Reserved key to distinguish DAGNode type and avoid collision with user dict.
 DAGNODE_TYPE_KEY = "__dag_node_type__"
@@ -19,3 +24,6 @@ RAY_ADAG_ENABLE_DETECT_DEADLOCK = (
 
 # Feature flag to turn on profiling.
 RAY_ADAG_ENABLE_PROFILING = os.environ.get("RAY_ADAG_ENABLE_PROFILING", "0") == "1"
+
+# Feature flag to turn on visualization of the execution schedule.
+RAY_ADAG_VISUALIZE_SCHEDULE = os.environ.get("RAY_ADAG_VISUALIZE_SCHEDULE", "0") == "1"

@@ -4,7 +4,17 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Tuple, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    NamedTuple,
+    Optional,
+    Tuple,
+    Union,
+)
 
 import ray
 import ray.exceptions
@@ -20,17 +30,18 @@ if TYPE_CHECKING:
     import torch
 
 
-def retry_and_check_interpreter_exit(f) -> bool:
+def retry_and_check_interpreter_exit(f: Callable[[], None]) -> bool:
     """This function is only useful when f contains channel read/write.
 
     Keep retrying channel read/write inside `f` and check if interpreter exits.
     It is important in case the read/write happens in a separate thread pool.
     See https://github.com/ray-project/ray/pull/47702
+
+    f should a function that doesn't receive any input and return nothing.
     """
     exiting = False
     while True:
         try:
-            # results.append(c.read(timeout=1))
             f()
             break
         except ray.exceptions.RayChannelTimeoutError:
@@ -110,6 +121,7 @@ class ChannelOutputType:
 class ChannelContext:
     serialization_context = _SerializationContext()
     _torch_device: Optional["torch.device"] = None
+    _current_stream: Optional["torch.cuda.Stream"] = None
 
     def __init__(self):
         # Used for the torch.Tensor NCCL transport.
