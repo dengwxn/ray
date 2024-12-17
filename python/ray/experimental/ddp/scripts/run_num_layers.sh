@@ -1,23 +1,33 @@
 #!/bin/bash
 
-mkdir -p results/num-layers
+if [[ "$(pwd)" != */python/ray/experimental/ddp ]]; then
+    echo "Please run in the python/ray/experimental/ddp directory"
+    exit 1
+fi
 
-layer_size=1280
+export RAY_DEDUP_LOGS=0
+
 dtype=float32
-num_iters=10
-learning_rate=5e-4
-num_actors=2
+layer_size=1280
+num_layers=(
+    1 2 3 4 6 8 12 16 24 32 48 64
+)
 
-num_layers=(1 2 3 4 6 8 12 16 24 32 48 64)
+learning_rate=1e-5
+num_actors=2
+num_iters=10
+
+output_path=results/num-layers
+mkdir -p $output_path
+
 for num_layer in ${num_layers[@]}; do
-    RAY_DEDUP_LOGS=0 \
-        python3 ddp.py \
-        --num-layers $num_layer \
-        --layer-size $layer_size \
+    python3 -m ray.experimental.ddp.src.ddp \
         --dtype $dtype \
-        --num-iters $num_iters \
+        --layer-size $layer_size \
+        --num-layers $num_layer \
         --learning-rate $learning_rate \
         --num-actors $num_actors \
-        --output-file results/num-layers/lat_$num_layer.csv \
-        >results/num-layers/run_$num_layer.log 2>&1
+        --num-iters $num_iters \
+        --output-path $output_path/latency_$num_layer.csv \
+        >$output_path/run_$num_layer.log 2>&1
 done
