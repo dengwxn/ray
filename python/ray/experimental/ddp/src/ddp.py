@@ -42,8 +42,8 @@ def run_torch(config: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
     """
 
     # To ensure that the model parameters are initialized in the same way across
-    # different training methods (PyTorch without DDP, PyTorch with DDP, and Ray
-    # with DDP), the model must be initialized on GPU.
+    # different training methods (Torch, Torch DDP, Ray DDP), the model must be
+    # initialized on GPU.
     device = "cuda:0"
     model = LayeredModel(
         config.layer_size,
@@ -343,7 +343,7 @@ def main(config: Config) -> None:
             torch_ddp_weights,
             "ray ddp vs torch ddp",
         )
-    with open(config.output_file, "w") as file:
+    with open(config.output_path, "w") as file:
         file.write("ray-ddp,torch,torch-ddp\n")
         file.write(f"{ray_ddp_elapse},{torch_elapse},{torch_ddp_elapse}\n")
 

@@ -1,23 +1,29 @@
 #!/bin/bash
 
-result=results/correctness
-num_layers=2
-layer_size=1024
+if [[ "$(pwd)" != */python/ray/experimental/ddp ]]; then
+    echo "Please run this script from the python/ray/experimental/ddp directory"
+    exit 1
+fi
+
 dtype=float32
-num_iters=10
+layer_size=1024
+num_layers=2
+
 learning_rate=5e-4
+num_iters=10
 num_actors=2
 
-mkdir -p $result
+output_path=results/correctness
+mkdir -p $output_path
 
 RAY_DEDUP_LOGS=0 \
     python -m ray.experimental.ddp.src.ddp \
     --dtype $dtype \
-    --num-actors $num_actors \
-    --num-layers $num_layers \
     --layer-size $layer_size \
-    --num-iters $num_iters \
+    --num-layers $num_layers \
     --learning-rate $learning_rate \
-    --output-file $result/latency.csv \
+    --num-iters $num_iters \
+    --num-actors $num_actors \
+    --output-path $output_path/latency.csv \
     --check-correctness \
-    >$result/run.log 2>&1
+    >$output_path/run.log 2>&1

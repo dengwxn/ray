@@ -10,17 +10,17 @@ class Config:
 
     # Model config.
     dtype: torch.dtype
-    num_layers: int
     # The layer is a square (n * n).
     layer_size: int
+    num_layers: int
 
     # Training config.
-    num_iters: int
     learning_rate: float
     num_actors: int
+    num_iters: int
 
-    # Output file path.
-    output_file: str
+    # Output path.
+    output_path: str
     # Check correctness.
     check_correctness: bool
     # Check performance breakdown.
@@ -54,22 +54,16 @@ def parse_config() -> Config:
         help="data type of tensors",
     )
     parser.add_argument(
-        "--num-layers",
-        type=int,
-        required=True,
-        help="number of layers",
-    )
-    parser.add_argument(
         "--layer-size",
         type=int,
         required=True,
         help="size of a layer (each layer is a square)",
     )
     parser.add_argument(
-        "--num-iters",
+        "--num-layers",
         type=int,
         required=True,
-        help="number of iterations",
+        help="number of layers",
     )
     parser.add_argument(
         "--learning-rate",
@@ -84,7 +78,13 @@ def parse_config() -> Config:
         help="number of actors",
     )
     parser.add_argument(
-        "--output-file",
+        "--num-iters",
+        type=int,
+        required=True,
+        help="number of iterations",
+    )
+    parser.add_argument(
+        "--output-path",
         type=str,
         required=True,
         help="output file path",
@@ -102,12 +102,12 @@ def parse_config() -> Config:
     args = parser.parse_args()
     config = Config(
         dtype=str_to_dtype[args.dtype],
-        num_layers=args.num_layers,
         layer_size=args.layer_size,
-        num_iters=args.num_iters,
+        num_layers=args.num_layers,
         learning_rate=args.learning_rate,
         num_actors=args.num_actors,
-        output_file=args.output_file,
+        num_iters=args.num_iters,
+        output_path=args.output_path,
         check_correctness=args.check_correctness,
         check_breakdown=args.check_breakdown,
     )
