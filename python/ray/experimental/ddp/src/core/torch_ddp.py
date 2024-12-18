@@ -10,7 +10,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 from .common import generate_input_output, print_elapses
 from .config import Config
-from .correctness import get_torch_ddp_weights_per_device
+from .correctness import get_torch_ddp_weights
 from .model import LayeredModel
 
 
@@ -47,7 +47,7 @@ def run_torch_ddp(config: Config) -> Tuple[Optional[List[List[torch.Tensor]]], i
         )
         weights = None
         if config.check_correctness:
-            weights = get_torch_ddp_weights_per_device(weights_dict, world_size)
+            weights = get_torch_ddp_weights(weights_dict, world_size)
         max_elapse = max(elapses_dict.values())
         return weights, max_elapse
 

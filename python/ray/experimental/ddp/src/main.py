@@ -31,7 +31,7 @@ def main(config: Config) -> None:
             torch_weights,
             ray_ddp_weights,
             "ray ddp vs torch",
-            allow_error=True,
+            check_diff=True,
         )
         compare_weights(
             torch_ddp_weights,

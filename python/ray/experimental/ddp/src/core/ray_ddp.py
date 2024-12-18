@@ -7,7 +7,7 @@ import ray
 from .actor import RayDDPWorker
 from .common import generate_input_output, print_elapses
 from .config import Config
-from .correctness import get_ray_ddp_weights_per_device
+from .correctness import get_ray_ddp_weights
 from ray.dag import InputNode, MultiOutputNode
 from ray.experimental.collective import allreduce
 
@@ -103,5 +103,5 @@ def run_ray_ddp(config: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int
     ray.shutdown()
 
     if config.check_correctness:
-        weights = get_ray_ddp_weights_per_device(weights, config.num_actors)
+        weights = get_ray_ddp_weights(weights, config.num_actors)
     return weights, avg_elapse
