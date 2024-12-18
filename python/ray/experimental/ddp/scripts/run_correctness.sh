@@ -18,7 +18,7 @@ num_iters=10
 output_path=results/correctness
 mkdir -p $output_path
 
-python -m ray.experimental.ddp.src.ddp \
+python -m ray.experimental.ddp.src.main \
     --dtype $dtype \
     --layer-size $layer_size \
     --num-layers $num_layers \

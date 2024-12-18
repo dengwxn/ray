@@ -21,7 +21,7 @@ output_path=results/num-layers
 mkdir -p $output_path
 
 for num_layer in ${num_layers[@]}; do
-    python3 -m ray.experimental.ddp.src.ddp \
+    python3 -m ray.experimental.ddp.src.main \
         --dtype $dtype \
         --layer-size $layer_size \
         --num-layers $num_layer \
