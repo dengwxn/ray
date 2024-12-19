@@ -5,7 +5,7 @@ import torch
 
 import ray
 from .actor import RayDDPWorker
-from .common import generate_input_output, print_elapses
+from .common import generate_input_output, log_elapses
 from .config import Config
 from .correctness import get_ray_ddp_weights
 from ray.dag import InputNode, MultiOutputNode
@@ -95,7 +95,10 @@ def run_ray_ddp(config: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int
         elapse = end - start
         elapses.append(elapse)
 
-    avg_elapse = print_elapses(elapses, "ray ddp")
+    avg_elapse = log_elapses(
+        elapses,
+        "Running ray ddp...",
+    )
     compiled_dag.teardown()
 
     for actor in actors:

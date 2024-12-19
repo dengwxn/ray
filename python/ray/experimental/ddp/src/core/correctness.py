@@ -10,6 +10,13 @@ def get_torch_ddp_weights(
     """
     Get the weights after each iteration. Check that the weights are consistent
     across all ranks after each iteration.
+
+    Args:
+        ranks_to_weights_dict: Weights of all layers after each iteration for each rank.
+        world_size: Number of ranks.
+
+    Returns:
+        Weights after each iteration for the first rank.
     """
     ranks_to_weights = list(ranks_to_weights_dict.values())
     assert len(ranks_to_weights) == world_size
@@ -34,6 +41,13 @@ def get_ray_ddp_weights(
     """
     Get the weights after each iteration. Check that the weights are consistent
     across all ranks after each iteration.
+
+    Args:
+        iters_to_weights: Weights of all layers after each iteration for each actor.
+        num_actors: Number of actors.
+
+    Returns:
+        Weights after each iteration for the first actor.
     """
     actor_weights = []
     # Weights per iteration.
