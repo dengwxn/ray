@@ -5,7 +5,7 @@ mkdir -p results/profile
 layer_size=2560
 dtype=float32
 num_iters=10
-learning_rate=5e-4
+learning_rate=1e-5
 num_actors=2
 num_layer=64
 
