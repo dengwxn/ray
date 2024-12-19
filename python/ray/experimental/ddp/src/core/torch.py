@@ -9,7 +9,7 @@ from .config import Config
 from .model import LayeredModel
 
 
-def run_torch(config: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
+def run_torch(cfg: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
     """
     Run PyTorch.
 
@@ -26,21 +26,21 @@ def run_torch(config: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
     # initialized on GPU.
     device = "cuda:0"
     model = LayeredModel(
-        config.layer_size,
-        config.num_layers,
+        cfg.layer_size,
+        cfg.num_layers,
         device,
-        config.dtype,
-        config.learning_rate,
+        cfg.dtype,
+        cfg.learning_rate,
     )
     optimizer = optim.SGD(model.parameters(), lr=model.lr)
 
     weights: Optional[List[List[torch.Tensor]]] = None
-    if config.check_correctness:
+    if cfg.check_correctness:
         weights = []
     elapses: List[float] = []
 
-    for _ in range(config.num_iters):
-        x, y = generate_input_output(config)
+    for _ in range(cfg.num_iters):
+        x, y = generate_input_output(cfg)
         x = x.to(device)
         y = y.to(device)
 
@@ -52,7 +52,7 @@ def run_torch(config: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
         optimizer.step()
         end = time.perf_counter()
 
-        if config.check_correctness:
+        if cfg.check_correctness:
             iter_weights: List[torch.Tensor] = []
             for i in range(0, len(model.layers), 2):
                 layer: torch.nn.Linear = model.layers[i]

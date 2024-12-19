@@ -14,7 +14,7 @@ from .correctness import get_torch_ddp_weights
 from .model import LayeredModel
 
 
-def run_torch_ddp(config: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
+def run_torch_ddp(cfg: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
     """
     Run PyTorch DDP.
 
@@ -26,27 +26,27 @@ def run_torch_ddp(config: Config) -> Tuple[Optional[List[List[torch.Tensor]]], i
         and the average elapse across all iterations.
     """
     num_gpus = torch.cuda.device_count()
-    assert num_gpus >= config.num_actors
-    world_size = config.num_actors
+    assert num_gpus >= cfg.num_actors
+    world_size = cfg.num_actors
 
     mp.set_start_method("spawn", force=True)
 
     # Use a multiprocessing manager to share data across devices.
     with mp.Manager() as manager:
         ranks_to_weights = None
-        if config.check_correctness:
+        if cfg.check_correctness:
             ranks_to_weights = manager.dict()
         ranks_to_elapses = manager.dict()
 
         mp.spawn(
             spwan_torch_ddp,
-            args=(world_size, ranks_to_weights, ranks_to_elapses, config),
+            args=(world_size, ranks_to_weights, ranks_to_elapses, cfg),
             nprocs=world_size,
             join=True,
         )
 
         weights = None
-        if config.check_correctness:
+        if cfg.check_correctness:
             weights = get_torch_ddp_weights(ranks_to_weights, world_size)
         elapse = max(ranks_to_elapses.values())
 
@@ -58,7 +58,7 @@ def spwan_torch_ddp(
     world_size: int,
     ranks_to_weights: Optional[Dict[int, List[List[torch.Tensor]]]],
     ranks_to_elapses: Dict[int, int],
-    config: Config,
+    cfg: Config,
 ) -> None:
     """
     Spawn a PyTorch DDP process.
@@ -72,7 +72,7 @@ def spwan_torch_ddp(
         config: Model and training configurations. If correctness is checked,
             ranks_to_weights is not None and will be updated.
     """
-    if config.check_correctness:
+    if cfg.check_correctness:
         assert ranks_to_weights is not None
 
     os.environ["MASTER_ADDR"] = "localhost"
@@ -84,24 +84,24 @@ def spwan_torch_ddp(
     # Create model on GPU with id rank.
     device = f"cuda:{rank}"
     model = LayeredModel(
-        config.layer_size,
-        config.num_layers,
+        cfg.layer_size,
+        cfg.num_layers,
         device,
-        config.dtype,
-        config.learning_rate,
+        cfg.dtype,
+        cfg.learning_rate,
     )
     ddp_model = DDP(model, device_ids=[rank])
     optimizer = optim.SGD(ddp_model.parameters(), lr=model.lr)
 
     weights: Optional[List[List[torch.Tensor]]] = None
-    if config.check_correctness:
+    if cfg.check_correctness:
         weights = []
     elapses = []
 
-    for _ in range(config.num_iters):
-        x, y = generate_input_output(config)
-        x = torch.tensor_split(x, config.num_actors)[rank].to(rank)
-        y = torch.tensor_split(y, config.num_actors)[rank].to(rank)
+    for _ in range(cfg.num_iters):
+        x, y = generate_input_output(cfg)
+        x = torch.tensor_split(x, cfg.num_actors)[rank].to(rank)
+        y = torch.tensor_split(y, cfg.num_actors)[rank].to(rank)
 
         start = time.perf_counter()
         optimizer.zero_grad()
@@ -111,7 +111,7 @@ def spwan_torch_ddp(
         optimizer.step()
         end = time.perf_counter()
 
-        if config.check_correctness:
+        if cfg.check_correctness:
             iter_weights: List[torch.Tensor] = []
             for i in range(0, len(model.layers), 2):
                 layer: torch.nn.Linear = model.layers[i]
@@ -152,5 +152,5 @@ def spwan_torch_ddp(
             weights_detached.append(tensors_detached)
         return weights_detached
 
-    if config.check_correctness:
+    if cfg.check_correctness:
         ranks_to_weights[rank] = detach(weights)
