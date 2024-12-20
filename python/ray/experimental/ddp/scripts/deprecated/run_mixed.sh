@@ -4,7 +4,7 @@ mkdir -p results/mixed
 
 dtype=float32
 num_iters=10
-learning_rate=5e-4
+learning_rate=1e-5
 num_actors=2
 
 num_layers=(2 4 8 16 32 64)
