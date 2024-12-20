@@ -8,19 +8,20 @@ fi
 export RAY_DEDUP_LOGS=0
 
 dtype=float32
-layer_sizes=(
-    10 20 40 80 160 320 640 1280 1840 2560 3840 5120
+layer_size_values=(
+    10 20 40 80 160 320 640 1280 1920 2560 3840 5120
 )
 num_layers=2
 
 learning_rate=1e-5
 num_actors=2
-num_iters=10
+num_iters=30
 
 output_path=results/layer-size
 mkdir -p $output_path
 
-for layer_size in ${layer_sizes[@]}; do
+for layer_size in ${layer_size_values[@]}; do
+    echo "Running with layer_size $layer_size..."
     python -m ray.experimental.ddp.src.main \
         --dtype $dtype \
         --layer-size $layer_size \
