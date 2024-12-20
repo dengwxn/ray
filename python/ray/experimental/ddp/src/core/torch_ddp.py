@@ -69,7 +69,7 @@ def spwan_torch_ddp(
         ranks_to_weights: Weights of all layers after each iteration across
             all processes.
         ranks_to_elapses: Elapses of all iterations across all processes.
-        config: Model and training configurations. If correctness is checked,
+        cfg: Model and training configurations. If correctness is checked,
             ranks_to_weights is not None and will be updated.
     """
     if cfg.check_correctness:
@@ -81,7 +81,7 @@ def spwan_torch_ddp(
     # Initialize the process group.
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
-    # Create model on GPU with id rank.
+    # Create model on the device.
     device = f"cuda:{rank}"
     model = LayeredModel(
         cfg.layer_size,
@@ -121,36 +121,37 @@ def spwan_torch_ddp(
         elapse = end - start
         elapses.append(elapse)
 
-    avg_elapse = log_elapses(
+    # Destroy the process group.
+    dist.destroy_process_group()
+
+    elapse_mean = log_elapses(
         elapses,
         f"Running torch ddp, rank: {rank}...",
         rank,
     )
-    ranks_to_elapses[rank] = avg_elapse
-
-    # Destroy the process group.
-    dist.destroy_process_group()
-
-    def detach(
-        weights: List[List[torch.Tensor]],
-    ) -> List[List[torch.Tensor]]:
-        """
-        Detach all tensors in order to pass tensors across devices. If a tensor is
-        not detached, serialization will fail.
-
-        Args:
-            weights: Weights of all layers across all iterations.
-
-        Returns:
-            Detached weights of all layers across all iterations.
-        """
-        weights_detached: List[List[torch.Tensor]] = []
-        for iter_weights in weights:
-            tensors_detached: List[torch.Tensor] = []
-            for tensor in iter_weights:
-                tensors_detached.append(tensor.detach().cpu())
-            weights_detached.append(tensors_detached)
-        return weights_detached
+    ranks_to_elapses[rank] = elapse_mean
 
     if cfg.check_correctness:
         ranks_to_weights[rank] = detach(weights)
+
+
+def detach(
+    weights: List[List[torch.Tensor]],
+) -> List[List[torch.Tensor]]:
+    """
+    Detach all tensors in order to pass tensors across devices. If a tensor is
+    not detached, serialization will fail.
+
+    Args:
+        weights: Weights of all layers across all iterations.
+
+    Returns:
+        Detached weights of all layers across all iterations.
+    """
+    weights_detached: List[List[torch.Tensor]] = []
+    for iter_weights in weights:
+        tensors_detached: List[torch.Tensor] = []
+        for tensor in iter_weights:
+            tensors_detached.append(tensor.detach().cpu())
+        weights_detached.append(tensors_detached)
+    return weights_detached

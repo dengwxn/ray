@@ -45,7 +45,7 @@ def run_ray_ddp(cfg: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
         grads = [actor.forward.bind(inp) for actor in actors]
         outputs = []
         for j in reversed(range(cfg.num_layers)):
-            grads = [actor.backward.bind(j, grads[i]) for i, actor in enumerate(actors)]
+            grads = [actor.backward_layer.bind(j, grads[i]) for i, actor in enumerate(actors)]
             grads_allreduced = allreduce.bind(
                 [
                     actor.get_grad_to_reduce.bind(grads[i])
@@ -53,7 +53,7 @@ def run_ray_ddp(cfg: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
                 ]
             )
             updates = [
-                actor.update.bind(j, grad)
+                actor.update_layer.bind(j, grad)
                 for actor, grad in zip(actors, grads_allreduced)
             ]
             outputs.append(updates)
@@ -99,8 +99,8 @@ def run_ray_ddp(cfg: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
 
     if cfg.check_correctness:
         weights = get_ray_ddp_weights(weights, cfg.num_actors)
-    avg_elapse = log_elapses(
+    elapse_mean = log_elapses(
         elapses,
         "Running ray ddp...",
     )
-    return weights, avg_elapse
+    return weights, elapse_mean

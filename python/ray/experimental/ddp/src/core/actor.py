@@ -83,7 +83,7 @@ class RayDDPWorker:
         self.model.inputs = []
         self.model.activations = []
 
-    def forward(self, placeholder: Any) -> torch.Tensor:
+    def forward(self, placeholder: Any) -> Tuple[torch.Tensor, None]:
         """
         Forward pass for the model.
         1. Compute the prediction with the input.
@@ -129,7 +129,7 @@ class RayDDPWorker:
 
         return pred.grad, None
 
-    def backward(
+    def backward_layer(
         self, idx: int, grad: Tuple[torch.Tensor, Optional[torch.Tensor]]
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -148,9 +148,8 @@ class RayDDPWorker:
         if self.check_breakdown:
             backward_start_time = time.perf_counter()
 
-        # No need to move the gradient because it is already on this device.
-        bp_grad, _ = grad
-        result = self.model.backward_layer(bp_grad, idx)
+        grad_to_bp, _ = grad
+        result = self.model.backward_layer(grad_to_bp, idx)
 
         if self.check_breakdown:
             backward_end_time = time.perf_counter()
@@ -158,7 +157,7 @@ class RayDDPWorker:
 
         return result
 
-    def update(self, idx: int, grad: torch.Tensor) -> Optional[torch.Tensor]:
+    def update_layer(self, idx: int, grad: torch.Tensor) -> Optional[torch.Tensor]:
         """
         Update the weights of the specified layer with the given allreduced gradient.
 
@@ -173,7 +172,6 @@ class RayDDPWorker:
         if self.check_breakdown:
             update_start_time = time.perf_counter()
 
-        # No need to move the gradient because it is already on this device.
         # For mathematical equivalence, divide the allreduced gradient by the
         # world size (i.e., the number of actors).
         grad /= self.world_size

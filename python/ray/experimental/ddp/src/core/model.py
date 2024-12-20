@@ -28,21 +28,24 @@ class LayeredModel(torch.nn.Module):
         torch.manual_seed(998244353)
         super(LayeredModel, self).__init__()
 
-        self.layers: List[torch.nn.Module] = []
+        layers: List[torch.nn.Module] = []
         for _ in range(num_layers):
-            # For simplicity, no bias.
-            self.layers.append(
+            layers.append(
                 torch.nn.Linear(
-                    layer_size, layer_size, device=device, dtype=dtype, bias=False
+                    layer_size,
+                    layer_size,
+                    device=device,
+                    dtype=dtype,
+                    bias=False,  # No bias for simplicity.
                 )
             )
-            self.layers.append(torch.nn.ReLU())
-        self.layers: nn.ModuleList = nn.ModuleList(self.layers)
+            layers.append(torch.nn.ReLU())
+        self.layers = nn.ModuleList(layers)
         self.inputs: List[torch.Tensor] = []
         self.activations: List[torch.Tensor] = []
-        self.lr: float = lr
+        self.lr = lr
         self.criterion = nn.MSELoss()
-        # [TODO] Do we need to usea single optimizer for all layers?
+        # [TODO] Do we need to use a single optimizer for all layers?
         self.optimizers: List[optim.SGD] = [
             optim.SGD(self.layers[2 * i].parameters(), lr=self.lr)
             for i in range(num_layers)
@@ -63,9 +66,9 @@ class LayeredModel(torch.nn.Module):
         """
         self.inputs.append(x)
         linear_layer: torch.nn.Linear = self.layers[2 * idx]
-        y: torch.Tensor = linear_layer(x)
+        y = linear_layer(x)
         relu_activation: torch.nn.Module = self.layers[2 * idx + 1]
-        z: torch.Tensor = relu_activation(y)
+        z = relu_activation(y)
         self.activations.append(z)
         return z
 
@@ -80,15 +83,19 @@ class LayeredModel(torch.nn.Module):
             grad: Gradient for the loss.
             idx: Index of the layer.
         """
-        z: torch.Tensor = self.activations[idx]
-        x: torch.Tensor = self.inputs[idx]
+        z = self.activations[idx]
+        x = self.inputs[idx]
         layer: torch.nn.Linear = self.layers[2 * idx]
-        w: torch.Tensor = layer.weight
+        w = layer.weight
         # Because the backward pass is done layer by layer, it is necessary to
         # retain the graph unless this is the first layer. Otherwise, the graph
         # is freed after use and cannot be backpropagated through a second time.
         retain_graph = idx != 0
-        z.backward(gradient=grad, retain_graph=retain_graph, inputs=[w, x])
+        z.backward(
+            gradient=grad,
+            retain_graph=retain_graph,
+            inputs=[x, w],
+        )
         return x.grad, w.grad
 
     def update_layer(

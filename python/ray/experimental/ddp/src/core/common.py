@@ -8,7 +8,7 @@ from .config import Config
 
 def secs_to_micros(secs: float) -> int:
     """
-    Converts seconds to microseconds (rounded).
+    Converts seconds to microseconds.
     """
     return round(secs * 1e6)
 
@@ -48,7 +48,7 @@ def log_elapses(elapses: List[float], header: str, rank: Optional[int] = None) -
         rank: Rank in torch DDP.
 
     Returns:
-        avg: Average elapse without first iteration.
+        mean: Elapse mean after first iteration.
     """
 
     logger = logging.getLogger(__name__)
@@ -60,11 +60,7 @@ def log_elapses(elapses: List[float], header: str, rank: Optional[int] = None) -
             )
         else:
             logger.info(f"Iteration: {i}, elapse: {secs_to_micros(elapse)} us")
-    total = sum(elapses)
-    avg = total / len(elapses)
-    logger.info(f"Average elapse: {secs_to_micros(avg)} us")
-    total -= elapses[0]
-    avg = total / (len(elapses) - 1)
-    avg = secs_to_micros(avg)
-    logger.info(f"Average elapse without iteration 0: {avg} us")
-    return avg
+    mean = sum(elapses[1:]) / (len(elapses) - 1)
+    mean = secs_to_micros(mean)
+    logger.info(f"Elapse mean after iteration 0: {mean} us")
+    return mean

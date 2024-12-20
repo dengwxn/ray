@@ -17,8 +17,8 @@ def run_torch(cfg: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
         config: Model and training configurations.
 
     Returns:
-        Weights of all layers after each iteration if correctness is checked, and
-        the average elapse across all iterations.
+        Weights of all layers after each iteration if correctness is checked,
+        and the average elapse across all iterations.
     """
 
     # To ensure that the model parameters are initialized in the same way across
@@ -62,8 +62,8 @@ def run_torch(cfg: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
         elapse = end - start
         elapses.append(elapse)
 
-    avg_elapse = log_elapses(
+    elapse_mean = log_elapses(
         elapses,
         "Running torch...",
     )
-    return weights, avg_elapse
+    return weights, elapse_mean
