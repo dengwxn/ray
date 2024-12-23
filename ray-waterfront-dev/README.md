@@ -20,6 +20,12 @@ docker run -d --name ray-waterfront-dev \
 docker exec -it ray-waterfront-dev zsh
 ```
 
+## Clean
+```bash
+docker stop ray-waterfront-dev
+docker rm ray-waterfront-dev
+```
+
 ## Install
 ```bash
 cd ray/ray-waterfront-dev
