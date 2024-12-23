@@ -12,6 +12,7 @@ docker push dengwxn/ray-waterfront:latest
 ## Run
 ```bash
 docker run -d --name ray-waterfront-dev \
+  --shm-size=128gb \
   --gpus all \
   --cap-add SYS_PTRACE \
   -v $(pwd):/app \

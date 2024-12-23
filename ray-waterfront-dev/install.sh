@@ -5,6 +5,7 @@ cd /app
 python3 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip wheel
+echo 'source /app/venv/bin/activate' >>~/.zshrc
 
 # Instal bazel
 /app/ci/env/install-bazel.sh --user
@@ -30,4 +31,5 @@ npm run build
 # Install Python dependencies
 cd /app/python
 pip install -r requirements.txt
+pip install pytest torch
 pip install -e . --verbose
