@@ -28,6 +28,6 @@ docker rm ray-waterfront-dev
 
 ## Install
 ```bash
-cd ray/ray-waterfront-dev
+cd ray/dev
 ./install.sh
 ```
