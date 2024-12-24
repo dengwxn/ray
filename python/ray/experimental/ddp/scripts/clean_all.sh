@@ -5,5 +5,5 @@ if [[ "$(pwd)" != */python/ray/experimental/ddp ]]; then
 	exit 1
 fi
 
-rm results/**/*.log
-rm results/**/*.csv
+find results -name "*.log" -type f -delete
+find results -name "*.csv" -type f -delete

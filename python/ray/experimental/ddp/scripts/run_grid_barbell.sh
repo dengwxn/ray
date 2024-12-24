@@ -16,8 +16,8 @@ num_layers_values=(
 )
 
 learning_rate=1e-5
-num_actors=4
-num_iters=10
+num_actors=2
+num_iters=30
 
 output_path=results/grid/barbell
 mkdir -p $output_path
