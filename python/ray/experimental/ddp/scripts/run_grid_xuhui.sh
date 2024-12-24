@@ -9,17 +9,17 @@ export RAY_DEDUP_LOGS=0
 
 dtype=float32
 layer_size_values=(
-	10 20 40 80 160 320 640 1280 2560
+	10 20 40 80 160 320 640 1280 2560 5120
 )
 num_layers_values=(
-	1 2 4 8 16 32 64
+	1 2 4 8 16 32 64 128
 )
 
 learning_rate=1e-5
-num_actors=2
-num_iters=10
+num_actors=4
+num_iters=30
 
-output_path=results/grid
+output_path=results/grid/xuhui
 mkdir -p $output_path
 
 for layer_size in ${layer_size_values[@]}; do
