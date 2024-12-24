@@ -1,5 +1,6 @@
 import argparse
 from dataclasses import dataclass
+from typing import Any, Dict
 
 import torch
 
@@ -112,3 +113,24 @@ def parse_config() -> Config:
         check_breakdown=args.check_breakdown,
     )
     return config
+
+
+def parse_args() -> Dict[str, Any]:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--layer-size-values",
+        type=int,
+        nargs="+",
+    )
+    parser.add_argument(
+        "--num-layers-values",
+        type=int,
+        nargs="+",
+    )
+    parser.add_argument(
+        "--output-path",
+        type=str,
+    )
+    args = parser.parse_args()
+    args = vars(args)
+    return args
