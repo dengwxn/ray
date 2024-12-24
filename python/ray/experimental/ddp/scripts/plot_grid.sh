@@ -22,22 +22,6 @@ num_iters=10
 output_path=results/grid
 mkdir -p $output_path
 
-for layer_size in ${layer_size_values[@]}; do
-	for num_layers in ${num_layers_values[@]}; do
-		echo "Running layer_size $layer_size, num_layers $num_layers..."
-		output_file=$output_path/ls${layer_size}_nl${num_layers}
-		python -m ray.experimental.ddp.src.main \
-			--dtype $dtype \
-			--layer-size $layer_size \
-			--num-layers $num_layers \
-			--learning-rate $learning_rate \
-			--num-actors $num_actors \
-			--num-iters $num_iters \
-			--output-path $output_file.csv \
-			>$output_file.log 2>&1
-	done
-done
-
 python -m ray.experimental.ddp.src.scripts.plot_heatmap \
 	--layer-size ${layer_size_values[@]} \
 	--num-layers ${num_layers_values[@]} \

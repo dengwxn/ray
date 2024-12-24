@@ -35,15 +35,31 @@ plt.figure(figsize=(12, 5))
 plt.subplot(1, 2, 1)
 pivot_torch = df.pivot(
     index="layer_size", columns="num_layers", values="relative_torch"
+).sort_index(ascending=False)
+sns.heatmap(
+    pivot_torch,
+    annot=True,
+    fmt=".1f",
+    cmap="RdBu_r",
+    center=0,
 )
-sns.heatmap(pivot_torch, annot=True, fmt=".2f", cmap="RdBu_r", center=0)
 plt.title("Log Relative Time (torch / torch-ddp)")
+plt.yticks(rotation=0)
 
 # Table 2: relative_ray
 plt.subplot(1, 2, 2)
-pivot_ray = df.pivot(index="layer_size", columns="num_layers", values="relative_ray")
-sns.heatmap(pivot_ray, annot=True, fmt=".2f", cmap="RdBu_r", center=0)
-plt.title("Log Relative Time (ray-ddp / torch-ddp)")
+pivot_ray = df.pivot(
+    index="layer_size", columns="num_layers", values="relative_ray"
+).sort_index(ascending=False)
+sns.heatmap(
+    pivot_ray,
+    annot=True,
+    fmt=".1f",
+    cmap="RdBu_r",
+    center=0,
+)
+plt.title("Log Relative Time (ray / torch-ddp)")
+plt.yticks(rotation=0)
 
 plt.tight_layout()
 plt.savefig(f"{args['output_path']}/heatmap.png")
