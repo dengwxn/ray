@@ -42,3 +42,5 @@ python -m ray.experimental.ddp.src.scripts.plot_heatmap \
 	--layer-size ${layer_size_values[@]} \
 	--num-layers ${num_layers_values[@]} \
 	--output-path $output_path
+
+# [TODO] Fix timing for `torch-ddp`.
