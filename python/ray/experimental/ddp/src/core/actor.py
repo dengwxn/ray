@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
@@ -33,7 +33,7 @@ class RayDDPWorker:
         dtype: torch.dtype,
         lr: float,
         check_correctness: bool,
-        check_breakdown: bool,
+        check_tracing: bool,
     ):
         # Each device has a single GPU.
         self.device = torch_utils.get_devices()[0]
@@ -47,17 +47,125 @@ class RayDDPWorker:
         self.x: torch.Tensor = None
         self.y: torch.Tensor = None
 
-        self.check_breakdown = check_breakdown
-        if check_breakdown:
+        self.check_tracing = check_tracing
+        if check_tracing:
             self.it = 0
-            self.start_time: Optional[float] = None
-            self.pre_forward_time: Optional[float] = None
-            self.forward_times: List[Tuple[float, Tuple]] = []
-            self.loss_time: Optional[float] = None
-            self.pre_backward_time: Optional[float] = None
-            self.backward_times: List[Tuple[float, float]] = []
-            self.update_times: List[Tuple[float, float]] = []
-            self.end_time: Optional[float] = None
+            self.time: Dict[str] = {}
+
+    def init_tracing(self) -> None:
+        if not self.check_tracing:
+            return
+
+        logger = logging.getLogger(__name__)
+        logger.info(f"Start iteration {self.it}...")
+
+        self.time = {
+            "forward_starts": [],
+            "forward_ends": [],
+            "backward_starts": [],
+            "backward_ends": [],
+            "update_starts": [],
+            "update_ends": [],
+        }
+
+    def finish_tracing(self) -> None:
+        if not self.check_tracing:
+            return
+
+        logger = logging.getLogger(__name__)
+        logger.info(f"Finish iteration {self.it}")
+        self.it += 1
+        if self.it <= 1:
+            return
+
+        def log(key: str, elapse: float):
+            logger.info(
+                f"{key} elapse: {secs_to_micros(elapse)} us, percent: {round(elapse / total * 100, 1)}%"
+            )
+
+        self.update_time("end")
+        total = self.time["end"] - self.time["start"]
+        logger.info("")
+        log(
+            "total",
+            total,
+        )
+        log(
+            "fw.total",
+            self.time["forward_ends"][-1] - self.time["forward_starts"][0],
+        )
+        log(
+            "loss.compute",
+            self.time["backward_loss_start"] - self.time["forward_ends"][-1],
+        )
+        log(
+            "loss.backward",
+            self.time["backward_loss_end"] - self.time["backward_loss_start"],
+        )
+        log(
+            "bw.total",
+            self.time["update_ends"][-1] - self.time["backward_starts"][0],
+        )
+        log(
+            "bw.backward",
+            sum(
+                [
+                    self.time["backward_ends"][i] - self.time["backward_starts"][i]
+                    for i in range(self.num_layers)
+                ]
+            ),
+        )
+        log(
+            "bw.allreduce",
+            sum(
+                [
+                    self.time["update_starts"][i] - self.time["backward_ends"][i]
+                    for i in range(self.num_layers)
+                ]
+            ),
+        )
+        log(
+            "bw.update",
+            sum(
+                [
+                    self.time["update_ends"][i] - self.time["update_starts"][i]
+                    for i in range(self.num_layers)
+                ]
+            ),
+        )
+
+        logger.info("")
+        for i in range(self.num_layers):
+            log(
+                f"fw.{i}",
+                self.time["forward_ends"][i] - self.time["forward_starts"][i],
+            )
+
+        logger.info("")
+        for i in range(self.num_layers):
+            log(
+                f"bw.backward.{i}",
+                self.time["backward_ends"][i] - self.time["backward_starts"][i],
+            )
+            log(
+                f"bw.allreduce.{i}",
+                self.time["update_starts"][i] - self.time["backward_ends"][i],
+            )
+            log(
+                f"bw.update.{i}",
+                self.time["update_ends"][i] - self.time["update_starts"][i],
+            )
+        logger.info("")
+
+    def update_time(self, key: str) -> None:
+        if not self.check_tracing:
+            return
+        timestamp = time.perf_counter()
+        if key not in self.time:
+            self.time[key] = timestamp
+        else:
+            assert isinstance(self.time[key], list)
+            self.time[key].append(timestamp)
 
     def tensor_to_device(self, x: torch.Tensor, y: torch.Tensor) -> None:
         """
@@ -76,9 +184,8 @@ class RayDDPWorker:
         Start the training process for one iteration. Clear the old gradients,
         stored inputs, and activations from last iteration.
         """
-        if self.check_breakdown:
-            self.start_time = time.perf_counter()
-
+        self.init_tracing()
+        self.update_time("start")
         self.model.zero_grad()
         self.model.inputs = []
         self.model.activations = []
@@ -100,32 +207,19 @@ class RayDDPWorker:
         x = self.x
         y = self.y
 
-        if self.check_breakdown:
-            self.pre_forward_time = time.perf_counter()
-
         for i in range(self.num_layers):
-            if self.check_breakdown:
-                forward_start_time = time.perf_counter()
-
+            self.update_time("forward_starts")
             x = self.model.forward_layer(x, i)
-
-            if self.check_breakdown:
-                forward_end_time = time.perf_counter()
-                self.forward_times.append((forward_start_time, forward_end_time))
+            self.update_time("forward_ends")
 
         pred = x
         loss: torch.Tensor = self.model.criterion(pred, y)
 
-        if self.check_breakdown:
-            self.loss_time = time.perf_counter()
-
-        # Compute the gradient of the loss with respect to the prediction.
-        # Retain the graph (i.e., not free the graph) for subsequent backprop
-        # computations.
+        self.update_time("backward_loss_start")
+        # Compute the gradient of the loss with respect to the prediction. Retain the
+        # graph (i.e., not free the graph) for subsequent back-propagation computations.
         loss.backward(retain_graph=True, inputs=[pred])
-
-        if self.check_breakdown:
-            self.pre_backward_time = time.perf_counter()
+        self.update_time("backward_loss_end")
 
         return pred.grad, None
 
@@ -145,15 +239,10 @@ class RayDDPWorker:
             Tuple of the gradients of the loss with respect to the input and the
             weight of this layer.
         """
-        if self.check_breakdown:
-            backward_start_time = time.perf_counter()
-
+        self.update_time("backward_starts")
         grad_to_bp, _ = grad
         result = self.model.backward_layer(grad_to_bp, idx)
-
-        if self.check_breakdown:
-            backward_end_time = time.perf_counter()
-            self.backward_times.append((backward_start_time, backward_end_time))
+        self.update_time("backward_ends")
 
         return result
 
@@ -169,17 +258,12 @@ class RayDDPWorker:
             The updated weights of this layer if correctness is checked, otherwise
             None.
         """
-        if self.check_breakdown:
-            update_start_time = time.perf_counter()
-
+        self.update_time("update_starts")
         # For mathematical equivalence, divide the allreduced gradient by the
         # world size (i.e., the number of actors).
         grad /= self.world_size
         result = self.model.update_layer(grad, idx, self.check_correctness)
-
-        if self.check_breakdown:
-            update_end_time = time.perf_counter()
-            self.update_times.append((update_start_time, update_end_time))
+        self.update_time("update_ends")
 
         return result
 
@@ -198,32 +282,7 @@ class RayDDPWorker:
         Returns:
             The list of all results from weight updates.
         """
-        if self.check_breakdown:
-            self.end_time = time.perf_counter()
-
-            logger = logging.getLogger(__name__)
-            logger.info(f"Iteration {self.it} finishes")
-            self.it += 1
-
-            total = self.end_time - self.start_time
-            log("total", total)
-
-            def log(key: str, elapse: float):
-                logger.info(
-                    f"{key} elapse: {secs_to_micros(elapse)} us, percentage: {round(elapse / total * 100)}%"
-                )
-
-            log("pre forward", self.pre_forward_time - self.start_time)
-            for i, (start, end) in enumerate(self.forward_times):
-                log(f"forward layer {i}", end - start)
-            log("loss", self.loss_time - self.forward_times[-1][1])
-            log("pre backward", self.pre_backward_time - self.loss_time)
-            for i, (start, end) in enumerate(self.backward_times):
-                log(f"backward layer {i}", end - start)
-            for i, (start, end) in enumerate(self.update_times):
-                log(f"allreduce layer {i}", start - self.backward_times[i][1])
-                log(f"update layer {i}", end - start)
-
+        self.finish_tracing()
         if self.check_correctness:
             return updates
         return None

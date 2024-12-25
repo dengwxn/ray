@@ -1,0 +1,32 @@
+#!/bin/bash
+
+if [[ "$(pwd)" != */python/ray/experimental/ddp ]]; then
+	echo "Please run in the python/ray/experimental/ddp directory"
+	exit 1
+fi
+
+export RAY_DEDUP_LOGS=0
+
+dtype=float32
+layer_size=320
+num_layers=32
+
+learning_rate=1e-5
+num_actors=2
+num_iters=4
+
+output_path=results/unit
+mkdir -p $output_path
+
+echo "Running layer_size $layer_size, num_layers $num_layers..."
+output_file=$output_path/ls${layer_size}_nl${num_layers}
+python -m ray.experimental.ddp.src.main \
+	--dtype $dtype \
+	--layer-size $layer_size \
+	--num-layers $num_layers \
+	--learning-rate $learning_rate \
+	--num-actors $num_actors \
+	--num-iters $num_iters \
+	--output-path $output_file.csv \
+	--check-breakdown \
+	>$output_file.log 2>&1
