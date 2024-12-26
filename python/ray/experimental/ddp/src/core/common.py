@@ -127,7 +127,13 @@ def log_torch_ddp_elapses(
     output_path: str,
     warmup: float = 0.2,
 ) -> None:
-    metrics = ["total"]
+    metrics = [
+        "total",
+        "fw.total",
+        "loss.compute",
+        "bw.bw_ar",
+        "bw.update",
+    ]
 
     # Create output directory if it doesn't exist
     os.makedirs(output_path, exist_ok=True)

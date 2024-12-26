@@ -1,5 +1,7 @@
+import logging
 import os
 import time
+from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
 import torch
@@ -85,6 +87,11 @@ def spwan_torch_ddp(
         cfg: Model and training configurations. If correctness is checked,
             ranks_to_weights is not None and will be updated.
     """
+
+    def sync_time() -> float:
+        dist.barrier()
+        return time.perf_counter()
+
     if cfg.check_correctness:
         assert ranks_to_weights is not None
 
@@ -92,6 +99,8 @@ def spwan_torch_ddp(
     os.environ["MASTER_PORT"] = "8888"
 
     try:
+        logger = logging.getLogger(__name__)
+
         # Initialize the process group.
         dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
@@ -107,30 +116,39 @@ def spwan_torch_ddp(
         ddp_model = DDP(model, device_ids=[rank])
         optimizer = optim.SGD(ddp_model.parameters(), lr=model.lr)
 
-        weights: Optional[List[List[torch.Tensor]]] = None
+        weights = None
         if cfg.check_correctness:
-            weights = []
-        elapses = {
-            "total": [],
-        }
+            weights: List[List[torch.Tensor]] = []
+        elapses = defaultdict(list)
 
-        for _ in range(cfg.num_iters):
+        for it in range(cfg.num_iters):
+            if rank == 0:
+                logger.info(f"Start iteration {it}...")
+
             x, y = generate_input_output(cfg)
             x = torch.tensor_split(x, cfg.num_actors)[rank].to(rank)
             y = torch.tensor_split(y, cfg.num_actors)[rank].to(rank)
 
-            dist.barrier()
-            start = time.perf_counter()
-
-            # [TODO] Get the same visibility as Ray DDP.
+            start = sync_time()
             optimizer.zero_grad()
-            pred: torch.Tensor = ddp_model(x)
-            loss: torch.Tensor = model.criterion(pred, y)
-            loss.backward()
-            optimizer.step()
 
-            dist.barrier()
-            end = time.perf_counter()
+            forward_start = sync_time()
+            pred: torch.Tensor = ddp_model(x)
+            forward_end = sync_time()
+
+            loss_compute_start = sync_time()
+            loss: torch.Tensor = model.criterion(pred, y)
+            loss_compute_end = sync_time()
+
+            backward_start = sync_time()
+            loss.backward()
+            backward_end = sync_time()
+
+            update_start = sync_time()
+            optimizer.step()
+            update_end = sync_time()
+
+            end = sync_time()
 
             if cfg.check_correctness:
                 iter_weights: List[torch.Tensor] = []
@@ -139,8 +157,22 @@ def spwan_torch_ddp(
                     iter_weights.append(torch.clone(layer.weight))
                 weights.append(iter_weights)
 
-            elapse = secs_to_micros(end - start)
-            elapses["total"].append(elapse)
+            if rank == 0:
+                logger.info(f"Finish iteration {it}")
+            total = end - start
+
+            def log(key: str, elapse: float):
+                elapses[key].append(secs_to_micros(elapse))
+                if rank == 0:
+                    logger.info(
+                        f"{key} elapse: {secs_to_micros(elapse)} us, percent: {round(elapse / total * 100, 1)}%"
+                    )
+
+            log("total", total)
+            log("fw.total", forward_end - forward_start)
+            log("loss.compute", loss_compute_end - loss_compute_start)
+            log("bw.bw_ar", backward_end - backward_start)
+            log("bw.update", update_end - update_start)
     finally:
         # Destroy the process group.
         dist.destroy_process_group()
