@@ -50,7 +50,8 @@ class RayDDPWorker:
         self.check_tracing = check_tracing
         if check_tracing:
             self.it = 0
-            self.time: Dict[str] = {}
+            self.time: Dict[str, Any] = {}
+            self.iters_to_elapses: List[Dict[str, Any]] = []
 
     def init_tracing(self) -> None:
         if not self.check_tracing:
@@ -78,13 +79,16 @@ class RayDDPWorker:
         if self.it <= 1:
             return
 
+        elapses: Dict[str] = {}
+        self.update_time("end")
+        total = self.time["end"] - self.time["start"]
+
         def log(key: str, elapse: float):
+            elapses[key] = secs_to_micros(elapse)
             logger.info(
                 f"{key} elapse: {secs_to_micros(elapse)} us, percent: {round(elapse / total * 100, 1)}%"
             )
 
-        self.update_time("end")
-        total = self.time["end"] - self.time["start"]
         logger.info("")
         log(
             "total",
@@ -156,6 +160,11 @@ class RayDDPWorker:
                 self.time["update_ends"][i] - self.time["update_starts"][i],
             )
         logger.info("")
+
+        self.iters_to_elapses.append(elapses)
+
+    def fetch_traces(self) -> List[Dict[str, Any]]:
+        return self.iters_to_elapses
 
     def update_time(self, key: str) -> None:
         if not self.check_tracing:

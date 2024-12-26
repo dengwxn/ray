@@ -23,29 +23,24 @@ def main(config: Config) -> None:
         config: Model and training configurations, as well as whether to check
             correctness and the output file path.
     """
-    # [TODO] Run all of them only when correctness is checked.
-    # Otherwise, we should only run one and only.
-
+    torch_weights, torch_elapse = run_torch(config)
+    torch_ddp_weights, torch_ddp_elapse = run_torch_ddp(config)
     ray_ddp_weights, ray_ddp_elapse = run_ray_ddp(config)
-
-    # torch_weights, torch_elapse = run_torch(config)
-    # torch_ddp_weights, torch_ddp_elapse = run_torch_ddp(config)
-    # ray_ddp_weights, ray_ddp_elapse = run_ray_ddp(config)
-    # if config.check_correctness:
-    #     compare_weights(
-    #         torch_weights,
-    #         ray_ddp_weights,
-    #         "ray ddp vs torch",
-    #         check_diff=True,
-    #     )
-    #     compare_weights(
-    #         torch_ddp_weights,
-    #         ray_ddp_weights,
-    #         "ray ddp vs torch ddp",
-    #     )
-    # with open(config.output_path, "w") as file:
-    #     file.write("torch,torch-ddp,ray-ddp\n")
-    #     file.write(f"{torch_elapse},{torch_ddp_elapse},{ray_ddp_elapse}\n")
+    if config.check_correctness:
+        compare_weights(
+            torch_weights,
+            ray_ddp_weights,
+            "ray ddp vs torch",
+            check_diff=True,
+        )
+        compare_weights(
+            torch_ddp_weights,
+            ray_ddp_weights,
+            "ray ddp vs torch ddp",
+        )
+    with open(config.output_path, "w") as file:
+        file.write("torch,torch-ddp,ray-ddp\n")
+        file.write(f"{torch_elapse},{torch_ddp_elapse},{ray_ddp_elapse}\n")
 
 
 if __name__ == "__main__":

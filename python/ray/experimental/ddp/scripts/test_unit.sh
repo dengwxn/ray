@@ -13,20 +13,20 @@ num_layers=32
 
 learning_rate=1e-5
 num_actors=2
-num_iters=4
+num_iters=100
 
 output_path=results/unit
 mkdir -p $output_path
 
 echo "Running layer_size $layer_size, num_layers $num_layers..."
 output_file=$output_path/ls${layer_size}_nl${num_layers}
-python -m ray.experimental.ddp.src.main \
+python -m ray.experimental.ddp.src.main_ray \
 	--dtype $dtype \
 	--layer-size $layer_size \
 	--num-layers $num_layers \
 	--learning-rate $learning_rate \
 	--num-actors $num_actors \
 	--num-iters $num_iters \
-	--output-path $output_file.csv \
+	--output-path $output_path \
 	--check-breakdown \
 	>$output_file.log 2>&1

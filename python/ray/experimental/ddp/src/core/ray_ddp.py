@@ -5,7 +5,7 @@ import torch
 
 import ray
 from .actor import RayDDPWorker
-from .common import generate_input_output, log_elapses
+from .common import generate_input_output, log_elapses, log_ray_elapses
 from .config import Config
 from .correctness import get_ray_ddp_weights
 from ray.dag import InputNode, MultiOutputNode
@@ -45,7 +45,9 @@ def run_ray_ddp(cfg: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
         grads = [actor.forward.bind(inp) for actor in actors]
         outputs = []
         for j in reversed(range(cfg.num_layers)):
-            grads = [actor.backward_layer.bind(j, grads[i]) for i, actor in enumerate(actors)]
+            grads = [
+                actor.backward_layer.bind(j, grads[i]) for i, actor in enumerate(actors)
+            ]
             grads_allreduced = allreduce.bind(
                 [
                     actor.get_grad_to_reduce.bind(grads[i])
@@ -92,6 +94,9 @@ def run_ray_ddp(cfg: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
         elapse = end - start
         elapses.append(elapse)
 
+    actors_to_traces = ray.get([actor.fetch_traces.remote() for actor in actors])
+    log_ray_elapses(actors_to_traces, cfg.output_path)
+
     compiled_dag.teardown()
     for actor in actors:
         ray.kill(actor)
@@ -103,4 +108,5 @@ def run_ray_ddp(cfg: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
         elapses,
         "Running ray ddp...",
     )
+
     return weights, elapse_mean
