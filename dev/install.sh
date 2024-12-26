@@ -31,5 +31,5 @@ npm run build
 # Install Python dependencies
 cd /app/python
 pip install -r requirements.txt
-pip install pytest torch
+pip install pytest torch matplotlib seaborn
 pip install -e . --verbose
