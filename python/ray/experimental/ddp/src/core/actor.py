@@ -1,5 +1,6 @@
 import logging
 import time
+from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
@@ -51,7 +52,7 @@ class RayDDPWorker:
         if check_tracing:
             self.it = 0
             self.time: Dict[str, Any] = {}
-            self.iters_to_elapses: List[Dict[str, Any]] = []
+            self.iters_to_elapses: Dict[str, List] = defaultdict(list)
 
     def init_tracing(self) -> None:
         if not self.check_tracing:
@@ -60,7 +61,7 @@ class RayDDPWorker:
         logger = logging.getLogger(__name__)
         logger.info(f"Start iteration {self.it}...")
 
-        self.time = {
+        self.time: Dict[str, Any] = {
             "forward_starts": [],
             "forward_ends": [],
             "backward_starts": [],
@@ -161,10 +162,10 @@ class RayDDPWorker:
             )
         logger.info("")
 
-        # [TODO] We don't need to append here. We can append inside the list.
-        self.iters_to_elapses.append(elapses)
+        for key, elapse in elapses.items():
+            self.iters_to_elapses[key].append(elapse)
 
-    def fetch_traces(self) -> List[Dict[str, Any]]:
+    def fetch_traces(self) -> Dict[str, List]:
         return self.iters_to_elapses
 
     def update_time(self, key: str) -> None:

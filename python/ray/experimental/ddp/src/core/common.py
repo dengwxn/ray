@@ -71,7 +71,7 @@ def log_elapses(elapses: List[float], header: str, rank: Optional[int] = None) -
 
 
 def log_ray_elapses(
-    actors_to_elapses: List[List[Dict[str, Any]]],
+    actors_to_elapses: List[Dict[str, Any]],
     output_path: str,
     warmup: float = 0.2,
 ) -> None:
@@ -90,19 +90,14 @@ def log_ray_elapses(
     os.makedirs(output_path, exist_ok=True)
 
     # Process each actor's data
-    for idx, iters_to_elapses in enumerate(actors_to_elapses):
-        iters_to_elapses = iters_to_elapses[int(warmup * len(iters_to_elapses)) :]
+    for idx, metrics_to_elapses in enumerate(actors_to_elapses):
+        metrics_to_elapses = metrics_to_elapses[int(warmup * len(metrics_to_elapses)) :]
         filename = f"{output_path}/actor_{idx}.csv"
 
-        # Convert list of dicts to dict of lists for easier processing
-        metric_values = defaultdict(list)
-        for elapses in iters_to_elapses:
-            for metric in metrics:
-                assert metric in elapses
-                metric_values[metric].append(elapses[metric])
-
         # Calculate statistics for each metric
-        total_mean = np.mean(metric_values["total"]) if metric_values["total"] else 0
+        total_mean = (
+            np.mean(metrics_to_elapses["total"]) if metrics_to_elapses["total"] else 0
+        )
 
         # Write statistics to CSV file
         with open(filename, "w", newline="") as csvfile:
@@ -110,7 +105,7 @@ def log_ray_elapses(
             writer.writerow(["name", "mean", "std", "cv", "percent"])
 
             for metric in metrics:
-                values = np.array(metric_values[metric])
+                values = np.array(metrics_to_elapses[metric])
                 mean = np.mean(values)
                 std = np.std(values)
                 cv = std / mean * 100 if mean > 0 else 0
