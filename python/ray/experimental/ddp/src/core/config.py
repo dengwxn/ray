@@ -22,6 +22,8 @@ class Config:
 
     # Output path.
     output_path: str
+    # Output prefix.
+    output_prefix: str
     # Check correctness.
     check_correctness: bool
     # Check performance breakdown.
@@ -91,6 +93,12 @@ def parse_config() -> Config:
         help="output file path",
     )
     parser.add_argument(
+        "--output-prefix",
+        type=str,
+        required=True,
+        help="output file prefix",
+    )
+    parser.add_argument(
         "--check-correctness",
         action="store_true",
         help="whether to check correctness",
@@ -109,6 +117,7 @@ def parse_config() -> Config:
         num_actors=args.num_actors,
         num_iters=args.num_iters,
         output_path=args.output_path,
+        output_prefix=args.output_prefix,
         check_correctness=args.check_correctness,
         check_breakdown=args.check_breakdown,
     )

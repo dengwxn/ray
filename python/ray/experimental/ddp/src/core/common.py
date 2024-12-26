@@ -71,8 +71,9 @@ def log_elapses(elapses: List[float], header: str, rank: Optional[int] = None) -
 
 
 def log_ray_elapses(
-    actors_to_elapses: List[Dict[str, Any]],
+    ranks_to_elapses: List[Dict[str, Any]],
     output_path: str,
+    output_prefix: str,
     warmup: float = 0.2,
 ) -> None:
     metrics = [
@@ -89,23 +90,26 @@ def log_ray_elapses(
     # Create output directory if it doesn't exist
     os.makedirs(output_path, exist_ok=True)
 
-    # Process each actor's data
-    for idx, metrics_to_elapses in enumerate(actors_to_elapses):
-        metrics_to_elapses = metrics_to_elapses[int(warmup * len(metrics_to_elapses)) :]
-        filename = f"{output_path}/actor_{idx}.csv"
+    # Process each rank's data
+    for idx, metric_values in enumerate(ranks_to_elapses):
+        output_file = f"{output_path}/{output_prefix}_rank{idx}.csv"
+
+        for metric in metrics:
+            assert metric in metric_values
+            metric_values[metric] = metric_values[metric][
+                int(warmup * len(metric_values[metric])) :
+            ]
 
         # Calculate statistics for each metric
-        total_mean = (
-            np.mean(metrics_to_elapses["total"]) if metrics_to_elapses["total"] else 0
-        )
+        total_mean = np.mean(metric_values["total"]) if metric_values["total"] else 0
 
         # Write statistics to CSV file
-        with open(filename, "w", newline="") as csvfile:
+        with open(output_file, "w", newline="") as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(["name", "mean", "std", "cv", "percent"])
 
             for metric in metrics:
-                values = np.array(metrics_to_elapses[metric])
+                values = np.array(metric_values[metric])
                 mean = np.mean(values)
                 std = np.std(values)
                 cv = std / mean * 100 if mean > 0 else 0
@@ -125,6 +129,7 @@ def log_ray_elapses(
 def log_torch_ddp_elapses(
     ranks_to_elapses: List[Dict[str, Any]],
     output_path: str,
+    output_prefix: str,
     warmup: float = 0.2,
 ) -> None:
     metrics = [
@@ -138,21 +143,21 @@ def log_torch_ddp_elapses(
     # Create output directory if it doesn't exist
     os.makedirs(output_path, exist_ok=True)
 
-    # Process each actor's data
+    # Process each rank's data
     for idx, metric_values in enumerate(ranks_to_elapses):
+        output_file = f"{output_path}/{output_prefix}_rank{idx}.csv"
+
         for metric in metrics:
             assert metric in metric_values
             metric_values[metric] = metric_values[metric][
                 int(warmup * len(metric_values[metric])) :
             ]
 
-        filename = f"{output_path}/rank_{idx}.csv"
-
         # Calculate statistics for each metric
         total_mean = np.mean(metric_values["total"]) if metric_values["total"] else 0
 
         # Write statistics to CSV file
-        with open(filename, "w", newline="") as csvfile:
+        with open(output_file, "w", newline="") as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(["name", "mean", "std", "cv", "percent"])
 

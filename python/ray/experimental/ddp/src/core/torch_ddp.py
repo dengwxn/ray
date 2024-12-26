@@ -52,20 +52,26 @@ def run_torch_ddp(cfg: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]
             join=True,
         )
 
-        log_torch_ddp_elapses(list(ranks_to_elapses.values()), cfg.output_path)
-
-        weights = None
         if cfg.check_correctness:
-            weights = get_torch_ddp_weights(ranks_to_weights, world_size)
-        elapse = max(
-            log_elapses(
-                elapses["total"],
-                f"Running torch ddp on rank {rank}...",
-            )
-            for rank, elapses in ranks_to_elapses.items()
-        )
+            ranks_to_weights_clone = dict(ranks_to_weights)
+        ranks_to_elapses_clone = dict(ranks_to_elapses)
 
-        return weights, elapse
+    log_torch_ddp_elapses(
+        list(ranks_to_elapses_clone.values()), cfg.output_path, cfg.output_prefix
+    )
+
+    weights = None
+    if cfg.check_correctness:
+        weights = get_torch_ddp_weights(ranks_to_weights_clone, world_size)
+    elapse = max(
+        log_elapses(
+            elapses["total"],
+            f"Running torch ddp on rank {rank}...",
+        )
+        for rank, elapses in ranks_to_elapses_clone.items()
+    )
+
+    return weights, elapse
 
 
 def spwan_torch_ddp(
@@ -87,10 +93,6 @@ def spwan_torch_ddp(
         cfg: Model and training configurations. If correctness is checked,
             ranks_to_weights is not None and will be updated.
     """
-
-    def sync_time() -> float:
-        dist.barrier()
-        return time.perf_counter()
 
     if cfg.check_correctness:
         assert ranks_to_weights is not None
@@ -129,26 +131,28 @@ def spwan_torch_ddp(
             x = torch.tensor_split(x, cfg.num_actors)[rank].to(rank)
             y = torch.tensor_split(y, cfg.num_actors)[rank].to(rank)
 
-            start = sync_time()
+            dist.barrier()
+            start = time.perf_counter()
             optimizer.zero_grad()
 
-            forward_start = sync_time()
+            forward_start = time.perf_counter()
             pred: torch.Tensor = ddp_model(x)
-            forward_end = sync_time()
+            forward_end = time.perf_counter()
 
-            loss_compute_start = sync_time()
+            loss_compute_start = time.perf_counter()
             loss: torch.Tensor = model.criterion(pred, y)
-            loss_compute_end = sync_time()
+            loss_compute_end = time.perf_counter()
 
-            backward_start = sync_time()
+            backward_start = time.perf_counter()
             loss.backward()
-            backward_end = sync_time()
+            backward_end = time.perf_counter()
 
-            update_start = sync_time()
+            update_start = time.perf_counter()
             optimizer.step()
-            update_end = sync_time()
+            update_end = time.perf_counter()
 
-            end = sync_time()
+            dist.barrier()
+            end = time.perf_counter()
 
             if cfg.check_correctness:
                 iter_weights: List[torch.Tensor] = []

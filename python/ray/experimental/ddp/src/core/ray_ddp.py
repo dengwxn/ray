@@ -95,7 +95,7 @@ def run_ray_ddp(cfg: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
         elapses.append(elapse)
 
     actors_to_traces = ray.get([actor.fetch_traces.remote() for actor in actors])
-    log_ray_elapses(actors_to_traces, cfg.output_path)
+    log_ray_elapses(actors_to_traces, cfg.output_path, cfg.output_prefix)
 
     compiled_dag.teardown()
     for actor in actors:
