@@ -55,18 +55,18 @@ def log_elapses(elapses: List[float], header: str, rank: Optional[int] = None) -
         mean: Elapse mean after first iteration.
     """
 
-    logger = logging.getLogger(__name__)
-    logger.info(header)
-    for i, elapse in enumerate(elapses):
-        if rank is not None:
-            logger.info(
-                f"Iteration: {i}, rank: {rank}, elapse: {secs_to_micros(elapse)} us"
-            )
-        else:
-            logger.info(f"Iteration: {i}, elapse: {secs_to_micros(elapse)} us")
+    # logger = logging.getLogger(__name__)
+    # logger.info(header)
+    # for i, elapse in enumerate(elapses):
+    #     if rank is not None:
+    #         logger.info(
+    #             f"Iteration: {i}, rank: {rank}, elapse: {secs_to_micros(elapse)} us"
+    #         )
+    #     else:
+    #         logger.info(f"Iteration: {i}, elapse: {secs_to_micros(elapse)} us")
     mean = sum(elapses[1:]) / (len(elapses) - 1)
     mean = secs_to_micros(mean)
-    logger.info(f"Elapse mean after iteration 0: {mean} us")
+    # logger.info(f"Elapse mean after iteration 0: {mean} us")
     return mean
 
 
@@ -100,6 +100,52 @@ def log_ray_elapses(
             for metric in metrics:
                 assert metric in elapses
                 metric_values[metric].append(elapses[metric])
+
+        # Calculate statistics for each metric
+        total_mean = np.mean(metric_values["total"]) if metric_values["total"] else 0
+
+        # Write statistics to CSV file
+        with open(filename, "w", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(["name", "mean", "std", "cv", "percent"])
+
+            for metric in metrics:
+                values = np.array(metric_values[metric])
+                mean = np.mean(values)
+                std = np.std(values)
+                cv = std / mean * 100 if mean > 0 else 0
+                percent = (mean / total_mean * 100) if total_mean > 0 else 0
+
+                writer.writerow(
+                    [
+                        metric,
+                        round(mean),
+                        round(std),
+                        round(cv, 1),
+                        round(percent, 1),
+                    ]
+                )
+
+
+def log_torch_ddp_elapses(
+    ranks_to_elapses: List[Dict[str, Any]],
+    output_path: str,
+    warmup: float = 0.2,
+) -> None:
+    metrics = ["total"]
+
+    # Create output directory if it doesn't exist
+    os.makedirs(output_path, exist_ok=True)
+
+    # Process each actor's data
+    for idx, metric_values in enumerate(ranks_to_elapses):
+        for metric in metrics:
+            assert metric in metric_values
+            metric_values[metric] = metric_values[metric][
+                int(warmup * len(metric_values[metric])) :
+            ]
+
+        filename = f"{output_path}/rank_{idx}.csv"
 
         # Calculate statistics for each metric
         total_mean = np.mean(metric_values["total"]) if metric_values["total"] else 0

@@ -161,6 +161,7 @@ class RayDDPWorker:
             )
         logger.info("")
 
+        # [TODO] We don't need to append here. We can append inside the list.
         self.iters_to_elapses.append(elapses)
 
     def fetch_traces(self) -> List[Dict[str, Any]]:

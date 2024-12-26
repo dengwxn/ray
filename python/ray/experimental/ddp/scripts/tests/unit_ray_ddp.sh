@@ -15,12 +15,12 @@ learning_rate=1e-5
 num_actors=2
 num_iters=100
 
-output_path=results/unit
+output_path=results/tests/unit_ray_ddp
 mkdir -p $output_path
 
 echo "Running layer_size $layer_size, num_layers $num_layers..."
 output_file=$output_path/ls${layer_size}_nl${num_layers}
-python -m ray.experimental.ddp.src.main_ray \
+python -m ray.experimental.ddp.src.main_ray_ddp \
 	--dtype $dtype \
 	--layer-size $layer_size \
 	--num-layers $num_layers \

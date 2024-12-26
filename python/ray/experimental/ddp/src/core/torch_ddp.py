@@ -8,7 +8,12 @@ import torch.multiprocessing as mp
 import torch.optim as optim
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from .common import generate_input_output, log_elapses
+from .common import (
+    generate_input_output,
+    log_elapses,
+    log_torch_ddp_elapses,
+    secs_to_micros,
+)
 from .config import Config
 from .correctness import get_torch_ddp_weights
 from .model import LayeredModel
@@ -45,10 +50,18 @@ def run_torch_ddp(cfg: Config) -> Tuple[Optional[List[List[torch.Tensor]]], int]
             join=True,
         )
 
+        log_torch_ddp_elapses(list(ranks_to_elapses.values()), cfg.output_path)
+
         weights = None
         if cfg.check_correctness:
             weights = get_torch_ddp_weights(ranks_to_weights, world_size)
-        elapse = max(ranks_to_elapses.values())
+        elapse = max(
+            log_elapses(
+                elapses["total"],
+                f"Running torch ddp on rank {rank}...",
+            )
+            for rank, elapses in ranks_to_elapses.items()
+        )
 
         return weights, elapse
 
@@ -78,58 +91,61 @@ def spwan_torch_ddp(
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "8888"
 
-    # Initialize the process group.
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+    try:
+        # Initialize the process group.
+        dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
-    # Create model on the device.
-    device = f"cuda:{rank}"
-    model = LayeredModel(
-        cfg.layer_size,
-        cfg.num_layers,
-        device,
-        cfg.dtype,
-        cfg.learning_rate,
-    )
-    ddp_model = DDP(model, device_ids=[rank])
-    optimizer = optim.SGD(ddp_model.parameters(), lr=model.lr)
+        # Create model on the device.
+        device = f"cuda:{rank}"
+        model = LayeredModel(
+            cfg.layer_size,
+            cfg.num_layers,
+            device,
+            cfg.dtype,
+            cfg.learning_rate,
+        )
+        ddp_model = DDP(model, device_ids=[rank])
+        optimizer = optim.SGD(ddp_model.parameters(), lr=model.lr)
 
-    weights: Optional[List[List[torch.Tensor]]] = None
-    if cfg.check_correctness:
-        weights = []
-    elapses = []
-
-    for _ in range(cfg.num_iters):
-        x, y = generate_input_output(cfg)
-        x = torch.tensor_split(x, cfg.num_actors)[rank].to(rank)
-        y = torch.tensor_split(y, cfg.num_actors)[rank].to(rank)
-
-        start = time.perf_counter()
-        optimizer.zero_grad()
-        pred: torch.Tensor = ddp_model(x)
-        loss: torch.Tensor = model.criterion(pred, y)
-        loss.backward()
-        optimizer.step()
-        end = time.perf_counter()
-
+        weights: Optional[List[List[torch.Tensor]]] = None
         if cfg.check_correctness:
-            iter_weights: List[torch.Tensor] = []
-            for i in range(0, len(model.layers), 2):
-                layer: torch.nn.Linear = model.layers[i]
-                iter_weights.append(torch.clone(layer.weight))
-            weights.append(iter_weights)
+            weights = []
+        elapses = {
+            "total": [],
+        }
 
-        elapse = end - start
-        elapses.append(elapse)
+        for _ in range(cfg.num_iters):
+            x, y = generate_input_output(cfg)
+            x = torch.tensor_split(x, cfg.num_actors)[rank].to(rank)
+            y = torch.tensor_split(y, cfg.num_actors)[rank].to(rank)
 
-    # Destroy the process group.
-    dist.destroy_process_group()
+            dist.barrier()
+            start = time.perf_counter()
 
-    elapse_mean = log_elapses(
-        elapses,
-        f"Running torch ddp, rank: {rank}...",
-        rank,
-    )
-    ranks_to_elapses[rank] = elapse_mean
+            # [TODO] Get the same visibility as Ray DDP.
+            optimizer.zero_grad()
+            pred: torch.Tensor = ddp_model(x)
+            loss: torch.Tensor = model.criterion(pred, y)
+            loss.backward()
+            optimizer.step()
+
+            dist.barrier()
+            end = time.perf_counter()
+
+            if cfg.check_correctness:
+                iter_weights: List[torch.Tensor] = []
+                for i in range(0, len(model.layers), 2):
+                    layer: torch.nn.Linear = model.layers[i]
+                    iter_weights.append(torch.clone(layer.weight))
+                weights.append(iter_weights)
+
+            elapse = secs_to_micros(end - start)
+            elapses["total"].append(elapse)
+    finally:
+        # Destroy the process group.
+        dist.destroy_process_group()
+
+    ranks_to_elapses[rank] = elapses
 
     if cfg.check_correctness:
         ranks_to_weights[rank] = detach(weights)
@@ -148,10 +164,6 @@ def detach(
     Returns:
         Detached weights of all layers across all iterations.
     """
-    weights_detached: List[List[torch.Tensor]] = []
-    for iter_weights in weights:
-        tensors_detached: List[torch.Tensor] = []
-        for tensor in iter_weights:
-            tensors_detached.append(tensor.detach().cpu())
-        weights_detached.append(tensors_detached)
-    return weights_detached
+    return [
+        [tensor.detach().cpu() for tensor in iter_weights] for iter_weights in weights
+    ]
