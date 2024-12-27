@@ -17,7 +17,7 @@ num_layers_values=(
 
 learning_rate=1e-5
 num_actors=4
-num_iters=100
+num_iters=30
 
 output_path=results/xuhui/torch_ddp
 mkdir -p $output_path
