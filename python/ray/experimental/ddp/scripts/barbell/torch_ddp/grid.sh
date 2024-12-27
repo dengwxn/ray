@@ -19,7 +19,7 @@ learning_rate=1e-5
 num_actors=2
 num_iters=30
 
-output_path=results/barbell/torch_ddp
+output_path=results/barbell/torch_ddp/grid
 mkdir -p $output_path
 rm -f $output_path/*.log
 rm -f $output_path/*.csv

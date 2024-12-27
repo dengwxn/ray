@@ -15,7 +15,7 @@ learning_rate=1e-5
 num_actors=2
 num_iters=100
 
-output_path=results/tests/unit_torch_ddp
+output_path=results/barbell/ray_ddp/unit
 mkdir -p $output_path
 
 output_prefix=ls${layer_size}_nl${num_layers}
@@ -23,7 +23,7 @@ output_file=$output_path/$output_prefix.log
 code $output_file
 
 echo "Running layer_size $layer_size, num_layers $num_layers..."
-python -m ray.experimental.ddp.src.main_torch_ddp \
+python -m ray.experimental.ddp.src.main_ray_ddp \
 	--dtype $dtype \
 	--layer-size $layer_size \
 	--num-layers $num_layers \
