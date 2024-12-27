@@ -15,7 +15,7 @@ learning_rate=1e-5
 num_actors=1
 num_iters=100
 
-output_path=results/barbell/ray_ddp/unit
+output_path=results/barbell/ray_ddp_offline/unit
 mkdir -p $output_path
 rm -f $output_path/*.log
 rm -f $output_path/*.csv
@@ -25,7 +25,7 @@ output_file=$output_path/$output_prefix.log
 code $output_file
 
 echo "Running layer_size $layer_size, num_layers $num_layers..."
-python -m ray.experimental.ddp.src.main_ray_ddp \
+python -m ray.experimental.ddp.src.main_ray_ddp_offline \
 	--dtype $dtype \
 	--layer-size $layer_size \
 	--num-layers $num_layers \

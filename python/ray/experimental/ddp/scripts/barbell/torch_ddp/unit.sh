@@ -12,11 +12,13 @@ layer_size=320
 num_layers=32
 
 learning_rate=1e-5
-num_actors=2
+num_actors=1
 num_iters=100
 
 output_path=results/barbell/torch_ddp/unit
 mkdir -p $output_path
+rm -f $output_path/*.log
+rm -f $output_path/*.csv
 
 output_prefix=ls${layer_size}_nl${num_layers}
 output_file=$output_path/$output_prefix.log
