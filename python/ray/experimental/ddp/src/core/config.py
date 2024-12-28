@@ -140,6 +140,10 @@ def parse_args() -> Dict[str, Any]:
         "--output-path",
         type=str,
     )
+    parser.add_argument(
+        "--mode",
+        type=str,
+    )
     args = parser.parse_args()
     args = vars(args)
     return args
