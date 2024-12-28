@@ -137,9 +137,9 @@ def log_ray_offline_elapses(
         "fw.total",
         "loss.compute",
         "loss.backward",
-        "bw.total",
+        # "bw.total",
         "bw.backward",
-        "bw.update",
+        # "bw.update",
     ]
 
     # Create output directory if it doesn't exist

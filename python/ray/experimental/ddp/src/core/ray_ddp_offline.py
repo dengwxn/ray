@@ -28,17 +28,19 @@ def run_ray_ddp_offline(cfg: Config) -> None:
 
     def execute(actor: RayDDPWorkerOffline) -> None:
         grads = actor.forward(None)
-        outputs = []
+        # outputs = []
         for j in reversed(range(cfg.num_layers)):
             grads = actor.backward_layer(j, grads)
-            # [TODO] `allreduce` unverified.
-            # grads_allreduced = allreduce(
-            #     actor.get_grad_to_reduce(grads)
-            # )
-            grads_allreduced = actor.get_grad_to_reduce(grads)
-            updates = actor.update_layer(j, grads_allreduced)
-            outputs.append(updates)
-        ends = actor.finish_train(*outputs)
+            # [TODO] Focus on backward_layer.
+            # # [TODO] `allreduce` unverified.
+            # # grads_allreduced = allreduce(
+            # #     actor.get_grad_to_reduce(grads)
+            # # )
+            # grads_allreduced = actor.get_grad_to_reduce(grads)
+            # updates = actor.update_layer(j, grads_allreduced)
+            # outputs.append(updates)
+        # ends = actor.finish_train(*outputs)
+        actor.finish_tracing()
 
     for _ in range(cfg.num_iters):
         start = time.perf_counter()

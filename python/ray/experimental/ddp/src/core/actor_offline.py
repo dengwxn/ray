@@ -34,8 +34,7 @@ class RayDDPWorkerOffline:
         check_correctness: bool,
         check_tracing: bool,
     ):
-        # Each device has a single GPU.
-        self.device = torch_utils.get_devices()[0]
+        self.device = "cuda:0"
         self.model: LayeredModel = LayeredModel(
             layer_size, num_layers, self.device, dtype, lr
         )
@@ -104,10 +103,10 @@ class RayDDPWorkerOffline:
             "loss.backward",
             self.time["backward_loss_end"] - self.time["backward_loss_start"],
         )
-        log(
-            "bw.total",
-            self.time["update_ends"][-1] - self.time["backward_starts"][0],
-        )
+        # log(
+        #     "bw.total",
+        #     self.time["update_ends"][-1] - self.time["backward_starts"][0],
+        # )
         log(
             "bw.backward",
             sum(
@@ -117,24 +116,24 @@ class RayDDPWorkerOffline:
                 ]
             ),
         )
-        log(
-            "bw.allreduce",
-            sum(
-                [
-                    self.time["update_starts"][i] - self.time["backward_ends"][i]
-                    for i in range(self.num_layers)
-                ]
-            ),
-        )
-        log(
-            "bw.update",
-            sum(
-                [
-                    self.time["update_ends"][i] - self.time["update_starts"][i]
-                    for i in range(self.num_layers)
-                ]
-            ),
-        )
+        # log(
+        #     "bw.allreduce",
+        #     sum(
+        #         [
+        #             self.time["update_starts"][i] - self.time["backward_ends"][i]
+        #             for i in range(self.num_layers)
+        #         ]
+        #     ),
+        # )
+        # log(
+        #     "bw.update",
+        #     sum(
+        #         [
+        #             self.time["update_ends"][i] - self.time["update_starts"][i]
+        #             for i in range(self.num_layers)
+        #         ]
+        #     ),
+        # )
 
         logger.info("")
         for i in range(self.num_layers):
@@ -149,14 +148,14 @@ class RayDDPWorkerOffline:
                 f"bw.backward.{i}",
                 self.time["backward_ends"][i] - self.time["backward_starts"][i],
             )
-            log(
-                f"bw.allreduce.{i}",
-                self.time["update_starts"][i] - self.time["backward_ends"][i],
-            )
-            log(
-                f"bw.update.{i}",
-                self.time["update_ends"][i] - self.time["update_starts"][i],
-            )
+            # log(
+            #     f"bw.allreduce.{i}",
+            #     self.time["update_starts"][i] - self.time["backward_ends"][i],
+            # )
+            # log(
+            #     f"bw.update.{i}",
+            #     self.time["update_ends"][i] - self.time["update_starts"][i],
+            # )
         logger.info("")
 
     def fetch_traces(self) -> Dict[str, List]:
@@ -183,6 +182,8 @@ class RayDDPWorkerOffline:
         """
         self.x = x.to(self.device)
         self.y = y.to(self.device)
+        assert self.x.is_cuda
+        assert self.y.is_cuda
 
     def start_train(self) -> None:
         """
