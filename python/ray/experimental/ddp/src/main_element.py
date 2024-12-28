@@ -15,21 +15,15 @@ logging.basicConfig(
 class ElementModel(torch.nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        self.input_size = 2
-        self.hidden_size = 2
-        self.output_size = 2
-        self.num_layers = 2
+        self.size = 1024
+        self.num_layers = 4
         self.linear_layers = [
             torch.nn.Linear(
-                self.input_size,
-                self.hidden_size,
+                self.size,
+                self.size,
                 bias=False,
-            ),
-            torch.nn.Linear(
-                self.hidden_size,
-                self.output_size,
-                bias=False,
-            ),
+            )
+            for _ in range(self.num_layers)
         ]
         self.relu_layers = [torch.nn.ReLU() for _ in range(self.num_layers)]
         self.linear_layers = torch.nn.ModuleList(self.linear_layers)
@@ -46,11 +40,14 @@ class ElementModel(torch.nn.Module):
 
         with torch.no_grad():
             for layer in self.linear_layers:
-                torch.nn.init.uniform_(layer.weight, -1, 1)
+                torch.nn.init.kaiming_uniform_(
+                    layer.weight, mode="fan_in", nonlinearity="relu"
+                )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         self.inputs = []
         self.activations = []
+        self.gradients = []
 
         for linear, relu in zip(self.linear_layers, self.relu_layers):
             self.inputs.append(x)
@@ -61,12 +58,11 @@ class ElementModel(torch.nn.Module):
 
         return z
 
-    def backward_and_update_all_layers(self, pred: torch.Tensor) -> float:
+    def backward_and_update_all_layers(self, pred: torch.Tensor):
         self.optimizer.zero_grad()
         loss = self.criterion(pred, self.y)
         loss.backward()
         self.optimizer.step()
-        return loss.item()
 
     def backward_layer(self, idx: int) -> None:
         if idx == len(self.linear_layers):
@@ -122,58 +118,60 @@ class ElementModel(torch.nn.Module):
                 logger.info(f"input grad: {input.grad}")
 
 
-def train_sequential(model: ElementModel, num_epochs: int) -> None:
+def train_sequential(model: ElementModel, num_epochs: int, model_file: str) -> None:
     for epoch in range(num_epochs):
-        # Generate new random input and target
-        model.x = torch.randn(1, model.input_size)
-        model.y = torch.randn(1, model.output_size)
+        model.x = torch.randn(1, model.size, requires_grad=True)
+        model.y = torch.randn(1, model.size)
 
-        logger.info(f"\nEpoch {epoch}")
-        logger.info(f"Input x: {model.x}")
-        logger.info(f"Target y: {model.y}")
+        logger.info(f"epoch: {epoch}")
+        logger.info(f"input: {model.x}")
+        logger.info(f"target: {model.y}")
 
         # Forward pass
         pred = model.forward(model.x)
-        logger.info(f"Prediction: {pred}")
+        logger.info(f"prediction: {pred}")
 
         # Backward pass and update
         model.backward_and_update_all_layers(pred)
 
-        # logger updated weights
-        logger.info("\nUpdated weights:")
+        logger.info("updated weights:")
         for idx, layer in enumerate(model.linear_layers):
-            logger.info(f"Layer {idx} weight:\n{layer.weight}")
+            logger.info(f"layer {idx} weight: {layer.weight}")
+
+    with open(model_file, "w") as f:
+        for layer in model.linear_layers:
+            f.write(f"{layer.weight}\n")
 
 
-def train_checkpoint(model: ElementModel, num_epochs: int) -> None:
+def train_checkpoint(model: ElementModel, num_epochs: int, model_file: str) -> None:
     for epoch in range(num_epochs):
         model.zero_grad()
-        model.x = torch.randn(1, model.input_size, requires_grad=True)
-        model.y = torch.randn(1, model.output_size)
+        model.x = torch.randn(1, model.size, requires_grad=True)
+        model.y = torch.randn(1, model.size)
 
-        logger.info(f"Epoch {epoch}")
-        logger.info(f"Input x: {model.x}")
-        logger.info(f"Target y: {model.y}")
+        logger.info(f"epoch: {epoch}")
+        logger.info(f"input: {model.x}")
+        logger.info(f"target: {model.y}")
 
         # Forward pass
         pred = model.forward(model.x)
-        logger.info(f"Prediction: {pred}")
-
-        # # Backward pass and update
-        # model.backward_layer(len(model.linear_layers))
-        # for idx in reversed(range(model.num_layers)):
-        #     model.backward_layer(idx)
+        logger.info(f"prediction: {pred}")
 
         # Backward pass and update
         model.backward_layers([len(model.linear_layers)])
+        model.backward_layers([3, 2])
         model.backward_layers([1, 0])
 
+        # Update weights
         model.optimizer.step()
 
-        # logger updated weights
-        logger.info("\nUpdated weights:")
+        logger.info("updated weights:")
         for idx, layer in enumerate(model.linear_layers):
-            logger.info(f"Layer {idx} weight:\n{layer.weight}")
+            logger.info(f"layer {idx} weight: {layer.weight}")
+
+    with open(model_file, "w") as f:
+        for layer in model.linear_layers:
+            f.write(f"{layer.weight}\n")
 
 
 def main(args: Dict[str, Any]) -> None:
@@ -182,16 +180,12 @@ def main(args: Dict[str, Any]) -> None:
     logger.info("Welcome to Downton Abbey!")
 
     model = ElementModel()
-    num_epochs = 2
-
-    logger.info("Initial weights:")
-    for idx, layer in enumerate(model.linear_layers):
-        logger.info(f"Layer {idx} weight:\n{layer.weight}")
+    num_epochs = 4
 
     if args["mode"] == "sequential":
-        train_sequential(model, num_epochs)
+        train_sequential(model, num_epochs, args["model_file"])
     elif args["mode"] == "checkpoint":
-        train_checkpoint(model, num_epochs)
+        train_checkpoint(model, num_epochs, args["model_file"])
 
 
 if __name__ == "__main__":

@@ -12,15 +12,25 @@ output_path=results/barbell/element/unit
 mkdir -p $output_path
 rm -f $output_path/*.csv
 
-output_file=$output_path/unit_${timestamp}.log
-code $output_file
+modes=(sequential checkpoint)
+for mode in ${modes[@]}; do
+	output_file=$output_path/unit_${timestamp}_${mode}.log
+	model_file=$output_path/unit_${timestamp}_${mode}_model.log
 
-# python -m ray.experimental.ddp.src.main_element \
-# 	--mode sequential \
-# 	--output-path $output_path \
-# 	>$output_file 2>&1
+	python -m ray.experimental.ddp.src.main_element \
+		--mode $mode \
+		--model-file $model_file \
+		>$output_file 2>&1
+done
 
-python -m ray.experimental.ddp.src.main_element \
-	--mode checkpoint \
-	--output-path $output_path \
-	>$output_file 2>&1
+if ! diff \
+	"$output_path/unit_${timestamp}_${modes[0]}_model.log" \
+	"$output_path/unit_${timestamp}_${modes[1]}_model.log"; then
+	case $? in
+	1) echo "WA" ;;
+	*) echo "ER" ;;
+	esac
+	exit 1
+else
+	echo "AC"
+fi
