@@ -34,3 +34,6 @@ if ! diff \
 else
 	echo "AC"
 fi
+
+code $output_path/unit_${timestamp}_${modes[0]}.log
+code $output_path/unit_${timestamp}_${modes[1]}.log

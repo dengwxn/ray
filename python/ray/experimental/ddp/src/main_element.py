@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Any, Dict, List
 
 import torch
@@ -7,7 +8,7 @@ from .core.config import parse_args
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format="[%(levelname)s %(filename)s:%(lineno)d %(funcName)s] %(message)s",
 )
 
@@ -15,19 +16,22 @@ logging.basicConfig(
 class ElementModel(torch.nn.Module):
     def __init__(self) -> None:
         super().__init__()
+        self.device = "cuda:0"
         self.size = 1024
-        self.num_layers = 4
-        self.linear_layers = [
-            torch.nn.Linear(
-                self.size,
-                self.size,
-                bias=False,
-            )
-            for _ in range(self.num_layers)
-        ]
-        self.relu_layers = [torch.nn.ReLU() for _ in range(self.num_layers)]
-        self.linear_layers = torch.nn.ModuleList(self.linear_layers)
-        self.relu_layers = torch.nn.ModuleList(self.relu_layers)
+        self.num_layers = 8
+        self.linear_layers = torch.nn.ModuleList(
+            [
+                torch.nn.Linear(
+                    self.size,
+                    self.size,
+                    bias=False,
+                )
+                for _ in range(self.num_layers)
+            ]
+        )
+        self.relu_layers = torch.nn.ModuleList(
+            [torch.nn.ReLU() for _ in range(self.num_layers)]
+        )
 
         self.x = None
         self.y = None
@@ -120,8 +124,10 @@ class ElementModel(torch.nn.Module):
 
 def train_sequential(model: ElementModel, num_epochs: int, model_file: str) -> None:
     for epoch in range(num_epochs):
-        model.x = torch.randn(1, model.size, requires_grad=True)
-        model.y = torch.randn(1, model.size)
+        start = time.perf_counter()
+
+        model.x = torch.randn(1, model.size, requires_grad=True).to(model.device)
+        model.y = torch.randn(1, model.size).to(model.device)
 
         logger.info(f"epoch: {epoch}")
         logger.info(f"input: {model.x}")
@@ -134,9 +140,14 @@ def train_sequential(model: ElementModel, num_epochs: int, model_file: str) -> N
         # Backward pass and update
         model.backward_and_update_all_layers(pred)
 
+        end = time.perf_counter()
+
         logger.info("updated weights:")
         for idx, layer in enumerate(model.linear_layers):
             logger.info(f"layer {idx} weight: {layer.weight}")
+
+        if epoch > 0:
+            logger.warning(f"epoch: {epoch} elapse: {round((end - start) * 1e6)} us")
 
     with open(model_file, "w") as f:
         for layer in model.linear_layers:
@@ -145,9 +156,11 @@ def train_sequential(model: ElementModel, num_epochs: int, model_file: str) -> N
 
 def train_checkpoint(model: ElementModel, num_epochs: int, model_file: str) -> None:
     for epoch in range(num_epochs):
+        start = time.perf_counter()
+
         model.zero_grad()
-        model.x = torch.randn(1, model.size, requires_grad=True)
-        model.y = torch.randn(1, model.size)
+        model.x = torch.randn(1, model.size, requires_grad=True).to(model.device)
+        model.y = torch.randn(1, model.size).to(model.device)
 
         logger.info(f"epoch: {epoch}")
         logger.info(f"input: {model.x}")
@@ -159,15 +172,35 @@ def train_checkpoint(model: ElementModel, num_epochs: int, model_file: str) -> N
 
         # Backward pass and update
         model.backward_layers([len(model.linear_layers)])
-        model.backward_layers([3, 2])
-        model.backward_layers([1, 0])
+        end_loss = time.perf_counter()
+        if epoch > 0:
+            logger.info(f"loss elapse: {round((end_loss - start) * 1e6)} us")
+
+        # for i in reversed(range(len(model.linear_layers))):
+        #     model.backward_layers([i])
+        model.backward_layers(list(reversed(range(len(model.linear_layers)))))
+        end_backwards = time.perf_counter()
+        if epoch > 0:
+            logger.warning(
+                f"backwards elapse: {round((end_backwards - end_loss) * 1e6)} us"
+            )
 
         # Update weights
         model.optimizer.step()
+        end_updates = time.perf_counter()
+        if epoch > 0:
+            logger.info(
+                f"updates elapse: {round((end_updates - end_backwards) * 1e6)} us"
+            )
+
+        end = time.perf_counter()
 
         logger.info("updated weights:")
         for idx, layer in enumerate(model.linear_layers):
             logger.info(f"layer {idx} weight: {layer.weight}")
+
+        if epoch > 0:
+            logger.warning(f"epoch: {epoch}, elapse: {round((end - start) * 1e6)} us")
 
     with open(model_file, "w") as f:
         for layer in model.linear_layers:
@@ -180,6 +213,7 @@ def main(args: Dict[str, Any]) -> None:
     logger.info("Welcome to Downton Abbey!")
 
     model = ElementModel()
+    model = model.to(model.device)
     num_epochs = 4
 
     if args["mode"] == "sequential":
