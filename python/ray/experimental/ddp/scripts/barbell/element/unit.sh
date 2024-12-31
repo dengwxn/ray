@@ -14,7 +14,6 @@ rm -f $output_path/*.csv
 
 modes=(
 	sequential
-	# checkpoint
 	cot
 )
 for mode in ${modes[@]}; do

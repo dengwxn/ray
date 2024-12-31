@@ -69,30 +69,6 @@ class ElementModel(torch.nn.Module):
         loss.backward()
         self.optimizer.step()
 
-    def backward_layer(self, idx: int) -> None:
-        if idx == len(self.linear_layers):
-            z = self.activations[-1]
-            loss = self.criterion(z, self.y)
-            loss.backward(
-                retain_graph=True,
-                inputs=[z],
-            )
-            self.gradients.append(z.grad)
-        else:
-            z = self.activations[idx]
-            x = self.inputs[idx]
-            w = self.linear_layers[idx].weight
-            grad = self.gradients[-1]
-            retain_graph = idx != 0
-            z.backward(
-                gradient=grad,
-                retain_graph=retain_graph,
-                inputs=[x, w],
-            )
-            self.gradients.append(x.grad)
-
-            logger.info(f"layer: {idx}, input grad: {x.grad}, weight grad: {w.grad}")
-
     def backward_layers(self, idxs: List[int]) -> None:
         if len(idxs) == 1 and idxs[0] == len(self.linear_layers):
             z = self.activations[-1]
@@ -202,59 +178,6 @@ def train_cot(models: List[ElementModel], num_epochs: int, model_file: str) -> N
                 f.write(f"{layer.weight}\n")
 
 
-def train_checkpoint(model: ElementModel, num_epochs: int, model_file: str) -> None:
-    for epoch in range(num_epochs):
-        start = time.perf_counter()
-
-        model.zero_grad()
-        model.x = torch.randn(1, model.size, requires_grad=True).to(model.device)
-        model.y = torch.randn(1, model.size).to(model.device)
-
-        logger.info(f"epoch: {epoch}")
-        logger.info(f"input: {model.x}")
-        logger.info(f"target: {model.y}")
-
-        # Forward pass
-        pred = model.forward(model.x)
-        logger.info(f"prediction: {pred}")
-
-        # Backward pass and update
-        model.backward_layers([len(model.linear_layers)])
-        end_loss = time.perf_counter()
-        if epoch > 0:
-            logger.info(f"loss elapse: {round((end_loss - start) * 1e6)} us")
-
-        # for i in reversed(range(len(model.linear_layers))):
-        #     model.backward_layers([i])
-        model.backward_layers(list(reversed(range(len(model.linear_layers)))))
-        end_backwards = time.perf_counter()
-        if epoch > 0:
-            logger.warning(
-                f"backwards elapse: {round((end_backwards - end_loss) * 1e6)} us"
-            )
-
-        # Update weights
-        model.optimizer.step()
-        end_updates = time.perf_counter()
-        if epoch > 0:
-            logger.info(
-                f"updates elapse: {round((end_updates - end_backwards) * 1e6)} us"
-            )
-
-        end = time.perf_counter()
-
-        logger.info("updated weights:")
-        for idx, layer in enumerate(model.linear_layers):
-            logger.info(f"layer {idx} weight: {layer.weight}")
-
-        if epoch > 0:
-            logger.warning(f"epoch: {epoch}, elapse: {round((end - start) * 1e6)} us")
-
-    with open(model_file, "w") as f:
-        for layer in model.linear_layers:
-            f.write(f"{layer.weight}\n")
-
-
 def main(args: Dict[str, Any]) -> None:
     logger.info("Welcome to Downton Abbey!")
 
@@ -275,8 +198,6 @@ def main(args: Dict[str, Any]) -> None:
             num_epochs,
             args["model_file"],
         )
-    elif args["mode"] == "checkpoint":
-        raise NotImplementedError
     elif args["mode"] == "cot":
         num_models = 2
         models = [
