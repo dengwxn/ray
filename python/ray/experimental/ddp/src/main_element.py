@@ -132,42 +132,60 @@ def train_sequential(model: ElementModel, num_epochs: int, model_file: str) -> N
 
 
 def train_cot(models: List[ElementModel], num_epochs: int, model_file: str) -> None:
-    assert len(models) == 2, "Only support two models for now"
+    num_models = len(models)
 
     for epoch in range(num_epochs):
         start = time.perf_counter()
 
+        # Generate input for first model and target for last model
         models[0].x = torch.randn(1, models[0].size, requires_grad=True).to(
             models[0].device
         )
-        models[1].y = torch.randn(1, models[1].size).to(models[1].device)
+        models[-1].y = torch.randn(1, models[-1].size).to(models[-1].device)
 
         logger.info(f"epoch: {epoch}")
         logger.info(f"input: {models[0].x}")
-        logger.info(f"target: {models[1].y}")
+        logger.info(f"target: {models[-1].y}")
 
-        # Forward pass
-        pred1 = models[0].forward(models[0].x)
-        pred1_detached = pred1.detach().requires_grad_(True)
-        pred2 = models[1].forward(pred1_detached)
-        logger.info(f"prediction: {pred2}")
+        # Forward pass through all models
+        intermediate_outputs = []
+        input = models[0].x
 
-        # Backward and update for all models
-        loss = models[1].criterion(pred2, models[1].y)
+        for i, model in enumerate(models):
+            pred = model.forward(input)
+            if i < num_models - 1:
+                # Detach intermediate outputs to create separate computation graphs
+                input = pred.detach().requires_grad_(True)
+                intermediate_outputs.append((pred, input))
+            else:
+                # Last model's output
+                final_pred = pred
+
+        logger.info(f"prediction: {final_pred}")
+
+        # Backward pass and optimization starting from the last model
+        # Initialize with the final loss
+        loss = models[-1].criterion(final_pred, models[-1].y)
         loss.backward()
-        models[1].optimizer.step()
-        models[1].optimizer.zero_grad()
+        models[-1].optimizer.step()
+        models[-1].optimizer.zero_grad()
 
-        pred1.backward(pred1_detached.grad)
-        models[0].optimizer.step()
-        models[0].optimizer.zero_grad()
+        # Propagate gradients backward through intermediate models
+        for i in range(num_models - 2, -1, -1):
+            pred, pred_detached = intermediate_outputs[i]
+            pred.backward(pred_detached.grad)
+            models[i].optimizer.step()
+            models[i].optimizer.zero_grad()
 
         end = time.perf_counter()
 
+        # Log updated weights
         logger.info("updated weights:")
-        for model in models:
-            for idx, layer in enumerate(model.linear_layers):
-                logger.info(f"layer {idx} weight: {layer.weight}")
+        for model_idx, model in enumerate(models):
+            for layer_idx, layer in enumerate(model.linear_layers):
+                logger.info(
+                    f"model {model_idx} layer {layer_idx} weight: {layer.weight}"
+                )
 
         if epoch > 0:
             logger.warning(f"epoch: {epoch} elapse: {round((end - start) * 1e6)} us")
@@ -199,7 +217,7 @@ def main(args: Dict[str, Any]) -> None:
             args["model_file"],
         )
     elif args["mode"] == "cot":
-        num_models = 2
+        num_models = 4
         models = [
             ElementModel(
                 num_layers=num_layers // num_models,
