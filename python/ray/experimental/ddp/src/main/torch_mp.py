@@ -58,13 +58,18 @@ def train_cot(models: List[ModelElement], num_epochs: int, model_file: str) -> N
         # Backward pass and optimization starting from the last model
         # Initialize with the final loss
         loss = models[-1].criterion(pred_final, models[-1].y)
-        models[-1].backward(loss=loss)
+        models[-1].backward(
+            loss=loss,
+        )
         models[-1].update()
 
         # Propagate gradients backward through intermediate models
         for i in range(num_models - 2, -1, -1):
             pred, pred_detached = intermediate_outputs[i]
-            models[i].backward(pred=pred, grad=pred_detached)
+            models[i].backward(
+                pred=pred,
+                grad=pred_detached.grad,
+            )
             models[i].update()
 
         end = time.perf_counter()
@@ -92,7 +97,7 @@ def main(args: Dict[str, Any]) -> None:
     num_layers = args["num_layers"]
     device = "cuda:0"
 
-    num_models = 2
+    num_models = args["num_models"]
     models = [
         ModelElement(
             layer_size=layer_size,

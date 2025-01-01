@@ -34,7 +34,10 @@ class ModelElement(torch.nn.Module):
         self.inputs: List[torch.Tensor] = []
         self.activations: List[torch.Tensor] = []
         self.criterion = torch.nn.MSELoss()
-        self.optimizer = torch.optim.SGD(self.linear_layers.parameters(), lr=0.01)
+        self.optimizer = torch.optim.SGD(
+            self.linear_layers.parameters(),
+            lr=1e-5,
+        )
 
     def init_weights(self) -> None:
         # [TODO] Init seed.
