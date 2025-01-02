@@ -70,7 +70,7 @@ class ModelActor:
         return self.intermediates
 
     def backward(self, _, idx: int) -> None:
-        if idx == -1:
+        if idx == len(self.models) - 1:
             loss = self.models[idx].criterion(
                 self.intermediates[idx][0],
                 self.models[idx].y,
@@ -86,4 +86,6 @@ class ModelActor:
             pred=pred,
             grad=grad,
         )
+
+    def update(self, _, idx: int) -> None:
         self.models[idx].update()

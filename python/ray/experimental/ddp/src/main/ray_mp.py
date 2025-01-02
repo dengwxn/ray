@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 import ray
 from ..core.config import parse_args
 from ..core.mp.actor import ModelActor
-from ray.dag import InputNode
+from ray.dag import InputNode, MultiOutputNode
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -42,10 +42,13 @@ def train_cot(
 
     with InputNode() as inp:
         forward = actor.forward.bind(inp)
-        backward = actor.backward.bind(forward, -1)
-        for i in reversed(range(num_models - 1)):
+        backward = forward
+        outputs = []
+        for i in reversed(range(num_models)):
             backward = actor.backward.bind(backward, i)
-        dag = backward
+            update = actor.update.bind(backward, i)
+            outputs.append(update)
+        dag = MultiOutputNode(outputs)
 
     compiled_dag = dag.experimental_compile()
     ray.get(actor.init_weights.remote())

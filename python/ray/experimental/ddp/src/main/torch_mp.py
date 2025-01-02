@@ -77,7 +77,7 @@ def backward(
     intermediates: List[Tuple[torch.Tensor, torch.Tensor]],
     idx: int,
 ) -> None:
-    if idx == -1:
+    if idx == len(models) - 1:
         loss = models[idx].criterion(
             intermediates[idx][0],
             models[idx].y,
@@ -93,6 +93,12 @@ def backward(
         pred=pred,
         grad=grad,
     )
+
+
+def update(
+    models: List[ModelElement],
+    idx: int,
+) -> None:
     models[idx].update()
 
 
@@ -112,18 +118,17 @@ def train_cot(models: List[ModelElement], num_epochs: int, model_file: str) -> N
         intermediates = forward(models)
         logger.info(f"prediction: {intermediates[-1][0]}")
 
-        # Backward pass and optimization starting from the last model
-        backward(
-            models,
-            intermediates,
-            -1,
-        )
-
         # Propagate gradients backward through intermediate models
-        for i in reversed(range(len(intermediates) - 1)):
+        for i in reversed(range(len(intermediates))):
             backward(
                 models,
                 intermediates,
+                i,
+            )
+
+        for i in reversed(range(len(intermediates))):
+            update(
+                models,
                 i,
             )
 
