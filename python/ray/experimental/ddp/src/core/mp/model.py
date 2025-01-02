@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import torch
 
@@ -36,7 +36,7 @@ class ModelElement(torch.nn.Module):
         self.criterion = torch.nn.MSELoss()
         self.optimizer = torch.optim.SGD(
             self.linear_layers.parameters(),
-            lr=1e-5,
+            lr=1e-3,
         )
 
     def init_weights(self) -> None:
@@ -46,6 +46,9 @@ class ModelElement(torch.nn.Module):
                 torch.nn.init.kaiming_uniform_(
                     layer.weight, mode="fan_in", nonlinearity="relu"
                 )
+
+    def fetch_weights(self) -> List[torch.Tensor]:
+        return [layer.weight.detach() for layer in self.linear_layers]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         self.inputs = []

@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
@@ -12,65 +12,120 @@ logging.basicConfig(
     level=logging.INFO,
     format="[%(levelname)s %(filename)s:%(lineno)d %(funcName)s] %(message)s",
 )
+logger.info("Welcome to Downton Abbey!")
+
+
+def init_models(args: Dict[str, Any]) -> List[ModelElement]:
+    layer_size = args["layer_size"]
+    num_layers = args["num_layers"]
+    device = "cuda:0"
+    num_models = args["num_models"]
+
+    models = [
+        ModelElement(
+            layer_size=layer_size,
+            num_layers=num_layers // num_models,
+            device=device,
+        )
+        for _ in range(num_models)
+    ]
+
+    return models
+
+
+def init_weights(models: List[ModelElement]) -> None:
+    torch.manual_seed(998244353)
+    for model in models:
+        model.init_weights()
+        model = model.to(model.device)
+
+
+def init_training(models: List[ModelElement]) -> None:
+    # Generate input for first model and target for last model
+    models[0].x = torch.randn(
+        1,
+        models[0].layer_size,
+        requires_grad=True,
+    ).to(
+        models[0].device,
+    )
+    models[-1].y = torch.randn(
+        1,
+        models[-1].layer_size,
+    ).to(
+        models[-1].device,
+    )
+
+
+def forward(
+    models: List[ModelElement],
+) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+    intermediates = []
+    input = models[0].x
+    for i, model in enumerate(models):
+        pred = model.forward(input)
+        if i < len(models) - 1:
+            input = pred.detach().requires_grad_(True)
+        else:
+            input = pred
+        intermediates.append((pred, input))
+    return intermediates
+
+
+def backward(
+    models: List[ModelElement],
+    intermediates: List[Tuple[torch.Tensor, torch.Tensor]],
+    idx: int,
+) -> None:
+    if idx == -1:
+        loss = models[idx].criterion(
+            intermediates[idx][0],
+            models[idx].y,
+        )
+        pred = None
+        grad = None
+    else:
+        loss = None
+        pred, input = intermediates[idx]
+        grad = input.grad
+    models[idx].backward(
+        loss=loss,
+        pred=pred,
+        grad=grad,
+    )
+    models[idx].update()
 
 
 def train_cot(models: List[ModelElement], num_epochs: int, model_file: str) -> None:
-    num_models = len(models)
+    init_weights(models)
 
     for epoch in range(num_epochs):
         start = time.perf_counter()
 
-        # Generate input for first model and target for last model
-        models[0].x = torch.randn(
-            1,
-            models[0].layer_size,
-            requires_grad=True,
-        ).to(
-            models[0].device,
-        )
-        models[-1].y = torch.randn(
-            1,
-            models[-1].layer_size,
-        ).to(
-            models[-1].device,
-        )
+        init_training(models)
 
         logger.info(f"epoch: {epoch}")
         logger.info(f"input: {models[0].x}")
         logger.info(f"target: {models[-1].y}")
 
         # Forward pass through all models
-        intermediate_outputs = []
-        input = models[0].x
-
-        for i, model in enumerate(models):
-            pred = model.forward(input)
-            if i < num_models - 1:
-                # Detach intermediate outputs to create separate computation graphs
-                input = pred.detach().requires_grad_(True)
-                intermediate_outputs.append((pred, input))
-            else:
-                # Last model's output
-                pred_final = pred
-
-        logger.info(f"prediction: {pred_final}")
+        intermediates = forward(models)
+        logger.info(f"prediction: {intermediates[-1][0]}")
 
         # Backward pass and optimization starting from the last model
-        # Initialize with the final loss
-        loss = models[-1].criterion(pred_final, models[-1].y)
-        models[-1].backward(
-            loss=loss,
+        backward(
+            models,
+            intermediates,
+            -1,
         )
-        models[-1].update()
 
         # Propagate gradients backward through intermediate models
-        for i in range(num_models - 2, -1, -1):
-            pred, pred_detached = intermediate_outputs[i]
-            models[i].backward(
-                pred=pred,
-                grad=pred_detached.grad,
+        for i in reversed(range(len(intermediates) - 1)):
+            backward(
+                models,
+                intermediates,
+                i,
             )
-            models[i].update()
 
         end = time.perf_counter()
 
@@ -91,31 +146,11 @@ def train_cot(models: List[ModelElement], num_epochs: int, model_file: str) -> N
 
 
 def main(args: Dict[str, Any]) -> None:
-    logger.info("Welcome to Downton Abbey!")
+    models = init_models(args)
 
-    layer_size = args["layer_size"]
-    num_layers = args["num_layers"]
-    device = "cuda:0"
-
-    num_models = args["num_models"]
-    models = [
-        ModelElement(
-            layer_size=layer_size,
-            num_layers=num_layers // num_models,
-            device=device,
-        )
-        for _ in range(num_models)
-    ]
-
-    torch.manual_seed(998244353)
-    for model in models:
-        model.init_weights()
-        model = model.to(model.device)
-
-    num_epochs = args["num_epochs"]
     train_cot(
         models,
-        num_epochs,
+        args["num_epochs"],
         args["model_file"],
     )
 
