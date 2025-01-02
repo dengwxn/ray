@@ -131,9 +131,10 @@ def train_cot(models: List[ModelElement], num_epochs: int, model_file: str) -> N
 
         # Log updated weights
         for model_idx, model in enumerate(models):
-            for layer_idx, layer in enumerate(model.linear_layers):
+            weights = model.fetch_weights()
+            for layer_idx, layer_weight in enumerate(weights):
                 logger.info(
-                    f"model: {model_idx}, layer: {layer_idx}, weight: {layer.weight}"
+                    f"model: {model_idx}, layer: {layer_idx}, weight: {layer_weight}"
                 )
 
         if epoch > 0:
@@ -141,8 +142,9 @@ def train_cot(models: List[ModelElement], num_epochs: int, model_file: str) -> N
 
     with open(model_file, "w") as f:
         for model in models:
-            for layer in model.linear_layers:
-                f.write(f"{layer.weight}\n")
+            weights = model.fetch_weights()
+            for weight in weights:
+                f.write(f"{weight}\n")
 
 
 def main(args: Dict[str, Any]) -> None:
