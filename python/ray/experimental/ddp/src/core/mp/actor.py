@@ -69,7 +69,7 @@ class ModelActor:
             self.intermediates.append((pred, input))
         return self.intermediates
 
-    def backward(self, _, idx: int) -> None:
+    def backward(self, _, idx: int) -> torch.Tensor:
         if idx == len(self.models) - 1:
             loss = self.models[idx].criterion(
                 self.intermediates[idx][0],
@@ -81,11 +81,16 @@ class ModelActor:
             loss = None
             pred, input = self.intermediates[idx]
             grad = input.grad
-        self.models[idx].backward(
+        grads = self.models[idx].backward(
             loss=loss,
             pred=pred,
             grad=grad,
         )
+        return grads
 
     def update(self, _, idx: int) -> None:
+        # [TODO] Use the passed in grads to update the model.
+        # 1. grads /= self.world_size
+        # 2. grads -> reshape grads
+        # 3. grads -> layer.weight.grad
         self.models[idx].update()

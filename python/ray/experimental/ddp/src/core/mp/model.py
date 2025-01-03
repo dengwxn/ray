@@ -40,7 +40,6 @@ class ModelElement(torch.nn.Module):
         )
 
     def init_weights(self) -> None:
-        # [TODO] Init seed.
         with torch.no_grad():
             for layer in self.linear_layers:
                 torch.nn.init.kaiming_uniform_(
@@ -68,13 +67,19 @@ class ModelElement(torch.nn.Module):
         loss: Optional[torch.Tensor] = None,
         pred: Optional[torch.Tensor] = None,
         grad: Optional[torch.Tensor] = None,
-    ) -> None:
+    ) -> torch.Tensor:
         if loss is not None:
             assert pred is None
             loss.backward()
         elif pred is not None:
             assert grad is not None
             pred.backward(grad)
+
+        grads = []
+        for layer in self.linear_layers:
+            # [NOTE] Use `reshape` to recover.
+            grads.append(layer.weight.grad.flatten())
+        return torch.cat(grads)
 
     def update(self) -> None:
         self.optimizer.step()

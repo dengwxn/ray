@@ -6,6 +6,7 @@ import ray
 from ..core.config import parse_args
 from ..core.mp.actor import ModelActor
 from ray.dag import InputNode, MultiOutputNode
+from ray.experimental.collective import allreduce
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -51,8 +52,9 @@ def train_cot(
                 actor.backward.bind(actors_to_backwards[j], i)
                 for j, actor in enumerate(actors)
             ]
+            grads_allreduced = allreduce.bind(actors_to_backwards)
             actors_to_updates = [
-                actor.update.bind(actors_to_backwards[j], i)
+                actor.update.bind(grads_allreduced[j], i)
                 for j, actor in enumerate(actors)
             ]
             outputs.extend(actors_to_updates)
