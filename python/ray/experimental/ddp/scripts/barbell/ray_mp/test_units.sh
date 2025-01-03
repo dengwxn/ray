@@ -24,14 +24,17 @@ done
 export TZ="America/Los_Angeles"
 timestamp=$(date '+%Y%m%d_%H%M%S')
 
-output_path=results/barbell/ray_mp/tests
-mkdir -p $output_path
-rm -f $output_path/*.csv
-
 modes=(
 	torch_mp
 	ray_mp
 )
+
+output_path=results/barbell/ray_mp/tests
+mkdir -p $output_path
+rm -f $output_path/*.csv
+
+num_actors=2
+model_prefix=$output_path/${timestamp}_${modes[1]}_model
 
 for mode in ${modes[@]}; do
 	output_file=$output_path/${timestamp}_${mode}.log
@@ -40,8 +43,10 @@ for mode in ${modes[@]}; do
 		--layer-size 1024 \
 		--num-layers 32 \
 		--num-models 4 \
+		--num-actors $num_actors \
 		--num-epochs 20 \
 		--model-file $model_file \
+		--model-prefix $model_prefix \
 		>$output_file 2>&1
 	status=$?
 
@@ -54,15 +59,28 @@ for mode in ${modes[@]}; do
 	fi
 done
 
-if ! diff \
-	"$output_path/${timestamp}_${modes[0]}_model.log" \
-	"$output_path/${timestamp}_${modes[1]}_model.log"; then
-	echo -e "${RED}ER${NC}"
-	if $debug; then
-		code "$output_path/${timestamp}_${modes[0]}_model.log"
-		code "$output_path/${timestamp}_${modes[1]}_model.log"
+compare_files() {
+	local file1="$1"
+	local file2="$2"
+
+	if [ -f "$file1" ] && [ -f "$file2" ]; then
+		if ! diff "$file1" "$file2"; then
+			echo -e "${RED}ER${NC}"
+			if $debug; then
+				code "$file1"
+				code "$file2"
+			fi
+			exit 1
+		fi
 	fi
-	exit 1
-else
-	echo -e "${GREEN}AC${NC}"
-fi
+}
+
+file1="$output_path/${timestamp}_${modes[0]}_model.log"
+file2="$output_path/${timestamp}_${modes[1]}_model.log"
+compare_files "$file1" "$file2"
+
+file1="$output_path/${timestamp}_${modes[1]}_0_model.log"
+file2="$output_path/${timestamp}_${modes[1]}_1_model.log"
+compare_files "$file1" "$file2"
+
+echo -e "${GREEN}AC${NC}"
