@@ -30,6 +30,10 @@ def parse_args() -> Dict[str, Any]:
         type=int,
     )
     parser.add_argument(
+        "--num-actors",
+        type=int,
+    )
+    parser.add_argument(
         "--num-epochs",
         type=int,
     )
@@ -39,6 +43,10 @@ def parse_args() -> Dict[str, Any]:
     )
     parser.add_argument(
         "--model-file",
+        type=str,
+    )
+    parser.add_argument(
+        "--model-prefix",
         type=str,
     )
     parser.add_argument(

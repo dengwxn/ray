@@ -102,7 +102,11 @@ def update(
     models[idx].update()
 
 
-def train_cot(models: List[ModelElement], num_epochs: int, model_file: str) -> None:
+def train_cot(
+    models: List[ModelElement],
+    num_epochs: int,
+    model_file: str,
+) -> None:
     init_weights(models)
 
     for epoch in range(num_epochs):
