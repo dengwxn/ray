@@ -28,7 +28,7 @@ output_path=results/barbell/ray_mp/drys
 mkdir -p $output_path
 rm -f $output_path/*.csv
 
-num_actors=1
+num_actors=2
 output_file=$output_path/${timestamp}.log
 model_prefix=$output_path/${timestamp}_model
 

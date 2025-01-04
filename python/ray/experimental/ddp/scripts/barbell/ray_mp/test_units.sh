@@ -33,7 +33,7 @@ output_path=results/barbell/ray_mp/tests
 mkdir -p $output_path
 rm -f $output_path/*.csv
 
-num_actors=1
+num_actors=2
 model_prefix=$output_path/${timestamp}_${modes[1]}_model
 
 for mode in ${modes[@]}; do

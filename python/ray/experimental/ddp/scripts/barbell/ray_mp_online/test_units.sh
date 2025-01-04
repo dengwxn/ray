@@ -26,6 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 modes=(
 	torch_mp
+	ray_mp
 	ray_mp_online
 )
 
@@ -79,8 +80,12 @@ file1="$output_path/${timestamp}_${modes[0]}_model.log"
 file2="$output_path/${timestamp}_${modes[1]}_model.log"
 compare_files "$file1" "$file2"
 
-file1="$output_path/${timestamp}_${modes[1]}_0_model.log"
-file2="$output_path/${timestamp}_${modes[1]}_1_model.log"
+file1="$output_path/${timestamp}_${modes[0]}_model.log"
+file2="$output_path/${timestamp}_${modes[2]}_model.log"
+compare_files "$file1" "$file2"
+
+file1="$output_path/${timestamp}_${modes[2]}_0_model.log"
+file2="$output_path/${timestamp}_${modes[2]}_1_model.log"
 compare_files "$file1" "$file2"
 
 echo -e "${GREEN}AC${NC}"
