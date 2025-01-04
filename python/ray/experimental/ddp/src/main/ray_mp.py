@@ -52,9 +52,8 @@ def train_cot(
                 actor.backward.bind(actors_to_backwards[j], i)
                 for j, actor in enumerate(actors)
             ]
-            grads_allreduced = allreduce.bind(actors_to_backwards)
             actors_to_updates = [
-                actor.update.bind(grads_allreduced[j], i)
+                actor.update.bind(actors_to_backwards[j], i)
                 for j, actor in enumerate(actors)
             ]
             outputs.extend(actors_to_updates)

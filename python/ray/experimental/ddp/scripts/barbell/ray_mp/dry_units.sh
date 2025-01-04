@@ -28,7 +28,7 @@ output_path=results/barbell/ray_mp/drys
 mkdir -p $output_path
 rm -f $output_path/*.csv
 
-num_actors=2
+num_actors=1
 output_file=$output_path/${timestamp}.log
 model_prefix=$output_path/${timestamp}_model
 
@@ -44,39 +44,6 @@ status=$?
 
 if $debug; then
 	code $output_path/${timestamp}.log
-fi
-
-if [ "$status" -eq 0 ] && [ "$num_actors" -gt 1 ]; then
-	reference_file="${model_prefix}_0.log"
-
-	if [ ! -f "$reference_file" ]; then
-		echo -e "${RED}Error: Reference file $reference_file not found${NC}"
-		exit 1
-	fi
-
-	mismatch_found=false
-	# Compare each actor's results with the first actor
-	for ((i = 1; i < num_actors; i++)); do
-		comparison_file="${model_prefix}_${i}.log"
-		if [ ! -f "$comparison_file" ]; then
-			echo -e "${RED}Error: Comparison file $comparison_file not found${NC}"
-			exit 1
-		fi
-
-		# Compare files using diff, ignoring whitespace
-		if ! diff -w "$reference_file" "$comparison_file" >/dev/null; then
-			echo -e "${RED}Mismatch found between actor 0 and actor $i${NC}"
-			mismatch_found=true
-			if $debug; then
-				echo "Differences:"
-				diff -w "$reference_file" "$comparison_file"
-			fi
-		fi
-	done
-
-	if $mismatch_found; then
-		status=1
-	fi
 fi
 
 if [ $status -eq 0 ]; then

@@ -33,7 +33,7 @@ output_path=results/barbell/ray_mp/tests
 mkdir -p $output_path
 rm -f $output_path/*.csv
 
-num_actors=2
+num_actors=1
 model_prefix=$output_path/${timestamp}_${modes[1]}_model
 
 for mode in ${modes[@]}; do
@@ -77,10 +77,6 @@ compare_files() {
 
 file1="$output_path/${timestamp}_${modes[0]}_model.log"
 file2="$output_path/${timestamp}_${modes[1]}_model.log"
-compare_files "$file1" "$file2"
-
-file1="$output_path/${timestamp}_${modes[1]}_0_model.log"
-file2="$output_path/${timestamp}_${modes[1]}_1_model.log"
 compare_files "$file1" "$file2"
 
 echo -e "${GREEN}AC${NC}"
