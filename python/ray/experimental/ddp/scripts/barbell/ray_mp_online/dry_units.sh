@@ -24,7 +24,7 @@ done
 export TZ="America/Los_Angeles"
 timestamp=$(date '+%Y%m%d_%H%M%S')
 
-output_path=results/barbell/ray_mp/drys
+output_path=results/barbell/ray_mp_online/drys
 mkdir -p $output_path
 rm -f $output_path/*.csv
 
@@ -32,7 +32,7 @@ num_actors=2
 output_file=$output_path/${timestamp}.log
 model_prefix=$output_path/${timestamp}_model
 
-python -m ray.experimental.ddp.src.main.ray_mp \
+python -m ray.experimental.ddp.src.main.ray_mp_online \
 	--layer-size 1024 \
 	--num-layers 8 \
 	--num-models 4 \

@@ -26,10 +26,10 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 modes=(
 	torch_mp
-	ray_mp
+	ray_mp_online
 )
 
-output_path=results/barbell/ray_mp/tests
+output_path=results/barbell/ray_mp_online/tests
 mkdir -p $output_path
 rm -f $output_path/*.csv
 
