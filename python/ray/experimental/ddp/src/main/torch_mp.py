@@ -99,7 +99,7 @@ def update(
     models: List[ModelElement],
     idx: int,
 ) -> None:
-    models[idx].update()
+    models[idx].update(None, False)
 
 
 def train_cot(

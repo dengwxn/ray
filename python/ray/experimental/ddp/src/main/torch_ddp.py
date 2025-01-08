@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-import torch.optim as optim
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from ..core.common import secs_to_micros
@@ -66,19 +65,14 @@ def spwan_torch_ddp(
             args["num_layers"],
             device,
         )
+        torch.manual_seed(998244353)
+        model.init_weights()
         model = model.to(model.device)
         ddp_model = DDP(model, device_ids=[rank])
 
         elapses = defaultdict(list)
 
-        torch.manual_seed(998244353)
-        model.init_weights()
-        model = model.to(model.device)
-
-        for it in range(args["num_epochs"]):
-            if rank == 0:
-                logger.info(f"Start iteration {it}...")
-
+        for epoch in range(args["num_epochs"]):
             model.x = torch.randn(
                 1,
                 model.layer_size,
@@ -93,12 +87,20 @@ def spwan_torch_ddp(
                 model.device,
             )
 
+            if rank == 0:
+                logger.info(f"epoch: {epoch}")
+                logger.info(f"input: {model.x}")
+                logger.info(f"target: {model.x}")
+
             dist.barrier()
             start = time.perf_counter()
 
             forward_start = time.perf_counter()
             pred = ddp_model(model.x)
             forward_end = time.perf_counter()
+
+            if rank == 0:
+                logger.info(f"prediction: {pred}")
 
             loss_compute_start = time.perf_counter()
             loss = model.criterion(pred, model.y)
@@ -118,12 +120,15 @@ def spwan_torch_ddp(
             end = time.perf_counter()
 
             if rank == 0:
-                logger.info(f"Finish iteration {it}")
+                weights = model.fetch_weights()
+                for i, weight in enumerate(weights):
+                    logger.warning(f"layer: {i}, weight: {weight}")
+
             total = end - start
 
             def log(key: str, elapse: float):
                 elapses[key].append(secs_to_micros(elapse))
-                logger.info(
+                logger.warning(
                     f"rank: {rank}, {key} elapse: {secs_to_micros(elapse)} us, percent: {round(elapse / total * 100, 1)}%"
                 )
 
@@ -138,6 +143,19 @@ def spwan_torch_ddp(
         dist.destroy_process_group()
 
     ranks_to_elapses[rank] = elapses
+
+    if rank == 0:
+        model_file = f"{args['model_prefix']}.log"
+        with open(model_file, "w") as f:
+            weights = model.fetch_weights()
+            for weight in weights:
+                f.write(f"{weight}\n")
+
+    model_file = f"{args['model_prefix']}_{rank}.log"
+    with open(model_file, "w") as f:
+        weights = model.fetch_weights()
+        for weight in weights:
+            f.write(f"{weight.cpu()}\n")
 
 
 if __name__ == "__main__":

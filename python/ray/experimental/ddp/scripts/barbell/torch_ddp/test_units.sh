@@ -39,9 +39,15 @@ model_prefix=$output_path/${timestamp}_${modes[1]}_model
 for mode in ${modes[@]}; do
 	output_file=$output_path/${timestamp}_${mode}.log
 	model_file=$output_path/${timestamp}_${mode}_model.log
+	if [ "$mode" != "torch_ddp" ]; then
+		num_models=4
+	else
+		num_models=1
+	fi
 	python -m ray.experimental.ddp.src.main.${mode} \
 		--layer-size 1024 \
 		--num-layers 32 \
+		--num-models $num_models \
 		--num-actors $num_actors \
 		--num-epochs 20 \
 		--model-file $model_file \
