@@ -77,10 +77,21 @@ class ModelElement(torch.nn.Module):
 
         grads = []
         for layer in self.linear_layers:
-            # [NOTE] Use `reshape` to recover.
             grads.append(layer.weight.grad.flatten())
-        return torch.cat(grads)
+        grads_cat = torch.cat(grads)
 
-    def update(self) -> None:
+        return grads_cat
+
+    def update(self, grads_cat: torch.Tensor, grads_passed: bool) -> None:
+        if grads_passed:
+            idx = 0
+            for layer in self.linear_layers:
+                num_params = layer.weight.numel()
+                grad = grads_cat[idx : idx + num_params].reshape(layer.weight.shape)
+                if layer.weight.grad is not None:
+                    assert torch.allclose(layer.weight.grad, grad)
+                layer.weight.grad = grad
+                idx += num_params
+
         self.optimizer.step()
         self.optimizer.zero_grad()

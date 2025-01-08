@@ -13,11 +13,13 @@ class ModelActor:
         layer_size: int,
         num_layers: int,
         num_models: int,
+        num_actors: int,
         device: torch.device,
     ):
         self.layer_size = layer_size
         self.num_layers = num_layers
         self.num_models = num_models
+        self.num_actors = num_actors
         self.device = device
 
         self.models = [
@@ -88,9 +90,7 @@ class ModelActor:
         )
         return grads
 
-    def update(self, _, idx: int) -> None:
-        # [TODO] Use the passed in grads to update the model.
-        # 1. grads /= self.world_size
-        # 2. grads -> reshape grads
-        # 3. grads -> layer.weight.grad
-        self.models[idx].update()
+    def update(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
+        if grads_passed:
+            grads_cat /= self.num_actors
+        self.models[idx].update(grads_cat, grads_passed)

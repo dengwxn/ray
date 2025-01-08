@@ -29,6 +29,7 @@ def init_actors(args: Dict[str, Any]) -> List[ModelActor]:
             layer_size=layer_size,
             num_layers=num_layers,
             num_models=num_models,
+            num_actors=num_actors,
             device=device,
         )
         for _ in range(num_actors)
@@ -54,7 +55,7 @@ def train_cot(
             ]
             grads_allreduced = allreduce.bind(actors_to_backwards)
             actors_to_updates = [
-                actor.update.bind(grads_allreduced[j], i)
+                actor.update.bind(grads_allreduced[j], True, i)
                 for j, actor in enumerate(actors)
             ]
             outputs.extend(actors_to_updates)

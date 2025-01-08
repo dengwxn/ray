@@ -53,7 +53,7 @@ def train_cot(
                 for j, actor in enumerate(actors)
             ]
             actors_to_updates = [
-                actor.update.bind(actors_to_backwards[j], i)
+                actor.update.bind(actors_to_backwards[j], False, i)
                 for j, actor in enumerate(actors)
             ]
             outputs.extend(actors_to_updates)
