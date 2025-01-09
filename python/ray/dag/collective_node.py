@@ -9,6 +9,7 @@ from ray.dag import (
     ClassMethodNode,
 )
 from ray.dag.constants import COLLECTIVE_OPERATION_KEY
+from ray.dag.nccl_operation import _NcclOperation
 from ray.experimental.channel import ChannelContext
 from ray.experimental.channel.torch_tensor_nccl_channel import _init_nccl_group
 from ray.experimental.channel.torch_tensor_type import GPUCommunicator, TorchTensorType
@@ -16,7 +17,7 @@ from ray.experimental.util.types import _CollectiveOp, ReduceOp
 from ray.util.annotations import DeveloperAPI
 
 
-class _CollectiveOperation:
+class _CollectiveOperation(_NcclOperation):
     """
     Represent metadata for a NCCL collective operation.
 
@@ -37,6 +38,8 @@ class _CollectiveOperation:
         op: _CollectiveOp,
         transport: Optional[Union[str, GPUCommunicator]] = None,
     ):
+        super().__init__()
+
         if len(input_nodes) == 0:
             raise ValueError("Expected input nodes for a collective operation")
         if len(set(input_nodes)) != len(input_nodes):
@@ -88,17 +91,36 @@ class _CollectiveOperation:
     def type_hint(self) -> TorchTensorType:
         return self._type_hint
 
-    def init_nccl_group(self, nccl_group_id: Optional[str] = None) -> str:
+    @property
+    def op_type(self) -> _CollectiveOp:
+        return self._op
+
+    def init_nccl_group(
+        self,
+        nccl_group_id: Optional[str] = None,
+        use_communication_streams: bool = False,
+    ) -> str:
         """
         Initialize the NCCL group if it has not been initialized yet. If `nccl_group_id`
         is provided, it means the NCCL group has already been initialized.
+
+        Args:
+            nccl_group_id: The NCCL group ID, if already initialized.
+            use_communication_streams: Whether to use a dedicated stream for
+                collective communication. If True, communication and computation
+                can be overlapped to improve performance.
+
+        Returns:
+            The NCCL group ID.
         """
         type_hint = self._type_hint
         if type_hint.nccl_group_id is not None:
             return type_hint.nccl_group_id
         if nccl_group_id is None:
             nccl_group_id = _init_nccl_group(
-                self._actor_handles, type_hint.get_custom_nccl_group()
+                self._actor_handles,
+                type_hint.get_custom_nccl_group(),
+                use_communication_streams,
             )
         type_hint.set_nccl_group_id(nccl_group_id)
         return nccl_group_id
@@ -142,6 +164,14 @@ class CollectiveOutputNode(ClassMethodNode):
         method_options: Dict[str, Any],
         other_args_to_resolve: Dict[str, Any],
     ):
+        super().__init__(
+            method_name,
+            method_args,
+            method_kwargs,
+            method_options,
+            other_args_to_resolve,
+        )
+
         # Parse the input node.
         if not (
             isinstance(method_args, tuple)
@@ -155,15 +185,7 @@ class CollectiveOutputNode(ClassMethodNode):
             COLLECTIVE_OPERATION_KEY, None
         )
         if self._collective_op is None:
-            raise ValueError("Expected a collective operation")
-
-        super().__init__(
-            method_name,
-            method_args,
-            method_kwargs,
-            method_options,
-            other_args_to_resolve,
-        )
+            raise ValueError("Expected a collective op")
 
     def _copy_impl(
         self,
@@ -186,5 +208,9 @@ class CollectiveOutputNode(ClassMethodNode):
         )
 
     @property
-    def collective_op(self) -> _CollectiveOperation:
+    def nccl_op(self) -> _CollectiveOperation:
         return self._collective_op
+
+    @property
+    def nccl_op_type(self) -> _CollectiveOp:
+        return self._collective_op.op_type
