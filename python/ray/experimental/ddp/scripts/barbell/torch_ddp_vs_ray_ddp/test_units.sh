@@ -36,14 +36,13 @@ rm -f $output_path/*.csv
 num_actors=2
 
 for mode in ${modes[@]}; do
-	if [ "$mode" != "torch_ddp" ]; then
-		num_models=4
-	else
+	if [ "$mode" == "torch_ddp" ]; then
 		num_models=1
+	else
+		num_models=4
 	fi
 
 	output_file=$output_path/${timestamp}_${mode}.log
-	model_file=$output_path/${timestamp}_${mode}_model.log
 	model_prefix=$output_path/${timestamp}_${mode}_model
 
 	python -m ray.experimental.ddp.src.main.${mode} \
@@ -52,7 +51,6 @@ for mode in ${modes[@]}; do
 		--num-models $num_models \
 		--num-actors $num_actors \
 		--num-epochs 20 \
-		--model-file $model_file \
 		--model-prefix $model_prefix \
 		>$output_file 2>&1
 	status=$?

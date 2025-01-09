@@ -1,8 +1,12 @@
-from typing import List, Tuple
+import logging
+import time
+from collections import defaultdict
+from typing import Any, Dict, List, Tuple
 
 import torch
 
 import ray
+from ..common import secs_to_micros
 from .model import ModelElement
 
 
@@ -32,6 +36,10 @@ class ModelActor:
         ]
         self.intermediates: List[torch.Tensor, torch.Tensor] = []
 
+        self.it = 0
+        self.time: Dict[str, Any] = {}
+        self.elapses: Dict[str, List] = defaultdict(list)
+
     def init_weights(self) -> None:
         torch.manual_seed(998244353)
         for model in self.models:
@@ -53,6 +61,67 @@ class ModelActor:
             self.models[-1].device,
         )
 
+    def update_time(self, key: str) -> None:
+        timestamp = time.perf_counter()
+        if key not in self.time:
+            self.time[key] = timestamp
+        else:
+            assert isinstance(self.time[key], list)
+            self.time[key].append(timestamp)
+
+    def init_tracing(self) -> None:
+        self.time: Dict[str, Any] = {
+            "forward_starts": [],
+            "forward_ends": [],
+            "backward_starts": [],
+            "backward_ends": [],
+            "update_starts": [],
+            "update_ends": [],
+        }
+
+    def finish_tracing(self) -> None:
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Finish iteration {self.it}")
+        self.it += 1
+        if self.it <= 1:
+            return
+
+        total = self.time["end"] - self.time["start"]
+
+        def log(key: str, elapse: float):
+            self.elapses[key].append(secs_to_micros(elapse))
+            logger.warning(
+                f"{key} elapse: {secs_to_micros(elapse)} us, percent: {round(elapse / total * 100, 1)}%"
+            )
+
+        log(
+            "total",
+            total,
+        )
+        log(
+            "fw.total",
+            self.time["forward_ends"][-1] - self.time["forward_starts"][0],
+        )
+        bw_total = self.time["update_ends"][-1] - self.time["backward_starts"][0]
+        bw_backward = sum(
+            [
+                self.time["backward_ends"][i] - self.time["backward_starts"][i]
+                for i in range(self.num_models)
+            ]
+        )
+        bw_update = sum(
+            [
+                self.time["update_ends"][i] - self.time["update_starts"][i]
+                for i in range(self.num_models)
+            ]
+        )
+        bw_others = bw_total - bw_backward - bw_update
+        log("bw.total", bw_total)
+        log("bw.backward", bw_backward)
+        log("bw.others", bw_others)
+        log("bw.update", bw_update)
+        logger.warning("")
+
     def fetch_weights(self) -> List[torch.Tensor]:
         weights = []
         for model in self.models:
@@ -60,6 +129,8 @@ class ModelActor:
         return weights
 
     def forward(self, _) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+        self.update_time("start")
+        self.update_time("forward_starts")
         self.intermediates = []
         input = self.models[0].x
         for i, model in enumerate(self.models):
@@ -69,9 +140,11 @@ class ModelActor:
             else:
                 input = pred
             self.intermediates.append((pred, input))
+        self.update_time("forward_ends")
         return self.intermediates
 
     def backward(self, _, idx: int) -> torch.Tensor:
+        self.update_time("backward_starts")
         if idx == len(self.models) - 1:
             loss = self.models[idx].criterion(
                 self.intermediates[idx][0],
@@ -88,9 +161,14 @@ class ModelActor:
             pred=pred,
             grad=grad,
         )
+        self.update_time("backward_ends")
         return grads
 
     def update(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
+        self.update_time("update_starts")
         if grads_passed:
             grads_cat /= self.num_actors
         self.models[idx].update(grads_cat, grads_passed)
+        self.update_time("update_ends")
+        if idx == 0:
+            self.update_time("end")

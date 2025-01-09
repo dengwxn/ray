@@ -10,7 +10,7 @@ from ray.experimental.collective import allreduce
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format="[%(levelname)s %(filename)s:%(lineno)d %(funcName)s] %(message)s",
 )
 logger.info("Welcome to Downton Abbey!")
@@ -42,6 +42,7 @@ def train_cot(
     actors: List[ModelActor],
     num_models: int,
     num_epochs: int,
+    save_model: bool,
     model_prefix: str,
 ) -> None:
     with InputNode() as inp:
@@ -68,6 +69,7 @@ def train_cot(
     for epoch in range(num_epochs):
         for actor in actors:
             ray.get(actor.init_training.remote())
+            ray.get(actor.init_tracing.remote())
 
         start = time.perf_counter()
         compiled_dag.execute(None)
@@ -80,17 +82,21 @@ def train_cot(
         if epoch > 0:
             logger.warning(f"epoch: {epoch}, elapse: {round((end - start) * 1e6)} us")
 
-    model_file = f"{model_prefix}.log"
-    with open(model_file, "w") as f:
-        for weight in weights:
-            f.write(f"{weight}\n")
+        for actor in actors:
+            ray.get(actor.finish_tracing.remote())
 
-    for i, actor in enumerate(actors):
-        weights = ray.get(actor.fetch_weights.remote())
-        model_file = f"{model_prefix}_{i}.log"
+    if save_model:
+        model_file = f"{model_prefix}.log"
         with open(model_file, "w") as f:
             for weight in weights:
                 f.write(f"{weight}\n")
+
+        for i, actor in enumerate(actors):
+            weights = ray.get(actor.fetch_weights.remote())
+            model_file = f"{model_prefix}_{i}.log"
+            with open(model_file, "w") as f:
+                for weight in weights:
+                    f.write(f"{weight}\n")
 
     time.sleep(1)
 
@@ -104,6 +110,7 @@ def main(args: Dict[str, Any]) -> None:
         actors,
         args["num_models"],
         args["num_epochs"],
+        args.get("save_model", True),
         args["model_prefix"],
     )
 

@@ -9,7 +9,7 @@ from ..core.mp.model import ModelElement
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format="[%(levelname)s %(filename)s:%(lineno)d %(funcName)s] %(message)s",
 )
 logger.info("Welcome to Downton Abbey!")

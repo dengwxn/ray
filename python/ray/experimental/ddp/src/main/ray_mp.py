@@ -10,7 +10,7 @@ from ray.experimental.collective import allreduce
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format="[%(levelname)s %(filename)s:%(lineno)d %(funcName)s] %(message)s",
 )
 logger.info("Welcome to Downton Abbey!")
@@ -29,6 +29,7 @@ def init_actors(args: Dict[str, Any]) -> List[ModelActor]:
             layer_size=layer_size,
             num_layers=num_layers,
             num_models=num_models,
+            num_actors=num_actors,
             device=device,
         )
         for _ in range(num_actors)
@@ -66,6 +67,7 @@ def train_cot(
     for epoch in range(num_epochs):
         for actor in actors:
             ray.get(actor.init_training.remote())
+            ray.get(actor.init_tracing.remote())
 
         start = time.perf_counter()
         compiled_dag.execute(None)
@@ -77,6 +79,9 @@ def train_cot(
 
         if epoch > 0:
             logger.warning(f"epoch: {epoch}, elapse: {round((end - start) * 1e6)} us")
+
+        for actor in actors:
+            ray.get(actor.finish_tracing.remote())
 
     model_file = f"{model_prefix}.log"
     with open(model_file, "w") as f:

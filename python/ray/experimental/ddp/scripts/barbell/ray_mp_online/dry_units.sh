@@ -24,6 +24,8 @@ done
 export TZ="America/Los_Angeles"
 timestamp=$(date '+%Y%m%d_%H%M%S')
 
+export RAY_DEDUP_LOGS=0
+
 output_path=results/barbell/ray_mp_online/drys
 mkdir -p $output_path
 rm -f $output_path/*.csv

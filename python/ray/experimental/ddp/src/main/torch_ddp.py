@@ -16,7 +16,7 @@ from ..core.torch_ddp import run_torch_ddp
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format="[%(levelname)s %(filename)s:%(lineno)d %(funcName)s] %(message)s",
 )
 logger.info("Welcome to Downton Abbey!")
@@ -122,7 +122,7 @@ def spwan_torch_ddp(
             if rank == 0:
                 weights = model.fetch_weights()
                 for i, weight in enumerate(weights):
-                    logger.warning(f"layer: {i}, weight: {weight}")
+                    logger.info(f"layer: {i}, weight: {weight}")
 
             total = end - start
 
@@ -144,18 +144,20 @@ def spwan_torch_ddp(
 
     ranks_to_elapses[rank] = elapses
 
-    if rank == 0:
-        model_file = f"{args['model_prefix']}.log"
+    save_model = args.get("save_model", True)
+    if save_model:
+        if rank == 0:
+            model_file = f"{args['model_prefix']}.log"
+            with open(model_file, "w") as f:
+                weights = model.fetch_weights()
+                for weight in weights:
+                    f.write(f"{weight}\n")
+
+        model_file = f"{args['model_prefix']}_{rank}.log"
         with open(model_file, "w") as f:
             weights = model.fetch_weights()
             for weight in weights:
-                f.write(f"{weight}\n")
-
-    model_file = f"{args['model_prefix']}_{rank}.log"
-    with open(model_file, "w") as f:
-        weights = model.fetch_weights()
-        for weight in weights:
-            f.write(f"{weight.cpu()}\n")
+                f.write(f"{weight.cpu()}\n")
 
 
 if __name__ == "__main__":
