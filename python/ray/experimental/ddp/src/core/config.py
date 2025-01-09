@@ -8,16 +8,6 @@ import torch
 def parse_args() -> Dict[str, Any]:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--layer-size-values",
-        type=int,
-        nargs="+",
-    )
-    parser.add_argument(
-        "--num-layers-values",
-        type=int,
-        nargs="+",
-    )
-    parser.add_argument(
         "--layer-size",
         type=int,
         required=True,
@@ -50,6 +40,10 @@ def parse_args() -> Dict[str, Any]:
         "--latency-prefix",
         type=str,
         required=True,
+    )
+    parser.add_argument(
+        "--save-model",
+        action="store_true",
     )
     parser.add_argument(
         "--model-file",

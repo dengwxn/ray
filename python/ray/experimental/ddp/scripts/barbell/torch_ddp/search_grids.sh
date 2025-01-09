@@ -5,9 +5,32 @@ if [[ "$(pwd)" != */python/ray/experimental/ddp ]]; then
 	exit 1
 fi
 
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+debug=false
+while getopts "d" opt; do
+	case $opt in
+	d) debug=true ;;
+	*)
+		echo "Usage: $0 [-d]" >&2
+		echo "  -d    Enable debug mode"
+		exit 1
+		;;
+	esac
+done
+
+export TZ="America/Los_Angeles"
+timestamp=$(date '+%Y%m%d_%H%M%S')
+
 export RAY_DEDUP_LOGS=0
 
-dtype=float32
+output_path=results/barbell/torch_ddp/grids
+mkdir -p $output_path
+rm -f $output_path/*.csv
+rm -f $output_path/*.log
+
 layer_size_values=(
 	10 20 40 80 160 320 640 1280 2560
 )
@@ -15,31 +38,26 @@ num_layers_values=(
 	1 2 4 8 16 32 64 128 256
 )
 
-learning_rate=1e-5
 num_actors=2
-num_iters=30
-
-output_path=results/barbell/torch_ddp/grid
-mkdir -p $output_path
-rm -f $output_path/*.log
-rm -f $output_path/*.csv
+num_epochs=10
 
 for layer_size in ${layer_size_values[@]}; do
 	for num_layers in ${num_layers_values[@]}; do
-		output_prefix=ls${layer_size}_nl${num_layers}
-		output_file=$output_path/$output_prefix.log
+		latency_prefix=ls${layer_size}_nl${num_layers}
+		model_prefix=${output_path}/${latency_prefix}_model
+		log_file=${output_path}/${latency_prefix}.log
 
 		echo "Running layer_size $layer_size, num_layers $num_layers..."
-		python -m ray.experimental.ddp.src.main_torch_ddp \
-			--dtype $dtype \
+		python -m ray.experimental.ddp.src.main.torch_ddp \
 			--layer-size $layer_size \
 			--num-layers $num_layers \
-			--learning-rate $learning_rate \
 			--num-actors $num_actors \
-			--num-iters $num_iters \
+			--num-epochs $num_epochs \
 			--output-path $output_path \
-			--output-prefix $output_prefix \
-			>$output_file 2>&1
+			--latency-prefix $latency_prefix \
+			--model-prefix $model_prefix \
+			>$log_file 2>&1
+		status=$?
 	done
 done
 

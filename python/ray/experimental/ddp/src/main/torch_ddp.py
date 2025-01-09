@@ -160,18 +160,19 @@ def spwan_torch_ddp(
 
     ranks_to_elapses[rank] = elapses
 
-    if rank == 0:
-        model_file = f"{args['model_prefix']}.log"
+    save_model = args.get("save_model", False)
+    if save_model:
+        if rank == 0:
+            model_file = f"{args['model_prefix']}.log"
+            with open(model_file, "w") as f:
+                weights = model.fetch_weights()
+                for weight in weights:
+                    f.write(f"{weight}\n")
+        model_file = f"{args['model_prefix']}_{rank}.log"
         with open(model_file, "w") as f:
             weights = model.fetch_weights()
             for weight in weights:
-                f.write(f"{weight}\n")
-
-    model_file = f"{args['model_prefix']}_{rank}.log"
-    with open(model_file, "w") as f:
-        weights = model.fetch_weights()
-        for weight in weights:
-            f.write(f"{weight.cpu()}\n")
+                f.write(f"{weight.cpu()}\n")
 
 
 if __name__ == "__main__":
