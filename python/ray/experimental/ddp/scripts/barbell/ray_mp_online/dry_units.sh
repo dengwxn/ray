@@ -30,61 +30,62 @@ output_path=results/barbell/ray_mp_online/drys
 mkdir -p $output_path
 rm -f $output_path/*.csv
 
+layer_size=1024
+num_layers=8
+num_models=1
 num_actors=2
-output_file=$output_path/${timestamp}.log
+num_epochs=10
+latency_prefix=ls${layer_size}_nl${num_layers}
 model_prefix=$output_path/${timestamp}_model
+log_file=$output_path/${timestamp}.log
 
 python -m ray.experimental.ddp.src.main.ray_mp_online \
-	--layer-size 1024 \
-	--num-layers 8 \
-	--num-models 4 \
+	--layer-size $layer_size \
+	--num-layers $num_layers \
+	--num-models $num_models \
 	--num-actors $num_actors \
-	--num-epochs 10 \
+	--num-epochs $num_epochs \
+	--output-path $output_path \
+	--latency-prefix $latency_prefix \
 	--model-prefix $model_prefix \
-	>$output_file 2>&1
+	--check-tracing \
+	>$log_file 2>&1
 status=$?
 
 if $debug; then
 	code $output_path/${timestamp}.log
 fi
 
-if [ "$status" -eq 0 ] && [ "$num_actors" -gt 1 ]; then
-	reference_file="${model_prefix}_0.log"
-
-	if [ ! -f "$reference_file" ]; then
-		echo -e "${RED}Error: Reference file $reference_file not found${NC}"
-		exit 1
-	fi
-
-	mismatch_found=false
-	# Compare each actor's results with the first actor
-	for ((i = 1; i < num_actors; i++)); do
-		comparison_file="${model_prefix}_${i}.log"
-		if [ ! -f "$comparison_file" ]; then
-			echo -e "${RED}Error: Comparison file $comparison_file not found${NC}"
-			exit 1
-		fi
-
-		# Compare files using diff, ignoring whitespace
-		if ! diff -w "$reference_file" "$comparison_file" >/dev/null; then
-			echo -e "${RED}Mismatch found between actor 0 and actor $i${NC}"
-			mismatch_found=true
-			if $debug; then
-				echo "Differences:"
-				diff -w "$reference_file" "$comparison_file"
-			fi
-		fi
-	done
-
-	if $mismatch_found; then
-		status=1
-	fi
-fi
-
-if [ $status -eq 0 ]; then
-	echo -e "${GREEN}AC${NC}"
-	exit 0
-else
+if [ $status -ne 0 ]; then
 	echo -e "${RED}ER${NC}"
 	exit 1
 fi
+
+compare_files() {
+	local file1="$1"
+	local file2="$2"
+
+	if [ ! -f "$file1" ]; then
+		echo -e "${RED}Error: File '$file1' does not exist${NC}"
+		exit 1
+	fi
+	if [ ! -f "$file2" ]; then
+		echo -e "${RED}Error: File '$file2' does not exist${NC}"
+		exit 1
+	fi
+
+	if ! diff "$file1" "$file2"; then
+		echo -e "${RED}ER${NC}"
+		if $debug; then
+			code "$file1"
+			code "$file2"
+		fi
+		exit 1
+	fi
+}
+
+file1="${output_path}/${timestamp}_model_0.log"
+file2="${output_path}/${timestamp}_model_1.log"
+compare_files "$file1" "$file2"
+
+echo -e "${GREEN}AC${NC}"

@@ -19,12 +19,14 @@ class ModelActor:
         num_models: int,
         num_actors: int,
         device: torch.device,
+        check_tracing: bool,
     ):
         self.layer_size = layer_size
         self.num_layers = num_layers
         self.num_models = num_models
         self.num_actors = num_actors
         self.device = device
+        self.check_tracing = check_tracing
 
         self.models = [
             ModelElement(
@@ -81,7 +83,7 @@ class ModelActor:
 
     def finish_tracing(self) -> None:
         logger = logging.getLogger(__name__)
-        logger.warning(f"Finish iteration {self.it}")
+        logger.warning(f"Actor finished iteration {self.it}")
         self.it += 1
         if self.it <= 1:
             return
@@ -95,31 +97,32 @@ class ModelActor:
             )
 
         log(
-            "total",
+            "actor.total",
             total,
         )
-        log(
-            "fw.total",
-            self.time["forward_ends"][-1] - self.time["forward_starts"][0],
-        )
-        bw_total = self.time["update_ends"][-1] - self.time["backward_starts"][0]
-        bw_backward = sum(
-            [
-                self.time["backward_ends"][i] - self.time["backward_starts"][i]
-                for i in range(self.num_models)
-            ]
-        )
-        bw_update = sum(
-            [
-                self.time["update_ends"][i] - self.time["update_starts"][i]
-                for i in range(self.num_models)
-            ]
-        )
-        bw_others = bw_total - bw_backward - bw_update
-        log("bw.total", bw_total)
-        log("bw.backward", bw_backward)
-        log("bw.others", bw_others)
-        log("bw.update", bw_update)
+        if self.check_tracing:
+            log(
+                "fw.total",
+                self.time["forward_ends"][-1] - self.time["forward_starts"][0],
+            )
+            bw_total = self.time["update_ends"][-1] - self.time["backward_starts"][0]
+            bw_backward = sum(
+                [
+                    self.time["backward_ends"][i] - self.time["backward_starts"][i]
+                    for i in range(self.num_models)
+                ]
+            )
+            bw_update = sum(
+                [
+                    self.time["update_ends"][i] - self.time["update_starts"][i]
+                    for i in range(self.num_models)
+                ]
+            )
+            bw_others = bw_total - bw_backward - bw_update
+            log("bw.total", bw_total)
+            log("bw.backward", bw_backward)
+            log("bw.others", bw_others)
+            log("bw.update", bw_update)
         logger.warning("")
 
     def fetch_weights(self) -> List[torch.Tensor]:
@@ -128,9 +131,13 @@ class ModelActor:
             weights.extend(model.fetch_weights())
         return weights
 
+    def fetch_traces(self) -> Dict[str, List[float]]:
+        return self.elapses
+
     def forward(self, _) -> List[Tuple[torch.Tensor, torch.Tensor]]:
         self.update_time("start")
-        self.update_time("forward_starts")
+        if self.check_tracing:
+            self.update_time("forward_starts")
         self.intermediates = []
         input = self.models[0].x
         for i, model in enumerate(self.models):
@@ -140,11 +147,13 @@ class ModelActor:
             else:
                 input = pred
             self.intermediates.append((pred, input))
-        self.update_time("forward_ends")
+        if self.check_tracing:
+            self.update_time("forward_ends")
         return self.intermediates
 
     def backward(self, _, idx: int) -> torch.Tensor:
-        self.update_time("backward_starts")
+        if self.check_tracing:
+            self.update_time("backward_starts")
         if idx == len(self.models) - 1:
             loss = self.models[idx].criterion(
                 self.intermediates[idx][0],
@@ -161,14 +170,17 @@ class ModelActor:
             pred=pred,
             grad=grad,
         )
-        self.update_time("backward_ends")
+        if self.check_tracing:
+            self.update_time("backward_ends")
         return grads
 
     def update(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
-        self.update_time("update_starts")
+        if self.check_tracing:
+            self.update_time("update_starts")
         if grads_passed:
             grads_cat /= self.num_actors
         self.models[idx].update(grads_cat, grads_passed)
-        self.update_time("update_ends")
+        if self.check_tracing:
+            self.update_time("update_ends")
         if idx == 0:
             self.update_time("end")

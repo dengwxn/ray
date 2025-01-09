@@ -3,6 +3,7 @@ import time
 from typing import Any, Dict, List
 
 import ray
+from ..core.common import log_elapses_to_csv
 from ..core.config import parse_args
 from ..core.mp.actor import ModelActor
 from ray.dag import InputNode, MultiOutputNode
@@ -22,6 +23,7 @@ def init_actors(args: Dict[str, Any]) -> List[ModelActor]:
     num_models = args["num_models"]
     num_actors = args["num_actors"]
     device = "cuda:0"
+    check_tracing = args["check_tracing"]
 
     actor_cls = ModelActor.options(num_gpus=1)
     actors = [
@@ -31,6 +33,7 @@ def init_actors(args: Dict[str, Any]) -> List[ModelActor]:
             num_models=num_models,
             num_actors=num_actors,
             device=device,
+            check_tracing=check_tracing,
         )
         for _ in range(num_actors)
     ]
@@ -42,7 +45,10 @@ def train_cot(
     actors: List[ModelActor],
     num_models: int,
     num_epochs: int,
+    output_path: str,
+    latency_prefix: str,
     model_prefix: str,
+    check_tracing: bool,
 ) -> None:
     with InputNode() as inp:
         actors_to_forwards = [actor.forward.bind(inp) for actor in actors]
@@ -64,6 +70,7 @@ def train_cot(
     for actor in actors:
         ray.get(actor.init_weights.remote())
 
+    total_elapses: List[int] = []
     for epoch in range(num_epochs):
         for actor in actors:
             ray.get(actor.init_training.remote())
@@ -79,9 +86,35 @@ def train_cot(
 
         if epoch > 0:
             logger.warning(f"epoch: {epoch}, elapse: {round((end - start) * 1e6)} us")
+            total_elapses.append(round((end - start) * 1e6))
 
         for actor in actors:
             ray.get(actor.finish_tracing.remote())
+
+    actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
+    for actor_elapses in actors_to_elapses:
+        actor_elapses["total"] = total_elapses
+    if not check_tracing:
+        metrics = [
+            "total",
+            "actor.total",
+        ]
+    else:
+        metrics = [
+            "total",
+            "actor.total",
+            "fw.total",
+            "bw.total",
+            "bw.backward",
+            "bw.others",
+            "bw.update",
+        ]
+    log_elapses_to_csv(
+        actors_to_elapses,
+        output_path,
+        latency_prefix,
+        metrics,
+    )
 
     model_file = f"{model_prefix}.log"
     with open(model_file, "w") as f:
@@ -107,7 +140,10 @@ def main(args: Dict[str, Any]) -> None:
         actors,
         args["num_models"],
         args["num_epochs"],
+        args["output_path"],
+        args["latency_prefix"],
         args["model_prefix"],
+        args["check_tracing"],
     )
 
     for actor in actors:

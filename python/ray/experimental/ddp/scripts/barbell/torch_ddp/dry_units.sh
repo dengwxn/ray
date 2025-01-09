@@ -24,6 +24,8 @@ done
 export TZ="America/Los_Angeles"
 timestamp=$(date '+%Y%m%d_%H%M%S')
 
+export RAY_DEDUP_LOGS=0
+
 output_path=results/barbell/torch_ddp/drys
 mkdir -p $output_path
 rm -f ${output_path}/*.csv
@@ -51,10 +53,7 @@ if $debug; then
 	code ${output_path}/${timestamp}.log
 fi
 
-if [ $status -eq 0 ]; then
-	echo -e "${GREEN}AC${NC}"
-	exit 0
-else
+if [ $status -ne 0 ]; then
 	echo -e "${RED}ER${NC}"
 	exit 1
 fi
