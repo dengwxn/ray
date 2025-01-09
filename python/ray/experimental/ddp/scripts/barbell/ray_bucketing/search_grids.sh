@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/barbell/ray_no_allreduce/grids
+output_path=results/barbell/ray_bucketing/grids
 mkdir -p $output_path
 rm -f $output_path/*.csv
 rm -f $output_path/*.log
@@ -51,7 +51,7 @@ for layer_size in ${layer_size_values[@]}; do
 		log_file=${output_path}/${latency_prefix}.log
 
 		echo "Running layer_size $layer_size, num_layers $num_layers..."
-		python -m ray.experimental.ddp.src.main.ray_no_allreduce \
+		python -m ray.experimental.ddp.src.main.ray_bucketing \
 			--layer-size $layer_size \
 			--num-layers $num_layers \
 			--num-models $num_models \
