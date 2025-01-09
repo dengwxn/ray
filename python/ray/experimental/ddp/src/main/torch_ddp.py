@@ -9,7 +9,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from ..core.common import secs_to_micros
+from ..core.common import log_elapses_to_csv, secs_to_micros
 from ..core.config import parse_args
 from ..core.mp.actor import ModelElement
 from ..core.torch_ddp import run_torch_ddp
@@ -41,6 +41,25 @@ def run_torch_ddp(
             nprocs=world_size,
             join=True,
         )
+
+        ranks_to_elapses_list = list(ranks_to_elapses[i] for i in range(world_size))
+
+    output_path = args["output_path"]
+    latency_prefix = args["latency_prefix"]
+    metrics = [
+        "total",
+        "fw.total",
+        "loss.compute",
+        "bw.bw_ar",
+        "bw.update",
+        "barrier",
+    ]
+    log_elapses_to_csv(
+        ranks_to_elapses_list,
+        output_path,
+        latency_prefix,
+        metrics,
+    )
 
 
 def spwan_torch_ddp(
@@ -98,9 +117,6 @@ def spwan_torch_ddp(
             forward_start = time.perf_counter()
             pred = ddp_model(model.x)
             forward_end = time.perf_counter()
-
-            if rank == 0:
-                logger.info(f"prediction: {pred}")
 
             loss_compute_start = time.perf_counter()
             loss = model.criterion(pred, model.y)

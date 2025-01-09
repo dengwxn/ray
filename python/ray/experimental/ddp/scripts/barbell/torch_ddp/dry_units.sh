@@ -28,17 +28,23 @@ output_path=results/barbell/torch_ddp/drys
 mkdir -p $output_path
 rm -f ${output_path}/*.csv
 
+layer_size=1024
+num_layers=8
 num_actors=2
-output_file=${output_path}/${timestamp}.log
+num_epochs=10
+latency_prefix=ls${layer_size}_nl${num_layers}
 model_prefix=${output_path}/${timestamp}_model
+log_file=${output_path}/${timestamp}.log
 
 python -m ray.experimental.ddp.src.main.torch_ddp \
-	--layer-size 1024 \
-	--num-layers 8 \
+	--layer-size $layer_size \
+	--num-layers $num_layers \
 	--num-actors $num_actors \
-	--num-epochs 10 \
+	--num-epochs $num_epochs \
+	--output-path $output_path \
+	--latency-prefix $latency_prefix \
 	--model-prefix $model_prefix \
-	>$output_file 2>&1
+	>$log_file 2>&1
 status=$?
 
 if $debug; then

@@ -20,10 +20,12 @@ def parse_args() -> Dict[str, Any]:
     parser.add_argument(
         "--layer-size",
         type=int,
+        required=True,
     )
     parser.add_argument(
         "--num-layers",
         type=int,
+        required=True,
     )
     parser.add_argument(
         "--num-models",
@@ -32,14 +34,22 @@ def parse_args() -> Dict[str, Any]:
     parser.add_argument(
         "--num-actors",
         type=int,
+        required=True,
     )
     parser.add_argument(
         "--num-epochs",
         type=int,
+        required=True,
     )
     parser.add_argument(
         "--output-path",
         type=str,
+        required=True,
+    )
+    parser.add_argument(
+        "--latency-prefix",
+        type=str,
+        required=True,
     )
     parser.add_argument(
         "--model-file",
@@ -48,6 +58,7 @@ def parse_args() -> Dict[str, Any]:
     parser.add_argument(
         "--model-prefix",
         type=str,
+        required=True,
     )
     parser.add_argument(
         "--mode",

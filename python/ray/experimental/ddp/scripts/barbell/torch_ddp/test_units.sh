@@ -33,32 +33,40 @@ output_path=results/barbell/torch_ddp/tests
 mkdir -p $output_path
 rm -f $output_path/*.csv
 
+layer_size=1024
+num_layers=32
 num_actors=2
-model_prefix=$output_path/${timestamp}_${modes[1]}_model
+num_epochs=20
 
 for mode in ${modes[@]}; do
-	output_file=$output_path/${timestamp}_${mode}.log
+	latency_prefix=${mode}_ls${layer_size}_nl${num_layers}
 	model_file=$output_path/${timestamp}_${mode}_model.log
+	model_prefix=$output_path/${timestamp}_${mode}_model
+	log_file=$output_path/${timestamp}_${mode}.log
+
 	if [ "$mode" != "torch_ddp" ]; then
 		num_models=4
 	else
 		num_models=1
 	fi
+
 	python -m ray.experimental.ddp.src.main.${mode} \
-		--layer-size 1024 \
-		--num-layers 32 \
+		--layer-size $layer_size \
+		--num-layers $num_layers \
 		--num-models $num_models \
 		--num-actors $num_actors \
-		--num-epochs 20 \
+		--num-epochs $num_epochs \
+		--output-path $output_path \
+		--latency-prefix $latency_prefix \
 		--model-file $model_file \
 		--model-prefix $model_prefix \
-		>$output_file 2>&1
+		>$log_file 2>&1
 	status=$?
 
 	if [ $status -ne 0 ]; then
 		echo -e "${RED}ER${NC}"
 		if $debug; then
-			code $output_file
+			code $log_file
 		fi
 		exit 1
 	fi
