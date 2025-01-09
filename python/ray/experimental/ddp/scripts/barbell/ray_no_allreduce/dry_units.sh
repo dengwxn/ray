@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/barbell/ray_mp_online/drys
+output_path=results/barbell/ray_no_allreduce/drys
 mkdir -p $output_path
 rm -f $output_path/*.csv
 
@@ -39,7 +39,7 @@ latency_prefix=ls${layer_size}_nl${num_layers}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
-python -m ray.experimental.ddp.src.main.ray_mp_online \
+python -m ray.experimental.ddp.src.main.ray_no_allreduce \
 	--layer-size $layer_size \
 	--num-layers $num_layers \
 	--num-models $num_models \

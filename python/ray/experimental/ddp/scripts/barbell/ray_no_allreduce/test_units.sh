@@ -26,11 +26,10 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 modes=(
 	torch_mp
-	ray_mp
-	ray_mp_online
+	ray_no_allreduce
 )
 
-output_path=results/barbell/ray_mp_online/tests
+output_path=results/barbell/ray_no_allreduce/tests
 mkdir -p $output_path
 rm -f $output_path/*.csv
 
@@ -100,12 +99,8 @@ file1="$output_path/${timestamp}_${modes[0]}_model.log"
 file2="$output_path/${timestamp}_${modes[1]}_model.log"
 compare_files "$file1" "$file2"
 
-file1="$output_path/${timestamp}_${modes[0]}_model.log"
-file2="$output_path/${timestamp}_${modes[2]}_model.log"
-compare_files "$file1" "$file2"
-
-file1="$output_path/${timestamp}_${modes[2]}_model_0.log"
-file2="$output_path/${timestamp}_${modes[2]}_model_1.log"
+file1="$output_path/${timestamp}_${modes[1]}_model_0.log"
+file2="$output_path/${timestamp}_${modes[1]}_model_1.log"
 compare_files "$file1" "$file2"
 
 echo -e "${GREEN}AC${NC}"

@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 modes=(
 	torch_ddp
-	ray_mp_online
+	ray_bucketing
 )
 
 output_path=results/barbell/torch_ddp_vs_ray_ddp/tests
