@@ -32,41 +32,35 @@ rm -f $output_path/*.csv
 rm -f $output_path/*.log
 
 layer_size_values=(
-	# 10 20 40 80 160 320 640 1280 2560
-	80 320
+	2560 1280 640 512 320 160 80
 )
 num_layers_values=(
-	# 1 2 4 8 16 32 64 128 256
-	8 32
+	10 40 160 250 640 2560 10240
 )
 
-num_models=1
+num_models=10
 num_actors=2
 num_epochs=20
 
-for layer_size in ${layer_size_values[@]}; do
-	for num_layers in ${num_layers_values[@]}; do
-		latency_prefix=ls${layer_size}_nl${num_layers}
-		model_prefix=${output_path}/${latency_prefix}_model
-		log_file=${output_path}/${latency_prefix}.log
+for i in "${!layer_size_values[@]}"; do
+	layer_size="${layer_size_values[$i]}"
+	num_layers="${num_layers_values[$i]}"
 
-		echo "Running layer_size $layer_size, num_layers $num_layers..."
-		python -m ray.experimental.ddp.src.main.ray_no_allreduce \
-			--layer-size $layer_size \
-			--num-layers $num_layers \
-			--num-models $num_models \
-			--num-actors $num_actors \
-			--num-epochs $num_epochs \
-			--output-path $output_path \
-			--latency-prefix $latency_prefix \
-			--model-prefix $model_prefix \
-			--check-tracing \
-			>$log_file 2>&1
-		status=$?
-	done
+	latency_prefix=ls${layer_size}_nl${num_layers}
+	model_prefix=${output_path}/${latency_prefix}_model
+	log_file=${output_path}/${latency_prefix}.log
+
+	echo "Running layer_size $layer_size, num_layers $num_layers..."
+	python -m ray.experimental.ddp.src.main.ray_no_allreduce \
+		--layer-size $layer_size \
+		--num-layers $num_layers \
+		--num-models $num_models \
+		--num-actors $num_actors \
+		--num-epochs $num_epochs \
+		--output-path $output_path \
+		--latency-prefix $latency_prefix \
+		--model-prefix $model_prefix \
+		--check-tracing \
+		>$log_file 2>&1
+	status=$?
 done
-
-# python -m ray.experimental.ddp.src.scripts.plot_heatmap \
-# 	--layer-size ${layer_size_values[@]} \
-# 	--num-layers ${num_layers_values[@]} \
-# 	--output-path $output_path

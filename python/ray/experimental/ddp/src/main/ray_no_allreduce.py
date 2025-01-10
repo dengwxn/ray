@@ -54,6 +54,7 @@ def train_cot(
         actors_to_forwards = [actor.forward.bind(inp) for actor in actors]
         actors_to_backwards = actors_to_forwards
         outputs = []
+
         for i in reversed(range(num_models)):
             actors_to_backwards = [
                 actor.backward.bind(actors_to_backwards[j], i)
@@ -64,6 +65,7 @@ def train_cot(
                 for j, actor in enumerate(actors)
             ]
             outputs.extend(actors_to_updates)
+
         dag = MultiOutputNode(outputs)
 
     compiled_dag = dag.experimental_compile()
