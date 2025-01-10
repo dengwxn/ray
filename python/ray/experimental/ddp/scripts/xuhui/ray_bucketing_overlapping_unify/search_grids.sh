@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/xuhui/torch_ddp/grids/0110
+output_path=results/xuhui/ray_bucketing_overlapping_unify/grids/0110
 mkdir -p $output_path
 rm -f $output_path/*.csv
 rm -f $output_path/*.log
@@ -38,6 +38,7 @@ num_layers_values=(
 	10 40 160 250 640 2560 10240
 )
 
+num_models=10
 num_actors=4
 num_epochs=20
 
@@ -50,14 +51,16 @@ for i in "${!layer_size_values[@]}"; do
 	log_file=${output_path}/${latency_prefix}.log
 
 	echo "Running layer_size $layer_size, num_layers $num_layers..."
-	python -m ray.experimental.ddp.src.main.torch_ddp \
+	python -m ray.experimental.ddp.src.main.ray_bucketing_overlapping_unify \
 		--layer-size $layer_size \
 		--num-layers $num_layers \
+		--num-models $num_models \
 		--num-actors $num_actors \
 		--num-epochs $num_epochs \
 		--output-path $output_path \
 		--latency-prefix $latency_prefix \
 		--model-prefix $model_prefix \
+		--check-tracing \
 		>$log_file 2>&1
 	status=$?
 done
