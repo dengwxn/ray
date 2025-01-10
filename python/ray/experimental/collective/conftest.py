@@ -67,6 +67,10 @@ class AbstractNcclGroup(GPUCommunicator):
     def send_stream(self) -> Optional["cp.cuda.ExternalStream"]:
         return None
 
+    @property
+    def collective_stream(self) -> Optional["cp.cuda.ExternalStream"]:
+        return None
+
     def destroy(self) -> None:
         pass
 
@@ -214,6 +218,7 @@ def check_nccl_group_init(
     p2p_actors_and_custom_comm: Optional[
         Tuple[FrozenSet["ray.actor.ActorHandle"], Optional[GPUCommunicator]]
     ] = None,
+    overlap_gpu_communication: bool = False,
 ) -> "ray.dag.CompiledDAG":
     mock_nccl_group_set = MockNcclGroupSet()
     monkeypatch.setattr(
@@ -225,7 +230,9 @@ def check_nccl_group_init(
         mock_nccl_group_set,
     )
 
-    compiled_dag = dag.experimental_compile()
+    compiled_dag = dag.experimental_compile(
+        _overlap_gpu_communication=overlap_gpu_communication
+    )
     mock_nccl_group_set.check_init(
         compiled_dag,
         actors_and_custom_comms,
