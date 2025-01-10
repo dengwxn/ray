@@ -47,6 +47,7 @@ def train_cot(
     num_epochs: int,
     output_path: str,
     latency_prefix: str,
+    save_model: bool,
     model_prefix: str,
     check_tracing: bool,
 ) -> None:
@@ -88,9 +89,10 @@ def train_cot(
         compiled_dag.execute(None)
         end = time.perf_counter()
 
-        weights = ray.get(actors[0].fetch_weights.remote())
-        for idx, weight in enumerate(weights):
-            logger.info(f"layer: {idx}, weight: {weight}")
+        if save_model:
+            weights = ray.get(actors[0].fetch_weights.remote())
+            for idx, weight in enumerate(weights):
+                logger.info(f"layer: {idx}, weight: {weight}")
 
         if epoch > 0:
             logger.warning(f"epoch: {epoch}, elapse: {round((end - start) * 1e6)} us")
@@ -124,19 +126,17 @@ def train_cot(
         metrics,
     )
 
-    model_file = f"{model_prefix}.log"
-    with open(model_file, "w") as f:
-        for weight in weights:
-            f.write(f"{weight}\n")
-
-    for i, actor in enumerate(actors):
-        weights = ray.get(actor.fetch_weights.remote())
-        model_file = f"{model_prefix}_{i}.log"
+    if save_model:
+        model_file = f"{model_prefix}.log"
         with open(model_file, "w") as f:
             for weight in weights:
                 f.write(f"{weight}\n")
-
-    time.sleep(1)
+        for i, actor in enumerate(actors):
+            weights = ray.get(actor.fetch_weights.remote())
+            model_file = f"{model_prefix}_{i}.log"
+            with open(model_file, "w") as f:
+                for weight in weights:
+                    f.write(f"{weight}\n")
 
 
 def main(args: Dict[str, Any]) -> None:
@@ -150,6 +150,7 @@ def main(args: Dict[str, Any]) -> None:
         args["num_epochs"],
         args["output_path"],
         args["latency_prefix"],
+        args.get("save_model", False),
         args["model_prefix"],
         args["check_tracing"],
     )

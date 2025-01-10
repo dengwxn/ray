@@ -1,6 +1,8 @@
+import time
 from typing import List, Optional
 
 import torch
+from torch.nn.utils import parameters_to_vector
 
 
 class ModelElement(torch.nn.Module):
@@ -31,8 +33,6 @@ class ModelElement(torch.nn.Module):
 
         self.x = None
         self.y = None
-        self.inputs: List[torch.Tensor] = []
-        self.activations: List[torch.Tensor] = []
         self.criterion = torch.nn.MSELoss()
         self.optimizer = torch.optim.SGD(
             self.linear_layers.parameters(),
@@ -50,16 +50,10 @@ class ModelElement(torch.nn.Module):
         return [layer.weight.detach() for layer in self.linear_layers]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        self.inputs = []
-        self.activations = []
-
         for linear, relu in zip(self.linear_layers, self.relu_layers):
-            self.inputs.append(x)
             y = linear(x)
             z = relu(y)
-            self.activations.append(z)
             x = z
-
         return z
 
     def backward(
@@ -75,23 +69,20 @@ class ModelElement(torch.nn.Module):
             assert grad is not None
             pred.backward(grad)
 
-        grads = []
-        for layer in self.linear_layers:
-            grads.append(layer.weight.grad.flatten())
-        grads_cat = torch.cat(grads)
-
+        grads_cat = parameters_to_vector(
+            [layer.weight.grad for layer in self.linear_layers]
+        )
         return grads_cat
 
     def update(self, grads_cat: torch.Tensor, grads_passed: bool) -> None:
         if grads_passed:
-            idx = 0
+            offset = 0
             for layer in self.linear_layers:
-                num_params = layer.weight.numel()
-                grad = grads_cat[idx : idx + num_params].reshape(layer.weight.shape)
-                # if layer.weight.grad is not None:
-                #     assert torch.allclose(layer.weight.grad, grad)
+                size = layer.weight.numel()
+                grad = grads_cat[offset : offset + size].reshape(layer.weight.shape)
                 layer.weight.grad = grad
-                idx += num_params
+                offset += size
+            del grads_cat
 
         self.optimizer.step()
         self.optimizer.zero_grad()

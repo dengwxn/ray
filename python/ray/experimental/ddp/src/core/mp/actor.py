@@ -127,6 +127,12 @@ class ModelActor:
             log("bw.backward", bw_backward)
             log("bw.others", bw_others)
             log("bw.update", bw_update)
+            # logger.warning("")
+            # for i in range(len(self.time["backward_starts"])):
+            #     log(
+            #         f"bw.backward.{i}",
+            #         self.time["backward_ends"][i] - self.time["backward_starts"][i],
+            #     )
         logger.warning("")
 
     def fetch_weights(self) -> List[torch.Tensor]:
