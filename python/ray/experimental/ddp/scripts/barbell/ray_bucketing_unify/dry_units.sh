@@ -32,7 +32,7 @@ rm -f $output_path/*.csv
 
 layer_size=1024
 num_layers=8
-num_models=1
+num_models=2
 num_actors=2
 num_epochs=10
 latency_prefix=ls${layer_size}_nl${num_layers}
@@ -47,6 +47,7 @@ python -m ray.experimental.ddp.src.main.ray_bucketing_unify \
 	--num-epochs $num_epochs \
 	--output-path $output_path \
 	--latency-prefix $latency_prefix \
+	--save-model \
 	--model-prefix $model_prefix \
 	--check-tracing \
 	>$log_file 2>&1
