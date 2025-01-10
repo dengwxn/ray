@@ -36,6 +36,10 @@ class ModelActor:
             )
             for _ in range(num_models)
         ]
+        logger = logging.getLogger(__name__)
+        for model in self.models:
+            size_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
+            logger.warning(f"Model size: {size_bytes / 1024 / 1024} MB")
         self.intermediates: List[torch.Tensor, torch.Tensor] = []
 
         self.it = 0
@@ -134,7 +138,7 @@ class ModelActor:
     def fetch_traces(self) -> Dict[str, List[float]]:
         return self.elapses
 
-    def forward(self, _) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+    def forward(self, _) -> None:
         self.update_time("start")
         if self.check_tracing:
             self.update_time("forward_starts")
@@ -149,7 +153,6 @@ class ModelActor:
             self.intermediates.append((pred, input))
         if self.check_tracing:
             self.update_time("forward_ends")
-        return self.intermediates
 
     def backward(self, _, idx: int) -> torch.Tensor:
         if self.check_tracing:

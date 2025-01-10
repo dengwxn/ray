@@ -7,7 +7,6 @@ from ..core.common import log_elapses_to_csv
 from ..core.config import parse_args
 from ..core.mp.actor import ModelActor
 from ray.dag import InputNode, MultiOutputNode
-from ray.experimental.collective import allreduce
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(

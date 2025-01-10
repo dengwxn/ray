@@ -84,6 +84,9 @@ def spwan_torch_ddp(
             args["num_layers"],
             device,
         )
+        size_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
+        logger.warning(f"Model size: {size_bytes / 1024 / 1024} MB")
+
         torch.manual_seed(998244353)
         model.init_weights()
         model = model.to(model.device)
