@@ -534,9 +534,9 @@ def _generate_actor_to_execution_schedule(
     # A dictionary mapping an actor id to a list of candidate nodes. The list
     # is maintained as a priority queue, so the head of the queue, i.e.,
     # `candidates[0]`, is the "smallest" node.
-    actor_to_candidates: Dict[
-        "ray._raylet.ActorID", List[_DAGOperationGraphNode]
-    ] = defaultdict(list)
+    actor_to_candidates: Dict["ray._raylet.ActorID", List[_DAGOperationGraphNode]] = (
+        defaultdict(list)
+    )
     for node in graph.values():
         if node.in_degree == 0:
             _push_candidate_node_if_ready(actor_to_candidates, node)
@@ -603,6 +603,7 @@ def _generate_overlapped_execution_schedule(
     actor_to_overlapped_schedule: Dict[
         "ray.actor.ActorHandle", List[_DAGOperationGraphNode]
     ] = copy.deepcopy(actor_to_execution_schedule)
+    """ [NOTE] Comment out for manual DDP overlap.
     for overlapped_schedule in actor_to_overlapped_schedule.values():
         # Swap each NCCL read with the previous compute to overlap the NCCL read
         # with computation.
@@ -619,6 +620,7 @@ def _generate_overlapped_execution_schedule(
                     overlapped_schedule[i - 1],
                     overlapped_schedule[i],
                 )
+    """
     return actor_to_overlapped_schedule
 
 
