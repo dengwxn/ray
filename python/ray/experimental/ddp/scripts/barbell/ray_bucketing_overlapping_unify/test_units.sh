@@ -27,10 +27,10 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 modes=(
 	torch_mp
 	ray_no_allreduce
-	ray_bucketing_unify
+	ray_bucketing_overlapping_unify
 )
 
-output_path=results/barbell/ray_bucketing_unify/tests
+output_path=results/barbell/ray_bucketing_overlapping_unify/tests
 mkdir -p $output_path
 rm -f $output_path/*.csv
 
