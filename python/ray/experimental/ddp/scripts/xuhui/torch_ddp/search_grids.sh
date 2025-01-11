@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/xuhui/torch_ddp/grids/0110
+output_path=results/xuhui/torch_ddp/grids/0111_e20
 mkdir -p $output_path
 rm -f $output_path/*.csv
 rm -f $output_path/*.log
@@ -35,7 +35,8 @@ layer_size_values=(
 	2560 1280 640 512 320 160 80
 )
 num_layers_values=(
-	10 40 160 250 640 2560 10240
+	# 10 40 160 250 640 2560 10240
+	20 80 320 500 1280 5120 20480
 )
 
 num_actors=4
