@@ -7,12 +7,12 @@ import pandas as pd
 from matplotlib import font_manager
 
 pwd = "/home/wxdeng/Ray-Sea2Sky/python/ray/experimental/ddp"
-version = "0111_e20"
+version = "0111_s250_e50"
 
 args: Dict[str, Any] = {}
 args["layer_size_values"] = [2560, 1280, 640, 512, 320, 160, 80]
-# args["num_layers_values"] = [10, 40, 160, 250, 640, 2560, 10240]
-args["num_layers_values"] = [20, 80, 320, 500, 1280, 5120, 20480]
+args["num_layers_values"] = [10, 40, 160, 250, 640, 2560, 10240]
+# args["num_layers_values"] = [20, 80, 320, 500, 1280, 5120, 20480]
 args["torch_ddp"] = f"{pwd}/results/xuhui/torch_ddp/grids/{version}"
 args["ray_no_allreduce"] = f"{pwd}/results/xuhui/ray_no_allreduce/grids/{version}"
 args["ray_bucketing"] = f"{pwd}/results/xuhui/ray_bucketing_unify/grids/{version}"
