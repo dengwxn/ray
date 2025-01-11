@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/xuhui/ray_no_allreduce/grids/0111_e20
+output_path=results/xuhui/ray_no_allreduce/grids/0111_s500_e50
 mkdir -p $output_path
 rm -f $output_path/*.csv
 rm -f $output_path/*.log
@@ -42,7 +42,7 @@ num_layers_values=(
 # num_models=10
 num_models=20
 num_actors=4
-num_epochs=20
+num_epochs=50
 
 for i in "${!layer_size_values[@]}"; do
 	layer_size="${layer_size_values[$i]}"
