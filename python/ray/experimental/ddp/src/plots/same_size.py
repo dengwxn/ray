@@ -8,6 +8,7 @@ from matplotlib import font_manager
 
 pwd = "/home/wxdeng/Ray-Sea2Sky/python/ray/experimental/ddp"
 version = "0111_s250_e50"
+# version = "0111_s500_e50"
 
 args: Dict[str, Any] = {}
 args["layer_size_values"] = [2560, 1280, 640, 512, 320, 160, 80]
@@ -20,7 +21,8 @@ args["ray_bucketing_overlapping"] = (
     f"{pwd}/results/xuhui/ray_bucketing_overlapping_unify/grids/{version}"
 )
 args["table"] = f"{pwd}/results/xuhui/same_size/{version}/ddp.csv"
-args["figure"] = f"{pwd}/results/xuhui/same_size/{version}/ddp.png"
+args["png"] = f"{pwd}/results/xuhui/same_size/{version}/ddp.png"
+args["pdf"] = f"{pwd}/results/xuhui/same_size/{version}/ddp.pdf"
 
 keys = [
     "torch_ddp",
@@ -149,4 +151,5 @@ plt.title("Microbenchmark of DDP")
 
 plt.tight_layout()
 
-plt.savefig(args["figure"], bbox_inches="tight")
+plt.savefig(args["png"], bbox_inches="tight")
+plt.savefig(args["pdf"], bbox_inches="tight")
