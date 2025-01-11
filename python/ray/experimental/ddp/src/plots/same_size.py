@@ -7,11 +7,12 @@ import pandas as pd
 from matplotlib import font_manager
 
 pwd = "/home/wxdeng/Ray-Sea2Sky/python/ray/experimental/ddp"
-version = "0110"
+version = "0111_e20"
 
 args: Dict[str, Any] = {}
 args["layer_size_values"] = [2560, 1280, 640, 512, 320, 160, 80]
-args["num_layers_values"] = [10, 40, 160, 250, 640, 2560, 10240]
+# args["num_layers_values"] = [10, 40, 160, 250, 640, 2560, 10240]
+args["num_layers_values"] = [20, 80, 320, 500, 1280, 5120, 20480]
 args["torch_ddp"] = f"{pwd}/results/xuhui/torch_ddp/grids/{version}"
 args["ray_no_allreduce"] = f"{pwd}/results/xuhui/ray_no_allreduce/grids/{version}"
 args["ray_bucketing"] = f"{pwd}/results/xuhui/ray_bucketing_unify/grids/{version}"
@@ -33,6 +34,8 @@ os.makedirs(os.path.dirname(args["table"]), exist_ok=True)
 
 data = []
 for ls, nl in zip(args["layer_size_values"], args["num_layers_values"]):
+    if ls < 320:
+        continue
     row = {
         "layer_size": ls,
         "num_layers": nl,
@@ -89,13 +92,13 @@ fig, ax1 = plt.subplots(figsize=(10, 6))
 ax2 = ax1.twinx()
 
 x = np.arange(len(df))
-width = 0.3
+width = 0.23
 
 bars1 = ax1.bar(
     x - width,
     df["relative_ray_bucketing"],
     width,
-    label="Ray CG w/ Bucketing",
+    label="Ray CD w/ Bucketing",
     color="#11616B",
     edgecolor="black",
     linewidth=1,
@@ -105,7 +108,7 @@ bars2 = ax1.bar(
     x,
     df["relative_ray_bucketing_overlapping"],
     width,
-    label="Ray CG w/ Bucketing and Overlap",
+    label="Ray CD w/ Bucketing and Overlap",
     color="#7BBDB6",
     edgecolor="black",
     linewidth=1,
