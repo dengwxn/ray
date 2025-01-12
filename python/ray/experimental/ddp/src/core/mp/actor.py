@@ -8,6 +8,8 @@ import torch
 import ray
 from ..common import secs_to_micros
 from .model import ModelElement
+from ray.experimental.channel import ChannelContext
+from ray.experimental.channel.torch_tensor_nccl_channel import _NcclGroup
 
 
 @ray.remote
@@ -45,6 +47,8 @@ class ModelActor:
         self.it = 0
         self.time: Dict[str, Any] = {}
         self.elapses: Dict[str, List] = defaultdict(list)
+
+        self.nccl_group: _NcclGroup = None
 
     def init_weights(self) -> None:
         torch.manual_seed(998244353)
@@ -182,6 +186,14 @@ class ModelActor:
         if self.check_tracing:
             self.update_time("backward_ends")
         return grads
+
+    def set_nccl_group(self, nccl_group_id: int) -> None:
+        ctx = ChannelContext.get_current()
+        self.nccl_group = ctx.nccl_groups[nccl_group_id]
+
+    def allreduce(self, grad: torch.Tensor) -> torch.Tensor:
+        self.nccl_group.allreduce(grad, grad)
+        return grad
 
     def update(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
         if self.check_tracing:
