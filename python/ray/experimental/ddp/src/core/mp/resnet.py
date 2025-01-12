@@ -1,3 +1,4 @@
+import logging
 from functools import partial
 from typing import Any, Callable, List, Optional, Type, Union
 
@@ -33,6 +34,9 @@ __all__ = [
     "wide_resnet50_2",
     "wide_resnet101_2",
 ]
+
+
+logger = logging.getLogger(__name__)
 
 
 def conv3x3(
@@ -329,6 +333,237 @@ class ResNet(nn.Module):
         return self._forward_impl(x)
 
 
+class BucketModule(nn.Module):
+    def __init__(self, mods: List[nn.Module], to_flat: bool = False):
+        super().__init__()
+        if to_flat:
+            assert len(mods) == 1
+        self.mods = mods
+        self.to_flat = to_flat
+
+    def forward(self, x: Tensor) -> Tensor:
+        if self.to_flat:
+            x = torch.flatten(x, 1)
+        for mod in self.mods:
+            x = mod(x)
+        return x
+
+
+class ResNetMP(nn.Module):
+    def __init__(
+        self,
+        block: Type[Union[BasicBlock, Bottleneck]],
+        layers: List[int],
+        num_classes: int = 1000,
+        zero_init_residual: bool = False,
+        groups: int = 1,
+        width_per_group: int = 64,
+        replace_stride_with_dilation: Optional[List[bool]] = None,
+        norm_layer: Optional[Callable[..., nn.Module]] = None,
+    ) -> None:
+        # [TODO] Decompose into smaller modules.
+        super().__init__()
+        _log_api_usage_once(self)
+        if norm_layer is None:
+            norm_layer = nn.BatchNorm2d
+        self._norm_layer = norm_layer
+
+        self.inplanes = 64
+        self.dilation = 1
+        if replace_stride_with_dilation is None:
+            # each element in the tuple indicates if we should replace
+            # the 2x2 stride with a dilated convolution instead
+            replace_stride_with_dilation = [False, False, False]
+        if len(replace_stride_with_dilation) != 3:
+            raise ValueError(
+                "replace_stride_with_dilation should be None "
+                f"or a 3-element tuple, got {replace_stride_with_dilation}"
+            )
+        self.groups = groups
+        self.base_width = width_per_group
+        self.conv1 = nn.Conv2d(
+            3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False
+        )
+        self.bn1 = norm_layer(self.inplanes)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.layer1 = self._make_layer(block, 64, layers[0])
+        self.layer2 = self._make_layer(
+            block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0]
+        )
+        self.layer3 = self._make_layer(
+            block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1]
+        )
+        self.layer4 = self._make_layer(
+            block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2]
+        )
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512 * block.expansion, num_classes)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+        # Zero-initialize the last BN in each residual branch,
+        # so that the residual branch starts with zeros, and each residual block behaves like an identity.
+        # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
+        if zero_init_residual:
+            for m in self.modules():
+                if isinstance(m, Bottleneck) and m.bn3.weight is not None:
+                    nn.init.constant_(m.bn3.weight, 0)  # type: ignore[arg-type]
+                elif isinstance(m, BasicBlock) and m.bn2.weight is not None:
+                    nn.init.constant_(m.bn2.weight, 0)  # type: ignore[arg-type]
+
+        self.bucket_sub_modules()
+
+    def bucket_sub_modules(self):
+        def show_module_size(module, indent=0):
+            num_params = sum(p.numel() for p in module.parameters())
+            size_mib = num_params * 4 / (1024 * 1024)
+            indent_str = "  " * indent
+            logger.info(f"{indent_str}{module.__class__.__name__}: {size_mib:.2f} MiB")
+            if size_mib < 25:
+                return
+            for name, child in module.named_children():
+                show_module_size(child, indent + 1)
+
+        def calculate_module_size(module) -> float:
+            num_params = sum(p.numel() for p in module.parameters())
+            size_mib = num_params * 4 / (1024 * 1024)
+            return size_mib
+
+        # [NOTE] Calculate the size of each module.
+        self.sub_modules = [
+            self.conv1,
+            self.bn1,
+            self.relu,
+            self.maxpool,
+            self.layer1,
+            self.layer2,
+            self.layer3,
+            self.layer4,
+            self.avgpool,
+            # [NOTE] `fc` needs flattening.
+            # self.fc,
+        ]
+        for module in self.sub_modules:
+            show_module_size(module)
+        print()
+
+        BUCKET_SIZE = 25
+
+        self.bucket_modules: List[BucketModule] = []
+        bucket_list: List[nn.Module] = []
+        bucket_size = 0
+        for mod in self.sub_modules:
+            size = calculate_module_size(mod)
+            if bucket_size + size <= BUCKET_SIZE:
+                bucket_list.append(mod)
+                bucket_size += size
+            else:
+                if isinstance(mod, nn.Sequential):
+                    for child in mod:
+                        size = calculate_module_size(child)
+                        if bucket_size + size <= BUCKET_SIZE:
+                            bucket_list.append(child)
+                            bucket_size += size
+                        else:
+                            self.bucket_modules.append(BucketModule(bucket_list))
+                            bucket_list = [child]
+                            bucket_size = size
+        if len(bucket_list) > 0:
+            self.bucket_modules.append(BucketModule(bucket_list))
+        self.bucket_modules.append(BucketModule([self.fc], to_flat=True))
+
+        for bucket in self.bucket_modules:
+            logger.info(
+                f"Bucket size: {sum(calculate_module_size(m) for m in bucket.mods):.2f} MiB"
+            )
+            for mod in bucket.mods:
+                logger.info(f"  {mod.__class__.__name__}")
+
+    def _make_layer(
+        self,
+        block: Type[Union[BasicBlock, Bottleneck]],
+        planes: int,
+        blocks: int,
+        stride: int = 1,
+        dilate: bool = False,
+    ) -> nn.Sequential:
+        norm_layer = self._norm_layer
+        downsample = None
+        previous_dilation = self.dilation
+        if dilate:
+            self.dilation *= stride
+            stride = 1
+        if stride != 1 or self.inplanes != planes * block.expansion:
+            downsample = nn.Sequential(
+                conv1x1(self.inplanes, planes * block.expansion, stride),
+                norm_layer(planes * block.expansion),
+            )
+
+        layers = []
+        layers.append(
+            block(
+                self.inplanes,
+                planes,
+                stride,
+                downsample,
+                self.groups,
+                self.base_width,
+                previous_dilation,
+                norm_layer,
+            )
+        )
+        self.inplanes = planes * block.expansion
+        for _ in range(1, blocks):
+            layers.append(
+                block(
+                    self.inplanes,
+                    planes,
+                    groups=self.groups,
+                    base_width=self.base_width,
+                    dilation=self.dilation,
+                    norm_layer=norm_layer,
+                )
+            )
+
+        return nn.Sequential(*layers)
+
+    def _forward_impl(self, x: Tensor) -> Tensor:
+        # See note [TorchScript super()]
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.fc(x)
+
+        return x
+
+    def _forward_impl_mp(self, x: Tensor) -> Tensor:
+        # for mod in self.sub_modules:
+        #     x = mod(x)
+
+        for bucket in self.bucket_modules:
+            x = bucket(x)
+
+        return x
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self._forward_impl_mp(x)
+
+
 def _resnet(
     block: Type[Union[BasicBlock, Bottleneck]],
     layers: List[int],
@@ -340,6 +575,26 @@ def _resnet(
         _ovewrite_named_param(kwargs, "num_classes", len(weights.meta["categories"]))
 
     model = ResNet(block, layers, **kwargs)
+
+    if weights is not None:
+        model.load_state_dict(
+            weights.get_state_dict(progress=progress, check_hash=True)
+        )
+
+    return model
+
+
+def _resnet_mp(
+    block: Type[Union[BasicBlock, Bottleneck]],
+    layers: List[int],
+    weights: Optional[WeightsEnum],
+    progress: bool,
+    **kwargs: Any,
+) -> ResNetMP:
+    if weights is not None:
+        _ovewrite_named_param(kwargs, "num_classes", len(weights.meta["categories"]))
+
+    model = ResNetMP(block, layers, **kwargs)
 
     if weights is not None:
         model.load_state_dict(
@@ -781,6 +1036,15 @@ def resnet152(
     weights = ResNet152_Weights.verify(weights)
 
     return _resnet(Bottleneck, [3, 8, 36, 3], weights, progress, **kwargs)
+
+
+@handle_legacy_interface(weights=("pretrained", ResNet152_Weights.IMAGENET1K_V1))
+def resnet152_mp(
+    *, weights: Optional[ResNet152_Weights] = None, progress: bool = True, **kwargs: Any
+) -> ResNetMP:
+    weights = ResNet152_Weights.verify(weights)
+
+    return _resnet_mp(Bottleneck, [3, 8, 36, 3], weights, progress, **kwargs)
 
 
 # @register_model()

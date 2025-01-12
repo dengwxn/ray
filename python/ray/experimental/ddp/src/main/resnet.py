@@ -1,28 +1,33 @@
+import logging
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from ..core.mp.resnet import resnet152
+from ..core.mp.resnet import resnet152, resnet152_mp
+
+logging.basicConfig(
+    level=logging.WARNING,
+    format="[%(levelname)s %(filename)s:%(lineno)d %(funcName)s] %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 torch.manual_seed(998244353)
 
-# Load pretrained ResNet50 model
-model = resnet152(weights=True)
+model = resnet152_mp(weights=True)
 
-num_epochs = 2
+num_epochs = 6
 # batch_size = 128
 batch_size = 32
 
-random_input = torch.randn(batch_size, 3, 224, 224)
-random_targets = torch.randint(0, 1000, (batch_size,))
-
 device = "cuda:0"
 model = model.to(device)
-random_input = random_input.to(device)
-random_targets = random_targets.to(device)
 
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
+
+random_input = torch.randn(batch_size, 3, 224, 224).to(device)
+random_targets = torch.randint(0, 1000, (batch_size,)).to(device)
 
 model.train()
 for epoch in range(num_epochs):
@@ -31,8 +36,8 @@ for epoch in range(num_epochs):
     outputs = model(random_input)
 
     loss = criterion(outputs, random_targets)
-
     loss.backward()
+
     optimizer.step()
 
     if (epoch + 1) % 1 == 0:
@@ -44,9 +49,7 @@ for epoch in range(num_epochs):
         )
 
 model.eval()
-test_input = torch.randn(1, 3, 224, 224)
-if torch.cuda.is_available():
-    test_input = test_input.cuda()
+test_input = torch.randn(1, 3, 224, 224).to(device)
 
 with torch.no_grad():
     output = model(test_input)
