@@ -25,12 +25,13 @@ def init_actors(args: Dict[str, Any]) -> List[ResnetActor]:
     actor_cls = ResnetActor.options(num_gpus=1)
     actors = [
         actor_cls.remote(
+            rank=i,
             num_models=num_models,
             num_actors=num_actors,
             device=device,
             check_tracing=check_tracing,
         )
-        for _ in range(num_actors)
+        for i in range(num_actors)
     ]
 
     return actors
