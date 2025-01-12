@@ -10,12 +10,12 @@ def parse_args() -> Dict[str, Any]:
     parser.add_argument(
         "--layer-size",
         type=int,
-        required=True,
+        # required=True,
     )
     parser.add_argument(
         "--num-layers",
         type=int,
-        required=True,
+        # required=True,
     )
     parser.add_argument(
         "--num-models",

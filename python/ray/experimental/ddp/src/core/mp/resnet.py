@@ -1,10 +1,12 @@
 import logging
+import time
 from functools import partial
 from typing import Any, Callable, List, Optional, Type, Union
 
 import torch
 import torch.nn as nn
 from torch import Tensor
+from torch.nn.utils import parameters_to_vector
 from torchvision.models._api import Weights, WeightsEnum, register_model
 from torchvision.models._meta import _IMAGENET_CATEGORIES
 from torchvision.models._utils import _ovewrite_named_param, handle_legacy_interface
@@ -338,8 +340,13 @@ class BucketModule(nn.Module):
         super().__init__()
         if to_flat:
             assert len(mods) == 1
-        self.mods = mods
+        self.mods = torch.nn.ModuleList(mods)
         self.to_flat = to_flat
+
+        self.x = None
+        self.y = None
+        self.criterion = torch.nn.CrossEntropyLoss()
+        self.optimizer = torch.optim.SGD(self.mods.parameters(), lr=0.001)
 
     def forward(self, x: Tensor) -> Tensor:
         if self.to_flat:
@@ -347,6 +354,51 @@ class BucketModule(nn.Module):
         for mod in self.mods:
             x = mod(x)
         return x
+
+    def backward(
+        self,
+        loss: Optional[torch.Tensor] = None,
+        pred: Optional[torch.Tensor] = None,
+        grad: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        # start = time.perf_counter()
+
+        if loss is not None:
+            assert pred is None
+            loss.backward()
+        elif pred is not None:
+            assert grad is not None
+            pred.backward(grad)
+
+        # backward_end = time.perf_counter()
+
+        # [TODO] Check if `parameters()` is deterministic.
+        grads_cat = parameters_to_vector(
+            [p.grad for p in self.mods.parameters() if p.grad is not None]
+        )
+        # cat_end = time.perf_counter()
+
+        # logger.warning(
+        #     f"bw.backward: {round((backward_end - start) * 1e6)} us, bw.cat: {round((cat_end - backward_end) * 1e6)} us"
+        # )
+
+        return grads_cat
+
+    def update(self, grads_cat: torch.Tensor, grads_passed: bool) -> None:
+        if grads_passed:
+            offset = 0
+            # [TODO] Check if `parameters()` is deterministic.
+            for p in self.mods.parameters():
+                if p.grad is None:
+                    continue
+                size = p.data.numel()
+                grad = grads_cat[offset : offset + size].reshape(p.data.shape)
+                p.grad = grad
+                offset += size
+            del grads_cat
+
+        self.optimizer.step()
+        self.optimizer.zero_grad()
 
 
 class ResNetMP(nn.Module):
