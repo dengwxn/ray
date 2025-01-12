@@ -14,6 +14,7 @@ from .resnet import resnet152, resnet152_mp
 class ResnetActor:
     def __init__(
         self,
+        rank: int,
         num_models: int,
         num_actors: int,
         device: torch.device,
@@ -23,6 +24,7 @@ class ResnetActor:
         self.models = [mod.to(device) for mod in self.resnet.bucket_modules]
         assert num_models == len(self.models)
 
+        self.rank = rank
         self.num_models = num_models
         self.num_actors = num_actors
         self.device = device
@@ -79,7 +81,7 @@ class ResnetActor:
 
     def finish_tracing(self) -> None:
         logger = logging.getLogger(__name__)
-        logger.warning(f"Actor finished iteration {self.it}")
+        logger.warning(f"Actor {self.rank} finished iteration {self.it}")
         self.it += 1
         if self.it <= 1:
             return

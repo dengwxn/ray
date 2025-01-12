@@ -361,8 +361,6 @@ class BucketModule(nn.Module):
         pred: Optional[torch.Tensor] = None,
         grad: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        # start = time.perf_counter()
-
         if loss is not None:
             assert pred is None
             loss.backward()
@@ -370,18 +368,10 @@ class BucketModule(nn.Module):
             assert grad is not None
             pred.backward(grad)
 
-        # backward_end = time.perf_counter()
-
         # [TODO] Check if `parameters()` is deterministic.
         grads_cat = parameters_to_vector(
             [p.grad for p in self.mods.parameters() if p.grad is not None]
         )
-        # cat_end = time.perf_counter()
-
-        # logger.warning(
-        #     f"bw.backward: {round((backward_end - start) * 1e6)} us, bw.cat: {round((cat_end - backward_end) * 1e6)} us"
-        # )
-
         return grads_cat
 
     def update(self, grads_cat: torch.Tensor, grads_passed: bool) -> None:
@@ -395,7 +385,6 @@ class BucketModule(nn.Module):
                 grad = grads_cat[offset : offset + size].reshape(p.data.shape)
                 p.grad = grad
                 offset += size
-            del grads_cat
 
         self.optimizer.step()
         self.optimizer.zero_grad()
