@@ -135,6 +135,8 @@ def train_cot(
                 for weight in weights:
                     f.write(f"{weight}\n")
 
+    _destroy_nccl_group(nccl_group_id)
+
     time.sleep(1)
 
 
