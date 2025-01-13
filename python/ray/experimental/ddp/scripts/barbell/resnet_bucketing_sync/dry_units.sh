@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/barbell/resnet_bucketing_overlapping_sync/drys
+output_path=results/barbell/resnet_bucketing_sync/drys
 mkdir -p $output_path
 # rm -f $output_path/*.csv
 
@@ -37,7 +37,7 @@ latency_prefix=${timestamp}_latency
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
-python -m ray.experimental.ddp.src.main.resnet_bucketing_overlapping_sync \
+python -m ray.experimental.ddp.src.main.resnet_bucketing_sync \
 	--num-models $num_models \
 	--num-actors $num_actors \
 	--num-epochs $num_epochs \
