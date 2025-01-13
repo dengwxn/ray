@@ -8,7 +8,10 @@ from ..core.common import log_elapses_to_csv
 from ..core.config import parse_args
 from ..core.mp.actor_resnet import ResnetActor
 from ray.dag import InputNode, MultiOutputNode
-from ray.experimental.collective import allreduce
+from ray.experimental.channel.torch_tensor_nccl_channel import (
+    _init_nccl_group,
+    _destroy_nccl_group,
+)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -49,6 +52,10 @@ def train_cot(
     model_prefix: str,
     check_tracing: bool,
 ) -> None:
+    nccl_group_id = _init_nccl_group(actors)
+    for actor in actors:
+        ray.get(actor.set_nccl_group.remote(nccl_group_id))
+
     with InputNode() as inp:
         actors_to_forwards = [actor.forward.bind(inp) for actor in actors]
         actors_to_backwards = actors_to_forwards
@@ -59,7 +66,10 @@ def train_cot(
             for j, actor in enumerate(actors)
         ]
         for i in reversed(range(num_models)):
-            grads_allreduced = allreduce.bind(actors_to_backwards)
+            grads_allreduced = [
+                actor.allreduce.bind(grad_to_reduce)
+                for actor, grad_to_reduce in zip(actors, actors_to_backwards)
+            ]
             if i > 0:
                 actors_to_backwards = [
                     actor.backward.bind(actors_to_backwards[j], i - 1)
@@ -73,8 +83,6 @@ def train_cot(
 
         dag = MultiOutputNode(outputs)
 
-    compiled_dag = dag.experimental_compile(_overlap_gpu_communication=True)
-
     BATCH_SIZE = 32
 
     total_elapses: List[int] = []
@@ -84,7 +92,7 @@ def train_cot(
             ray.get(actor.init_tracing.remote())
 
         start = time.perf_counter()
-        compiled_dag.execute(None)
+        ray.get(dag.execute(None))
         end = time.perf_counter()
 
         if epoch > 0:
@@ -187,6 +195,8 @@ def train_cot(
             with open(model_file, "w") as f:
                 for weight in weights:
                     f.write(f"{weight}\n")
+
+    _destroy_nccl_group(nccl_group_id)
 
     time.sleep(1)
 
