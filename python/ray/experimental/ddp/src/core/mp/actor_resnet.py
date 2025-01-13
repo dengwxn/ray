@@ -1,8 +1,9 @@
 import logging
 import time
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
+import ray._private.worker
 import torch
 
 import ray
@@ -82,8 +83,19 @@ class ResnetActor:
             "update_starts": [],
             "update_ends": [],
         }
+        ray._private.worker.global_worker.get_serialization_context().set_tracing(
+            enable_tracing=True, clear_traces=True
+        )
 
     def finish_tracing(self) -> None:
+        ray._private.worker.global_worker.get_serialization_context().set_tracing(
+            enable_tracing=False
+        )
+        serialization_traces = (
+            ray._private.worker.global_worker.get_serialization_context().get_traces()
+        )
+        self.elapses["serialization"].append(serialization_traces["serialization"])
+        self.elapses["deserialization"].append(serialization_traces["deserialization"])
         logger = logging.getLogger(__name__)
         logger.warning(f"Actor {self.rank} finished iteration {self.it}")
         self.it += 1

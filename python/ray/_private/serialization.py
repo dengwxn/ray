@@ -3,6 +3,7 @@ import logging
 import threading
 import traceback
 from typing import Any, Optional
+import time
 
 
 import google.protobuf.message
@@ -180,6 +181,9 @@ class SerializationContext:
         )
 
         serialization_addons.apply(self)
+
+        self.tracing = False
+        self.traces = None
 
     def _register_cloudpickle_reducer(self, cls, reducer):
         pickle.CloudPickler.dispatch[cls] = reducer
@@ -446,7 +450,19 @@ class SerializationContext:
             # throws an exception.
             return PlasmaObjectNotAvailable
 
+    def set_tracing(self, enable_tracing: bool, clear_traces: bool = False):
+        self.tracing = enable_tracing
+        if clear_traces:
+            self.traces = {
+                "serialization": [],
+                "deserialization": [],
+            }
+
     def deserialize_objects(self, data_metadata_pairs, object_refs):
+        start_time = None
+        if self.tracing:
+            start_time = time.perf_counter()
+
         assert len(data_metadata_pairs) == len(object_refs)
         # initialize the thread-local field
         if not hasattr(self._thread_local, "object_ref_stack"):
@@ -466,7 +482,15 @@ class SerializationContext:
                 if self._thread_local.object_ref_stack:
                     self._thread_local.object_ref_stack.pop()
             results.append(obj)
+
+        if self.tracing:
+            end_time = time.perf_counter()
+            self.traces["deserialization"].append((start_time, end_time))
+
         return results
+
+    def get_traces(self):
+        return self.traces
 
     def _serialize_to_pickle5(self, metadata, value):
         writer = Pickle5Writer()
@@ -547,10 +571,20 @@ class SerializationContext:
         Args:
             value: The value to serialize.
         """
+        start_time = None
+        if self.tracing:
+            start_time = time.perf_counter()
+
         if isinstance(value, bytes):
             # If the object is a byte array, skip serializing it and
             # use a special metadata to indicate it's raw binary. So
             # that this object can also be read by Java.
-            return RawSerializedObject(value)
+            serialized = RawSerializedObject(value)
         else:
-            return self._serialize_to_msgpack(value)
+            serialized = self._serialize_to_msgpack(value)
+
+        if self.tracing:
+            end_time = time.perf_counter()
+            self.traces["serialization"].append((start_time, end_time))
+
+        return serialized
