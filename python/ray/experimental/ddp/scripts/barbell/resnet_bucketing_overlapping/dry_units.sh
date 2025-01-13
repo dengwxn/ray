@@ -28,7 +28,7 @@ export RAY_DEDUP_LOGS=0
 
 output_path=results/barbell/resnet_bucketing_overlapping/drys
 mkdir -p $output_path
-rm -f $output_path/*.csv
+# rm -f $output_path/*.csv
 
 num_models=12
 num_actors=2
