@@ -33,7 +33,7 @@ class ResnetActor:
         logger = logging.getLogger(__name__)
         for model in self.models:
             size_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
-            logger.warning(f"Model size: {size_bytes / 1024 / 1024} MB")
+            logger.warning(f"Model size: {size_bytes / 1024 / 1024:.2f} MB")
         self.intermediates: List[torch.Tensor, torch.Tensor] = []
 
         self.it = 0
@@ -82,6 +82,10 @@ class ResnetActor:
     def finish_tracing(self) -> None:
         logger = logging.getLogger(__name__)
         logger.warning(f"Actor {self.rank} finished iteration {self.it}")
+
+        self.intermediates = []
+        torch.cuda.empty_cache()
+
         self.it += 1
         if self.it <= 1:
             return
@@ -169,6 +173,7 @@ class ResnetActor:
             loss=loss,
             pred=pred,
             grad=grad,
+            run=idx > -1,
         )
         if self.check_tracing:
             self.update_time("backward_ends")
@@ -177,9 +182,9 @@ class ResnetActor:
     def update(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
         if self.check_tracing:
             self.update_time("update_starts")
-        if grads_passed:
-            grads_cat /= self.num_actors
-        self.models[idx].update(grads_cat, grads_passed)
+        # if grads_passed:
+        #     grads_cat /= self.num_actors
+        # self.models[idx].update(grads_cat, grads_passed)
         if self.check_tracing:
             self.update_time("update_ends")
         if idx == 0:

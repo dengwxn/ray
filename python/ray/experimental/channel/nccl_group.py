@@ -98,6 +98,7 @@ class _NcclGroup(GPUCommunicator):
         self._cuda_stream: Optional["cp.cuda.ExternalStream"] = None
         self._send_stream: Optional["cp.cuda.ExternalStream"] = None
         self._recv_stream: Optional["cp.cuda.ExternalStream"] = None
+        self._collective_stream: Optional["cp.cuda.ExternalStream"] = None
         if cuda_stream is not None:
             assert rank is not None, "NCCL actor has no rank assigned"
 
@@ -129,6 +130,7 @@ class _NcclGroup(GPUCommunicator):
                 self._collective_stream = self._cuda_stream
 
         self._closed = False
+        self._prev_collective = False
 
     def initialize(self, rank: int) -> None:
         # No additional initialization is needed.
@@ -266,6 +268,12 @@ class _NcclGroup(GPUCommunicator):
         if self._closed:
             raise RayChannelError("NCCL group has been destroyed.")
 
+        if self._prev_collective:
+            # [NOTE] If sync here, two streams (backward and allreduce) are running
+            # in parallel, one is backward, two actors would not have the same latency.
+            # self._collective_stream.synchronize()
+            self._prev_collective = False
+
         self._comm.allReduce(
             self.nccl_util.get_tensor_ptr(send_buf),
             self.nccl_util.get_tensor_ptr(recv_buf),
@@ -274,6 +282,10 @@ class _NcclGroup(GPUCommunicator):
             op.value,
             self._collective_stream.ptr,
         )
+        self._prev_collective = True
+
+        # [NOTE] If sync here, all actors have the same latency.
+        # self._collective_stream.synchronize()
 
         # Buffer values are undefined if NCCL ops are aborted. Therefore, we
         # need to synchronize here and check that the channel is still open to

@@ -360,21 +360,30 @@ class BucketModule(nn.Module):
         loss: Optional[torch.Tensor] = None,
         pred: Optional[torch.Tensor] = None,
         grad: Optional[torch.Tensor] = None,
+        run: bool = False,
     ) -> torch.Tensor:
-        if loss is not None:
-            assert pred is None
-            loss.backward()
-        elif pred is not None:
-            assert grad is not None
-            pred.backward(grad)
+        if run:
+            if loss is not None:
+                assert pred is None
+                loss.backward()
+            elif pred is not None:
+                assert grad is not None
+                pred.backward(grad)
+            num_params = len(list(self.mods.parameters()))
+            size_params = sum(p.numel() for p in self.mods.parameters())
+            logger.warning(f"Backward, num_params: {num_params}, size_params: {int(size_params * 4 / 1024 / 1024)} MiB")
 
         # [TODO] Check if `parameters()` is deterministic.
-        grads_cat = parameters_to_vector(
-            [p.grad for p in self.mods.parameters() if p.grad is not None]
-        )
+        # grads_cat = parameters_to_vector(
+        #     [p.grad for p in self.mods.parameters() if p.grad is not None]
+        # )
+        grads_cat = torch.randn(10).to("cuda:0")
         return grads_cat
 
     def update(self, grads_cat: torch.Tensor, grads_passed: bool) -> None:
+        self.optimizer.zero_grad()
+        return
+
         if grads_passed:
             offset = 0
             # [TODO] Check if `parameters()` is deterministic.

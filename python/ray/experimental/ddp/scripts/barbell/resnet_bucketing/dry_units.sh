@@ -29,6 +29,7 @@ export RAY_DEDUP_LOGS=0
 output_path=results/barbell/resnet_bucketing/drys
 mkdir -p $output_path
 rm -f $output_path/*.csv
+rm -f $output_path/*.log
 
 num_models=12
 num_actors=2
@@ -50,6 +51,7 @@ status=$?
 
 if $debug; then
 	code $output_path/${timestamp}.log
+	cat $output_path/*.csv
 fi
 
 if [ $status -ne 0 ]; then

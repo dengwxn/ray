@@ -65,7 +65,7 @@ def train_cot(
                     for j, actor in enumerate(actors)
                 ]
             actors_to_updates = [
-                actor.update.bind(grads_allreduced[j], True, i)
+                actor.update.bind(grads_allreduced[j], False, i)
                 for j, actor in enumerate(actors)
             ]
             outputs.extend(actors_to_updates)
@@ -82,6 +82,8 @@ def train_cot(
             ray.get(actor.init_training.remote(BATCH_SIZE))
             ray.get(actor.init_tracing.remote())
 
+        time.sleep(3)
+
         start = time.perf_counter()
         compiled_dag.execute(None)
         end = time.perf_counter()
@@ -92,6 +94,8 @@ def train_cot(
 
         for actor in actors:
             ray.get(actor.finish_tracing.remote())
+
+        time.sleep(3)
 
     actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
     for actor_elapses in actors_to_elapses:
