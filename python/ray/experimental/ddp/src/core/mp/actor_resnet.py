@@ -7,7 +7,10 @@ import torch
 
 import ray
 from ..common import secs_to_micros
-from .resnet import resnet152, resnet152_mp
+
+# from .resnet import resnet152_mp as resnet_mp
+# from .resnet import resnet101_mp as resnet_mp
+from .resnet import resnet50_mp as resnet_mp
 
 
 @ray.remote
@@ -20,7 +23,7 @@ class ResnetActor:
         device: torch.device,
         check_tracing: bool,
     ):
-        self.resnet = resnet152_mp(weights=True)
+        self.resnet = resnet_mp(weights=True)
         self.models = [mod.to(device) for mod in self.resnet.bucket_modules]
         assert num_models == len(self.models)
 
@@ -33,7 +36,7 @@ class ResnetActor:
         logger = logging.getLogger(__name__)
         for model in self.models:
             size_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
-            logger.warning(f"Model size: {size_bytes / 1024 / 1024} MB")
+            logger.warning(f"Model size: {size_bytes / 1024 / 1024:.2f} MiB")
         self.intermediates: List[torch.Tensor, torch.Tensor] = []
 
         self.it = 0
@@ -82,6 +85,8 @@ class ResnetActor:
     def finish_tracing(self) -> None:
         logger = logging.getLogger(__name__)
         logger.warning(f"Actor {self.rank} finished iteration {self.it}")
+
+        self.intermediates = []
         self.it += 1
         if self.it <= 1:
             return
@@ -165,6 +170,7 @@ class ResnetActor:
             loss = None
             pred, input = self.intermediates[idx]
             grad = input.grad
+            self.intermediates[idx] = (None, None)
         grads = self.models[idx].backward(
             loss=loss,
             pred=pred,
