@@ -88,14 +88,16 @@ class ResnetActor:
         )
 
     def finish_tracing(self) -> None:
+        def sum_traces(traces):
+            return sum(end - start for start, end in traces)
+
         ray._private.worker.global_worker.get_serialization_context().set_tracing(
             enable_tracing=False
         )
         serialization_traces = (
             ray._private.worker.global_worker.get_serialization_context().get_traces()
         )
-        self.elapses["serialization"].append(serialization_traces["serialization"])
-        self.elapses["deserialization"].append(serialization_traces["deserialization"])
+
         logger = logging.getLogger(__name__)
         logger.warning(f"Actor {self.rank} finished iteration {self.it}")
         self.it += 1
@@ -143,6 +145,8 @@ class ResnetActor:
             #         f"bw.backward.{i}",
             #         self.time["backward_ends"][i] - self.time["backward_starts"][i],
             #     )
+            log("serialization", sum_traces(serialization_traces["serialization"]))
+            log("deserialization", sum_traces(serialization_traces["deserialization"]))
         logger.warning("")
 
     def fetch_weights(self) -> List[torch.Tensor]:
