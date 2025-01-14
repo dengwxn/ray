@@ -32,7 +32,7 @@ rm -f $output_path/*.csv
 
 num_models=12
 num_actors=2
-num_epochs=50
+num_epochs=10
 latency_prefix=${timestamp}_latency
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log

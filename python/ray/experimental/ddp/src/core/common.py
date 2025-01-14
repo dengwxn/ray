@@ -32,7 +32,7 @@ def log_elapses_to_csv(
         output_file = f"{output_path}/{latency_prefix}_rank{idx}.csv"
 
         for metric in metrics:
-            assert metric in metric_values
+            assert metric in metric_values, f"{metric} not in {metric_values}"
             metric_values[metric] = metric_values[metric][
                 int(warmup * len(metric_values[metric])) :
             ]

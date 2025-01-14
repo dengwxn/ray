@@ -3,10 +3,10 @@ import time
 from collections import defaultdict
 from typing import Any, Dict, List, Tuple
 
-import ray._private.worker
 import torch
 
 import ray
+import ray._private.worker
 from ..common import secs_to_micros
 from .resnet import resnet152, resnet152_mp
 from ray.experimental.channel import ChannelContext
@@ -91,11 +91,10 @@ class ResnetActor:
         ray._private.worker.global_worker.get_serialization_context().set_tracing(
             enable_tracing=False
         )
-        serialization_traces = (
+        traces = (
             ray._private.worker.global_worker.get_serialization_context().get_traces()
         )
-        self.elapses["serialization"].append(serialization_traces["serialization"])
-        self.elapses["deserialization"].append(serialization_traces["deserialization"])
+
         logger = logging.getLogger(__name__)
         logger.warning(f"Actor {self.rank} finished iteration {self.it}")
         self.it += 1
@@ -143,6 +142,11 @@ class ResnetActor:
             #         f"bw.backward.{i}",
             #         self.time["backward_ends"][i] - self.time["backward_starts"][i],
             #     )
+
+            sum_ser = sum((end - start) for (start, end) in traces["serialization"])
+            log("serialization", sum_ser)
+            sum_deser = sum((end - start) for (start, end) in traces["deserialization"])
+            log("deserialization", sum_deser)
         logger.warning("")
 
     def fetch_weights(self) -> List[torch.Tensor]:
