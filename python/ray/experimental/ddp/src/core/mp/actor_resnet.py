@@ -8,9 +8,9 @@ import torch
 import ray
 from ..common import secs_to_micros
 
-# from .resnet import resnet152_mp as resnet_mp
+from .resnet import resnet152_mp as resnet_mp
 # from .resnet import resnet101_mp as resnet_mp
-from .resnet import resnet50_mp as resnet_mp
+# from .resnet import resnet50_mp as resnet_mp
 
 
 @ray.remote

@@ -31,9 +31,9 @@ mkdir -p $output_path
 rm -f $output_path/*.csv
 rm -f $output_path/*.log
 
-# num_models=12 # resnet152
+num_models=12 # resnet152
 # num_models=9 # resnet101
-num_models=6 # resnet50
+# num_models=6 # resnet50
 num_actors=4
 num_epochs=50
 latency_prefix=${timestamp}_latency
