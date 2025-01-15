@@ -121,8 +121,8 @@ class _DAGOperationGraphNode:
             return compare(self, other)
         elif self.requires_nccl_op != other.requires_nccl_op:
             # When one node is a NCCL operation and the other is not, prioritize
-            # the non-NCCL operation.
-            return not self.requires_nccl_op
+            # the NCCL operation.
+            return self.requires_nccl_op
         else:
             # When either both nodes are NCCL operations or both nodes are not
             # NCCL operations, use the default comparison.
