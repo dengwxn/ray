@@ -80,6 +80,8 @@ class ResnetActor:
             "forward_ends": [],
             "backward_starts": [],
             "backward_ends": [],
+            "allreduce_starts": [],
+            "allreduce_ends": [],
             "update_starts": [],
             "update_ends": [],
         }
@@ -134,6 +136,16 @@ class ResnetActor:
             bw_others = bw_total - bw_backward - bw_update
             log("bw.total", bw_total)
             log("bw.backward", bw_backward)
+            if self.time["allreduce_starts"]:
+                assert self.time["allreduce_ends"]
+                bw_allreduce = sum(
+                    [
+                        self.time["allreduce_ends"][i] - self.time["allreduce_starts"][i]
+                        for i in range(self.num_models)
+                    ]
+                )
+                bw_others -= bw_allreduce
+                log("bw.allreduce", bw_allreduce)
             log("bw.others", bw_others)
             log("bw.update", bw_update)
             # logger.warning("")
@@ -199,7 +211,11 @@ class ResnetActor:
         self.nccl_group = ctx.nccl_groups[nccl_group_id]
 
     def allreduce(self, grad: torch.Tensor) -> torch.Tensor:
+        if self.check_tracing:
+            self.update_time("allreduce_starts")
         self.nccl_group.allreduce(grad, grad)
+        if self.check_tracing:
+            self.update_time("allreduce_ends")
         return grad
 
     def update(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:

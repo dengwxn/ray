@@ -62,6 +62,10 @@ def parse_args() -> Dict[str, Any]:
         "--mode",
         type=str,
     )
+    parser.add_argument(
+        "--trace-timeline",
+        action="store_true",
+    )
     args = parser.parse_args()
     args = vars(args)
     return args

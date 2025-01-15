@@ -1,6 +1,8 @@
 import logging
 import time
-from typing import Any, Dict, List, Tuple
+import os
+from typing import Any, Dict, List, Set, Callable
+import csv
 
 import ray
 from ..core.common import log_elapses_to_csv, secs_to_micros
@@ -50,6 +52,7 @@ def train_cot(
     save_model: bool,
     model_prefix: str,
     check_tracing: bool,
+    trace_timeline: bool = False,
 ) -> None:
     nccl_group_id = _init_nccl_group(actors)
     for actor in actors:
@@ -116,11 +119,18 @@ def train_cot(
             "fw.total",
             "bw.total",
             "bw.backward",
+            "bw.allreduce",
             "bw.others",
             "bw.update",
             "serialization",
             "deserialization",
         ]
+        if trace_timeline:
+            log_timeline(
+                len(actors),
+                output_path,
+                latency_prefix,
+            )
     log_elapses_to_csv(
         actors_to_elapses,
         output_path,
@@ -145,6 +155,69 @@ def train_cot(
     time.sleep(1)
 
 
+def log_timeline(num_actors: int, output_path: str, latency_prefix: str) -> None:
+    timeline: List[Dict[str, Any]] = ray.timeline()
+    logger.warning(f"timeline length: {len(timeline)}")
+    tids: Set[str] = {
+        event["tid"] for event in timeline if event["cat"].startswith("task")
+    }
+    assert len(tids) == num_actors
+    actor_to_time: Dict[str, Dict[str, float]] = {tid: dict() for tid in tids}
+
+    def extract_time(
+        tid: str, key: str, pred: Callable[[Dict[str, Any]], bool]
+    ) -> None:
+        total_time = 0
+        for event in timeline:
+            if event["tid"] == tid and pred(event):
+                total_time += event["dur"]
+        actor_to_time[tid][key] = total_time
+
+    for tid in tids:
+        extract_time(
+            tid,
+            "task:deserialize_arguments",
+            lambda event: event["cat"] == "task:deserialize_arguments",
+        )
+        extract_time(
+            tid,
+            "task:store_outputs",
+            lambda event: event["cat"] == "task:store_outputs",
+        )
+        extract_time(
+            tid,
+            "task:execute",
+            lambda event: event["cat"] == "task:execute",
+        )
+        extract_time(
+            tid,
+            "task:total",
+            lambda event: event["cat"].startswith("task::"),
+        )
+
+    # Create output directory if it doesn't exist
+    os.makedirs(output_path, exist_ok=True)
+
+    # Process each actor's data
+    for actor, time_dict in actor_to_time.items():
+        output_file = f"{output_path}/{latency_prefix}_{actor}.csv"
+
+        # Write statistics to CSV file
+        with open(output_file, "w", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(["name", "elapse", "percent"])
+            total = time_dict["task:total"]
+            for cat, elapse in time_dict.items():
+                percent = elapse / total * 100
+                writer.writerow(
+                    [
+                        cat,
+                        round(elapse),
+                        round(percent, 1),
+                    ]
+                )
+
+
 def main(args: Dict[str, Any]) -> None:
     ray.init()
 
@@ -159,10 +232,13 @@ def main(args: Dict[str, Any]) -> None:
         args.get("save_model", False),
         args["model_prefix"],
         args["check_tracing"],
+        args.get("trace_timeline", False),
     )
 
     for actor in actors:
         ray.kill(actor)
+    if args["trace_timeline"]:
+        ray.timeline(filename="{}/timeline.json".format(args["output_path"]))
     ray.shutdown()
 
 
