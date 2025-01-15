@@ -77,22 +77,26 @@ def train_cot(
     BATCH_SIZE = 32
 
     total_elapses: List[int] = []
-    for epoch in range(num_epochs):
-        for actor in actors:
-            ray.get(actor.init_training.remote(BATCH_SIZE))
-            ray.get(actor.init_tracing.remote())
 
-        start = time.perf_counter()
-        compiled_dag.execute(None)
-        end = time.perf_counter()
+    # for epoch in range(num_epochs):
+    for actor in actors:
+        ray.get(actor.init_training.remote(BATCH_SIZE))
+        ray.get(actor.init_tracing.remote())
 
-        if epoch > 0:
-            logger.warning(f"epoch: {epoch}, elapse: {round((end - start) * 1e6)} us")
-            total_elapses.append(round((end - start) * 1e6))
+    start = time.perf_counter()
+    compiled_dag.execute(None)
+    end = time.perf_counter()
 
-        for actor in actors:
-            ray.get(actor.finish_tracing.remote())
+    # if epoch > 0:
+    #     logger.warning(f"epoch: {epoch}, elapse: {round((end - start) * 1e6)} us")
+    #     total_elapses.append(round((end - start) * 1e6))
 
+    for actor in actors:
+        ray.get(actor.finish_tracing.remote())
+
+    for actor in actors:
+        ray.get(actor.finish_profiling.remote())
+    
     actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
     for actor_elapses in actors_to_elapses:
         actor_elapses["total"] = total_elapses
@@ -111,12 +115,12 @@ def train_cot(
             "bw.others",
             "bw.update",
         ]
-    log_elapses_to_csv(
-        actors_to_elapses,
-        output_path,
-        latency_prefix,
-        metrics,
-    )
+    # log_elapses_to_csv(
+    #     actors_to_elapses,
+    #     output_path,
+    #     latency_prefix,
+    #     metrics,
+    # )
 
     if save_model:
         model_file = f"{model_prefix}.log"
