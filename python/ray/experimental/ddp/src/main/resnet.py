@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from ..core.mp.resnet import resnet152, resnet152_mp
+from ..core.mp.resnet import resnet50_mp, resnet101_mp, resnet152_mp
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 torch.manual_seed(998244353)
 
-model = resnet152_mp(weights=True)
+model = resnet50_mp(weights=True)
 
 num_epochs = 6
 # batch_size = 128

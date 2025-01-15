@@ -30,7 +30,9 @@ output_path=results/barbell/resnet_bucketing_overlapping/drys
 mkdir -p $output_path
 rm -f $output_path/*.csv
 
-num_models=12
+# num_models=12 # resnet152
+# num_models=9 # resnet101
+num_models=6 # resnet50
 num_actors=2
 num_epochs=10
 latency_prefix=${timestamp}_latency

@@ -1011,6 +1011,15 @@ def resnet50(
     return _resnet(Bottleneck, [3, 4, 6, 3], weights, progress, **kwargs)
 
 
+@handle_legacy_interface(weights=("pretrained", ResNet50_Weights.IMAGENET1K_V1))
+def resnet50_mp(
+    *, weights: Optional[ResNet50_Weights] = None, progress: bool = True, **kwargs: Any
+) -> ResNet:
+    weights = ResNet50_Weights.verify(weights)
+
+    return _resnet_mp(Bottleneck, [3, 4, 6, 3], weights, progress, **kwargs)
+
+
 # @register_model()
 @handle_legacy_interface(weights=("pretrained", ResNet101_Weights.IMAGENET1K_V1))
 def resnet101(
@@ -1043,6 +1052,15 @@ def resnet101(
     weights = ResNet101_Weights.verify(weights)
 
     return _resnet(Bottleneck, [3, 4, 23, 3], weights, progress, **kwargs)
+
+
+@handle_legacy_interface(weights=("pretrained", ResNet101_Weights.IMAGENET1K_V1))
+def resnet101_mp(
+    *, weights: Optional[ResNet101_Weights] = None, progress: bool = True, **kwargs: Any
+) -> ResNet:
+    weights = ResNet101_Weights.verify(weights)
+
+    return _resnet_mp(Bottleneck, [3, 4, 23, 3], weights, progress, **kwargs)
 
 
 # @register_model()
