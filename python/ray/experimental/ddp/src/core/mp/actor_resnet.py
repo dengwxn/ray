@@ -30,6 +30,23 @@ class ResnetActor:
         self.device = device
         self.check_tracing = check_tracing
 
+        # memory trace
+        torch.cuda.memory._record_memory_history(
+            max_entries=100000
+        )
+
+        # stack trace
+        self.prof = torch.profiler.profile(
+            # profile_memory=True,
+            # record_shapes=True,
+            with_stack=True,
+            activities=[
+                # torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ]
+        )
+        self.prof.__enter__()
+
         logger = logging.getLogger(__name__)
         for model in self.models:
             size_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
@@ -78,6 +95,15 @@ class ResnetActor:
             "update_starts": [],
             "update_ends": [],
         }
+
+    def finish_profiling(self) -> None:
+        self.prof.__exit__(None, None, None)
+        # stack trace
+        self.prof.export_chrome_trace(f"actor_{self.rank}_trace.json")
+
+        # memory trace
+        torch.cuda.memory._dump_snapshot(f"actor_{self.rank}_snapshot.pickle")
+        torch.cuda.memory._record_memory_history(enabled=None)
 
     def finish_tracing(self) -> None:
         logger = logging.getLogger(__name__)
