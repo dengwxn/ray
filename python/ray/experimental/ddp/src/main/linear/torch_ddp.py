@@ -11,7 +11,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 from ...core.common import log_elapses_to_csv, secs_to_micros
 from ...core.config import parse_args
-from ...core.linear.actor import ModelElement
+from ...core.linear.actor import BucketParameter
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -78,7 +78,7 @@ def spwan_torch_ddp(
 
         # Create model on the device.
         device = f"cuda:{rank}"
-        model = ModelElement(
+        model = BucketParameter(
             args["layer_size"],
             args["num_layers"],
             device,

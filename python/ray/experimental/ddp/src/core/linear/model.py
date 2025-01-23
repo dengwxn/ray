@@ -1,11 +1,10 @@
-import time
 from typing import List, Optional
 
 import torch
 from torch.nn.utils import parameters_to_vector
 
 
-class ModelElement(torch.nn.Module):
+class BucketParameter(torch.nn.Module):
     def __init__(
         self,
         layer_size: int,

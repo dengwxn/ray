@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.nn.utils import parameters_to_vector
-from torchvision.models._api import Weights, WeightsEnum, register_model
+from torchvision.models._api import Weights, WeightsEnum
 from torchvision.models._meta import _IMAGENET_CATEGORIES
 from torchvision.models._utils import _ovewrite_named_param, handle_legacy_interface
 from torchvision.transforms._presets import ImageClassification
@@ -334,24 +334,24 @@ class ResNet(nn.Module):
         return self._forward_impl(x)
 
 
-class BucketModule(nn.Module):
-    def __init__(self, mods: List[nn.Module], to_flat: bool = False):
+class BucketParameter(nn.Module):
+    def __init__(self, layers: List[nn.Module], to_flat: bool = False):
         super().__init__()
         if to_flat:
-            assert len(mods) == 1
-        self.mods = torch.nn.ModuleList(mods)
+            assert len(layers) == 1
+        self.layers = torch.nn.ModuleList(layers)
         self.to_flat = to_flat
 
         self.x = None
         self.y = None
         self.criterion = torch.nn.CrossEntropyLoss()
-        self.optimizer = torch.optim.SGD(self.mods.parameters(), lr=0.001)
+        self.optimizer = torch.optim.SGD(self.layers.parameters(), lr=0.001)
 
     def forward(self, x: Tensor) -> Tensor:
         if self.to_flat:
             x = torch.flatten(x, 1)
-        for mod in self.mods:
-            x = mod(x)
+        for layer in self.layers:
+            x = layer(x)
         return x
 
     def backward(
@@ -369,7 +369,7 @@ class BucketModule(nn.Module):
 
         # [TODO] Check if `parameters()` is deterministic.
         grads_cat = parameters_to_vector(
-            [p.grad for p in self.mods.parameters() if p.grad is not None]
+            [p.grad for p in self.layers.parameters() if p.grad is not None]
         )
         return grads_cat
 
@@ -377,7 +377,7 @@ class BucketModule(nn.Module):
         if grads_passed:
             offset = 0
             # [TODO] Check if `parameters()` is deterministic.
-            for p in self.mods.parameters():
+            for p in self.layers.parameters():
                 if p.grad is None:
                     continue
                 size = p.data.numel()
@@ -457,26 +457,25 @@ class ResNetMP(nn.Module):
                 elif isinstance(m, BasicBlock) and m.bn2.weight is not None:
                     nn.init.constant_(m.bn2.weight, 0)  # type: ignore[arg-type]
 
-        self.bucket_sub_modules()
+        self.process_bucket_params()
 
-    def bucket_sub_modules(self):
-        def show_module_size(module, indent=0):
-            num_params = sum(p.numel() for p in module.parameters())
+    def process_bucket_params(self):
+        def show_layer_size(layer, indent=0):
+            num_params = sum(p.numel() for p in layer.parameters())
             size_mib = num_params * 4 / (1024 * 1024)
             indent_str = "  " * indent
-            logger.info(f"{indent_str}{module.__class__.__name__}: {size_mib:.2f} MiB")
+            logger.info(f"{indent_str}{layer.__class__.__name__}: {size_mib:.2f} MiB")
             if size_mib < 25:
                 return
-            for name, child in module.named_children():
-                show_module_size(child, indent + 1)
+            for _, child in layer.named_children():
+                show_layer_size(child, indent + 1)
 
-        def calculate_module_size(module) -> float:
-            num_params = sum(p.numel() for p in module.parameters())
+        def calculate_layer_size(layer) -> float:
+            num_params = sum(p.numel() for p in layer.parameters())
             size_mib = num_params * 4 / (1024 * 1024)
             return size_mib
 
-        # [NOTE] Calculate the size of each module.
-        self.sub_modules = [
+        self.linear_layers = [
             self.conv1,
             self.bn1,
             self.relu,
@@ -489,41 +488,41 @@ class ResNetMP(nn.Module):
             # [NOTE] `fc` needs flattening.
             # self.fc,
         ]
-        for module in self.sub_modules:
-            show_module_size(module)
+        for layer in self.linear_layers:
+            show_layer_size(layer)
         print()
 
         BUCKET_SIZE = 25
 
-        self.bucket_modules: List[BucketModule] = []
-        bucket_list: List[nn.Module] = []
+        self.bucket_params: List[BucketParameter] = []
+        bucket_layers: List[nn.Module] = []
         bucket_size = 0
-        for mod in self.sub_modules:
-            size = calculate_module_size(mod)
+        for layer in self.linear_layers:
+            size = calculate_layer_size(layer)
             if bucket_size + size <= BUCKET_SIZE:
-                bucket_list.append(mod)
+                bucket_layers.append(layer)
                 bucket_size += size
             else:
-                if isinstance(mod, nn.Sequential):
-                    for child in mod:
-                        size = calculate_module_size(child)
+                if isinstance(layer, nn.Sequential):
+                    for child in layer:
+                        size = calculate_layer_size(child)
                         if bucket_size + size <= BUCKET_SIZE:
-                            bucket_list.append(child)
+                            bucket_layers.append(child)
                             bucket_size += size
                         else:
-                            self.bucket_modules.append(BucketModule(bucket_list))
-                            bucket_list = [child]
+                            self.bucket_params.append(BucketParameter(bucket_layers))
+                            bucket_layers = [child]
                             bucket_size = size
-        if len(bucket_list) > 0:
-            self.bucket_modules.append(BucketModule(bucket_list))
-        self.bucket_modules.append(BucketModule([self.fc], to_flat=True))
+        if len(bucket_layers) > 0:
+            self.bucket_params.append(BucketParameter(bucket_layers))
+        self.bucket_params.append(BucketParameter([self.fc], to_flat=True))
 
-        for bucket in self.bucket_modules:
+        for bparam in self.bucket_params:
             logger.info(
-                f"Bucket size: {sum(calculate_module_size(m) for m in bucket.mods):.2f} MiB"
+                f"Bucket size: {sum(calculate_layer_size(m) for m in bparam.layers):.2f} MiB"
             )
-            for mod in bucket.mods:
-                logger.info(f"  {mod.__class__.__name__}")
+            for layer in bparam.layers:
+                logger.info(f"  {layer.__class__.__name__}")
 
     def _make_layer(
         self,
@@ -595,8 +594,8 @@ class ResNetMP(nn.Module):
         # for mod in self.sub_modules:
         #     x = mod(x)
 
-        for bucket in self.bucket_modules:
-            x = bucket(x)
+        for bparam in self.bucket_params:
+            x = bparam(x)
 
         return x
 

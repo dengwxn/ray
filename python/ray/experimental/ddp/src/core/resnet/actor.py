@@ -7,8 +7,8 @@ import torch
 
 import ray
 from ..common import secs_to_micros
-
 from .model import resnet152_mp as resnet_mp
+
 # from .resnet import resnet101_mp as resnet_mp
 # from .resnet import resnet50_mp as resnet_mp
 
@@ -24,7 +24,7 @@ class ResnetActor:
         check_tracing: bool,
     ):
         self.resnet = resnet_mp(weights=True)
-        self.models = [mod.to(device) for mod in self.resnet.bucket_modules]
+        self.models = [bparam.to(device) for bparam in self.resnet.bucket_params]
         assert num_models == len(self.models)
 
         self.rank = rank

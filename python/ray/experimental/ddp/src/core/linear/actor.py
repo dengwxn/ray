@@ -1,17 +1,17 @@
 import logging
 import time
 from collections import defaultdict
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 import torch
 
 import ray
 from ..common import secs_to_micros
-from .model import ModelElement
+from .model import BucketParameter
 
 
 @ray.remote
-class ModelActor:
+class LinearActor:
     def __init__(
         self,
         layer_size: int,
@@ -29,7 +29,7 @@ class ModelActor:
         self.check_tracing = check_tracing
 
         self.models = [
-            ModelElement(
+            BucketParameter(
                 layer_size=layer_size,
                 num_layers=num_layers // num_models,
                 device=device,

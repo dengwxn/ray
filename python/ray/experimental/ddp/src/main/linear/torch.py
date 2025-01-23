@@ -1,11 +1,11 @@
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import torch
 
 from ...core.config import parse_args
-from ...core.linear.model import ModelElement
+from ...core.linear.model import BucketParameter
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -15,14 +15,14 @@ logging.basicConfig(
 logger.info("Welcome to Downton Abbey!")
 
 
-def init_models(args: Dict[str, Any]) -> List[ModelElement]:
+def init_models(args: Dict[str, Any]) -> List[BucketParameter]:
     layer_size = args["layer_size"]
     num_layers = args["num_layers"]
     device = "cuda:0"
     num_models = args["num_models"]
 
     models = [
-        ModelElement(
+        BucketParameter(
             layer_size=layer_size,
             num_layers=num_layers // num_models,
             device=device,
@@ -33,14 +33,14 @@ def init_models(args: Dict[str, Any]) -> List[ModelElement]:
     return models
 
 
-def init_weights(models: List[ModelElement]) -> None:
+def init_weights(models: List[BucketParameter]) -> None:
     torch.manual_seed(998244353)
     for model in models:
         model.init_weights()
         model = model.to(model.device)
 
 
-def init_training(models: List[ModelElement]) -> None:
+def init_training(models: List[BucketParameter]) -> None:
     # Generate input for first model and target for last model
     models[0].x = torch.randn(
         1,
@@ -58,7 +58,7 @@ def init_training(models: List[ModelElement]) -> None:
 
 
 def forward(
-    models: List[ModelElement],
+    models: List[BucketParameter],
 ) -> List[Tuple[torch.Tensor, torch.Tensor]]:
     intermediates = []
     input = models[0].x
@@ -73,7 +73,7 @@ def forward(
 
 
 def backward(
-    models: List[ModelElement],
+    models: List[BucketParameter],
     intermediates: List[Tuple[torch.Tensor, torch.Tensor]],
     idx: int,
 ) -> None:
@@ -96,14 +96,14 @@ def backward(
 
 
 def update(
-    models: List[ModelElement],
+    models: List[BucketParameter],
     idx: int,
 ) -> None:
     models[idx].update(None, False)
 
 
 def train_cot(
-    models: List[ModelElement],
+    models: List[BucketParameter],
     num_epochs: int,
     model_file: str,
 ) -> None:

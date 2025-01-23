@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 import ray
 from ...core.common import log_elapses_to_csv
 from ...core.config import parse_args
-from ...core.linear.actor import ModelActor
+from ...core.linear.actor import LinearActor
 from ray.dag import InputNode, MultiOutputNode
 from ray.experimental.collective import allreduce
 
@@ -17,7 +17,7 @@ logging.basicConfig(
 logger.info("Welcome to Downton Abbey!")
 
 
-def init_actors(args: Dict[str, Any]) -> List[ModelActor]:
+def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
     layer_size = args["layer_size"]
     num_layers = args["num_layers"]
     num_models = args["num_models"]
@@ -25,7 +25,7 @@ def init_actors(args: Dict[str, Any]) -> List[ModelActor]:
     device = "cuda:0"
     check_tracing = args["check_tracing"]
 
-    actor_cls = ModelActor.options(num_gpus=1)
+    actor_cls = LinearActor.options(num_gpus=1)
     actors = [
         actor_cls.remote(
             layer_size=layer_size,
@@ -42,7 +42,7 @@ def init_actors(args: Dict[str, Any]) -> List[ModelActor]:
 
 
 def train_cot(
-    actors: List[ModelActor],
+    actors: List[LinearActor],
     num_models: int,
     num_epochs: int,
     output_path: str,
