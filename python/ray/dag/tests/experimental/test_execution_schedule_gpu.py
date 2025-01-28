@@ -262,9 +262,9 @@ def test_three_actors_with_nccl_2(ray_start_regular, single_fetch, monkeypatch):
             |                     |
             -> c.no_op -> a.no_op -
 
-    a: no_op  send        recv  no_op
-    b: no_op  recv  send        no_op
-    c: no_op        recv  send  no_op
+    a: no_op  send                      recv  no_op
+    b:        recv  no_op  send               no_op
+    c:                     recv  no_op  send  no_op
     """
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
@@ -290,8 +290,8 @@ def test_three_actors_with_nccl_2(ray_start_regular, single_fetch, monkeypatch):
 
     compiled_dag = dag.experimental_compile()
     a_expected_schedule = [0, 1, 2, 3]
-    b_expected_schedule = [0, 2, 1, 3]
-    c_expected_schedule = [0, 2, 1, 3]
+    b_expected_schedule = [2, 0, 1, 3]
+    c_expected_schedule = [2, 0, 1, 3]
 
     a_schedule = compiled_dag.actor_to_execution_schedule[a]
     b_schedule = compiled_dag.actor_to_execution_schedule[b]
@@ -334,7 +334,7 @@ def test_overlap_gpu_communication(
     Schedule with no overlap:
 
     sender1: send  send
-    sender2: send              send
+    sender2: send        send
     receiver:      recv  recv  recv  recv
 
     Schedule with overlap:
@@ -374,7 +374,7 @@ def test_overlap_gpu_communication(
     )
 
     # Check receiver schedule
-    expected_no_overlap_schedule = [0, 1, 2, 3]
+    expected_no_overlap_schedule = [0, 2, 1, 3]
     expected_overlap_schedule = [0, 2, 1, 3]
 
     if overlap_gpu_communication:
