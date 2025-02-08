@@ -75,6 +75,9 @@ from ray.dag.dag_node_operation import (
 
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
+# [NOTE:print]
+import torch
+
 if TYPE_CHECKING:
     import cupy as cp
 
@@ -401,11 +404,7 @@ class ExecutableTask:
 
         for arg in resolved_args:
             if isinstance(arg, ChannelInterface):
-                if isinstance(arg, ChannelInterface):
-                    channel = arg
-                else:
-                    adapter = arg
-                    channel = adapter.get_dag_input_channel()
+                channel = arg
 
                 if channel in input_channel_to_idx:
                     # The same channel was added before, so reuse the index.
@@ -643,7 +642,14 @@ class ExecutableTask:
                     input_data_ready = []
                     for val in input_data:
                         if isinstance(val, DAGOperationFuture):
-                            val = val.wait()
+                            # [NOTE:print]
+                            if isinstance(val, GPUFuture):
+                                if isinstance(val._buf, torch.Tensor):
+                                    data_ptr = val._buf.data_ptr()
+                                else:
+                                    data_ptr = None
+                                print(f"[read] {val} {val._buf}@{id(val._buf)}[{data_ptr}] {val._event}")
+                            val = val.wait(self.method_name)
                             if isinstance(val, RayTaskError):
                                 raise val.as_instanceof_cause()
                         input_data_ready.append(val)
@@ -691,12 +697,19 @@ class ExecutableTask:
             # contributes to the DAG output. When it is directly returned, downstream
             # tasks can wait on its event from their streams.
             if self.requires_nccl_read or self.requires_nccl_collective:
-                wait_future = self.is_dag_output
+                wait_future = False
             else:
                 wait_future = True
             with self.stream:
                 output_val = self.fetch_intermediate_future(wait_future)
             try:
+                # [NOTE:print]
+                if not wait_future and isinstance(output_val, GPUFuture):
+                    op = "recv" if self.requires_nccl_read else "col"
+                    assert isinstance(output_val._buf, torch.Tensor)
+                    print(
+                        f"[{op}.write] {output_val} {output_val._buf}@{id(output_val._buf)}[{output_val._buf.data_ptr()}] {output_val._event}"
+                    )
                 self.output_writer.write(output_val)
             except RayChannelError:
                 return True
@@ -1791,6 +1804,27 @@ class CompiledDAG:
                 self.dag_input_channels, input_task.output_idxs, is_input=True
             )
             self._dag_output_fetcher = SynchronousReader(self.dag_output_channels)
+
+        # [NOTE:print]
+        # for idx, task in self.idx_to_task.items():
+        #     name = (
+        #         task.dag_node._method_name
+        #         if isinstance(task.dag_node, ClassMethodNode)
+        #         else task.dag_node.__class__.__name__
+        #     )
+        #     out_ch_strs = []
+        #     for ch in task.output_channels:
+        #         from ray.experimental.channel import CompositeChannel
+        #         ch_str = f"{ch.__class__.__name__} @ {id(ch)}"
+        #         if isinstance(ch, CompositeChannel):
+        #             for sub_ch in ch._channels:
+        #                 ch_str += f"\n    ({sub_ch.__class__.__name__} @ {id(sub_ch)})"
+        #         out_ch_strs.append(ch_str)
+        #     print(f"[{idx}] {name}: ")
+        #     if not out_ch_strs:
+        #         print("  No output channels")
+        #     for out_ch_str in out_ch_strs:
+        #         print("  " + out_ch_str)
 
         self._dag_submitter.start()
         self._dag_output_fetcher.start()

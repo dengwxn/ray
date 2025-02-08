@@ -267,9 +267,17 @@ class _NcclGroup(GPUCommunicator):
         if self._closed:
             raise RayChannelError("NCCL group has been destroyed.")
 
+        # [NOTE:print]
+        send_data_ptr = self.nccl_util.get_tensor_ptr(send_buf)
+        recv_data_ptr = self.nccl_util.get_tensor_ptr(recv_buf)
+        print(
+            f"[allreduce] {send_buf}@{id(send_buf)}[{send_data_ptr}] {recv_buf}@{id(recv_buf)}[{recv_data_ptr}]"
+        )
+
         self._comm.allReduce(
-            self.nccl_util.get_tensor_ptr(send_buf),
-            self.nccl_util.get_tensor_ptr(recv_buf),
+            # [NOTE:print]
+            send_data_ptr,
+            recv_data_ptr,
             send_buf.numel(),
             self.nccl_util.get_nccl_tensor_dtype(send_buf),
             op.value,

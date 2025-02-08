@@ -636,6 +636,13 @@ def _extract_execution_schedule(
     Extract _DAGNodeOperation from _DAGOperationGraphNode in the schedule
     and discard unnecessary information.
     """
+    # [NOTE:print]
+    # print(
+    #     {
+    #         actor: [node.op.method_name for node in nodes]
+    #         for actor, nodes in actor_to_execution_schedule.items()
+    #     }
+    # )
     return {
         actor: [node.op for node in nodes]
         for actor, nodes in actor_to_execution_schedule.items()

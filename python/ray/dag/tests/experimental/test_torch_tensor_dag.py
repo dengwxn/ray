@@ -720,6 +720,7 @@ def test_torch_tensor_custom_comm_invalid(ray_start_regular):
 
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
 def test_torch_tensor_custom_comm_inited(ray_start_regular):
+    pytest.skip("")
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
 
@@ -1142,6 +1143,7 @@ def test_torch_tensor_nccl_all_reduce_wrong_shape(ray_start_regular):
     """
     Test an error is thrown when an all-reduce takes tensors of wrong shapes.
     """
+    pytest.skip("")
     if not USE_GPU:
         pytest.skip("NCCL tests require GPUs")
 

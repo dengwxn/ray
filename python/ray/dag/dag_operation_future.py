@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Dict, Generic, Optional, TypeVar
 from ray.util.annotations import DeveloperAPI
+# [NOTE:print]
+import torch
 
 
 if TYPE_CHECKING:
@@ -18,8 +20,9 @@ class DAGOperationFuture(ABC, Generic[T]):
     and is not exposed to the DAG caller.
     """
 
+    # [NOTE:print]
     @abstractmethod
-    def wait(self):
+    def wait(self, method_name: Optional[str] = None):
         """
         Wait for the future and return the result of the operation.
         """
@@ -42,7 +45,8 @@ class ResolvedFuture(DAGOperationFuture):
         """
         self._result = result
 
-    def wait(self):
+    # [NOTE:print]
+    def wait(self, method_name: Optional[str] = None):
         """
         Wait and immediately return the result. This operation will not block.
         """
@@ -66,8 +70,8 @@ class GPUFuture(DAGOperationFuture[Any]):
     """
 
     # [HACK] This prevents CUDA events from being garbage collected.
-    id: int = 0
-    id_to_event: Dict[int, "cp.cuda.Event"] = {}
+    # id: int = 0
+    # id_to_event: Dict[int, "cp.cuda.Event"] = {}
 
     def __init__(self, buf: Any, stream: Optional["cp.cuda.Stream"] = None):
         """
@@ -87,11 +91,12 @@ class GPUFuture(DAGOperationFuture[Any]):
         self._event = cp.cuda.Event()
         self._event.record(stream)
         # [HACK]
-        self._id = GPUFuture.id
-        GPUFuture.id += 1
-        GPUFuture.id_to_event[self._id] = self._event
+        # self._id = GPUFuture.id
+        # GPUFuture.id += 1
+        # GPUFuture.id_to_event[self._id] = self._event
 
-    def wait(self) -> Any:
+    # [NOTE:print]
+    def wait(self, method_name: Optional[str] = None) -> Any:
         """
         Wait for the future on the current CUDA stream and return the result from
         the GPU operation. This operation does not block CPU.
@@ -101,5 +106,12 @@ class GPUFuture(DAGOperationFuture[Any]):
         current_stream = cp.cuda.get_current_stream()
         current_stream.wait_event(self._event)
         # [HACK]
-        GPUFuture.id_to_event.pop(self._id)
+        # GPUFuture.id_to_event.pop(self._id)
+        # [NOTE:print]
+        if isinstance(self._buf, torch.Tensor):
+            data_ptr = self._buf.data_ptr()
+        else:
+            data_ptr = None
+        if method_name is not None:
+            print(f"[{method_name}.wait] {self._buf}@{id(self._buf)}[{data_ptr}]")
         return self._buf
