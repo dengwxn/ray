@@ -12,6 +12,13 @@ def secs_to_micros(secs: float) -> int:
     return round(secs * 1e6)
 
 
+def ms_to_micros(ms: float) -> int:
+    """
+    Converts milliseconds to microseconds.
+    """
+    return round(ms * 1e3)
+
+
 def log_elapses_to_csv(
     ranks_to_elapses: List[Dict[str, Any]],
     output_path: str,

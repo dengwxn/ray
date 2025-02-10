@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 import torch
 
 import ray
-from ..common import secs_to_micros
+from ..common import ms_to_micros, secs_to_micros
 from .model import BucketParameter
 
 
@@ -43,7 +43,7 @@ class LinearActor:
         self.intermediates: List[torch.Tensor, torch.Tensor] = []
 
         self.it = 0
-        self.time: Dict[str, Any] = {}
+        self.events: Dict[str, Any] = {}
         self.elapses: Dict[str, List] = defaultdict(list)
 
     def init_weights(self) -> None:
@@ -67,16 +67,17 @@ class LinearActor:
             self.models[-1].device,
         )
 
-    def update_time(self, key: str) -> None:
-        timestamp = time.perf_counter()
-        if key not in self.time:
-            self.time[key] = timestamp
+    def update_tracing(self, key: str) -> None:
+        event = torch.cuda.Event(enable_timing=True)
+        event.record()
+        if key not in self.events:
+            self.events[key] = event
         else:
-            assert isinstance(self.time[key], list)
-            self.time[key].append(timestamp)
+            assert isinstance(self.events[key], list)
+            self.events[key].append(event)
 
     def init_tracing(self) -> None:
-        self.time: Dict[str, Any] = {
+        self.events: Dict[str, torch.cuda.Event] = {
             "forward_starts": [],
             "forward_ends": [],
             "backward_starts": [],
@@ -86,18 +87,20 @@ class LinearActor:
         }
 
     def finish_tracing(self) -> None:
+        torch.cuda.synchronize()
         logger = logging.getLogger(__name__)
         logger.warning(f"Actor finished iteration {self.it}")
         self.it += 1
         if self.it <= 1:
             return
 
-        total = self.time["end"] - self.time["start"]
+        total = self.events["start"].elapsed_time(self.events["end"])
 
         def log(key: str, elapse: float):
-            self.elapses[key].append(secs_to_micros(elapse))
+            elapse_us = ms_to_micros(elapse)
+            self.elapses[key].append(elapse_us)
             logger.warning(
-                f"{key} elapse: {secs_to_micros(elapse)} us, percent: {round(elapse / total * 100, 1)}%"
+                f"{key} elapse: {elapse_us} us, percent: {round(elapse / total * 100, 1)}%"
             )
 
         log(
@@ -107,18 +110,26 @@ class LinearActor:
         if self.tracing:
             log(
                 "fw.total",
-                self.time["forward_ends"][-1] - self.time["forward_starts"][0],
+                self.events["forward_starts"][0].elapsed_time(
+                    self.events["forward_ends"][-1]
+                ),
             )
-            bw_total = self.time["update_ends"][-1] - self.time["backward_starts"][0]
+            bw_total = self.events["backward_starts"][0].elapsed_time(
+                self.events["update_ends"][-1]
+            )
             bw_backward = sum(
                 [
-                    self.time["backward_ends"][i] - self.time["backward_starts"][i]
+                    self.events["backward_starts"][i].elapsed_time(
+                        self.events["backward_ends"][i]
+                    )
                     for i in range(self.num_models)
                 ]
             )
             bw_update = sum(
                 [
-                    self.time["update_ends"][i] - self.time["update_starts"][i]
+                    self.events["update_starts"][i].elapsed_time(
+                        self.events["update_ends"][i]
+                    )
                     for i in range(self.num_models)
                 ]
             )
@@ -127,12 +138,6 @@ class LinearActor:
             log("bw.backward", bw_backward)
             log("bw.others", bw_others)
             log("bw.update", bw_update)
-            # logger.warning("")
-            # for i in range(len(self.time["backward_starts"])):
-            #     log(
-            #         f"bw.backward.{i}",
-            #         self.time["backward_ends"][i] - self.time["backward_starts"][i],
-            #     )
         logger.warning("")
 
     def fetch_weights(self) -> List[torch.Tensor]:
@@ -145,9 +150,9 @@ class LinearActor:
         return self.elapses
 
     def forward(self, _) -> None:
-        self.update_time("start")
+        self.update_tracing("start")
         if self.tracing:
-            self.update_time("forward_starts")
+            self.update_tracing("forward_starts")
         self.intermediates = []
         input = self.models[0].x
         for i, model in enumerate(self.models):
@@ -158,11 +163,11 @@ class LinearActor:
                 input = pred
             self.intermediates.append((pred, input))
         if self.tracing:
-            self.update_time("forward_ends")
+            self.update_tracing("forward_ends")
 
     def backward(self, _, idx: int) -> torch.Tensor:
         if self.tracing:
-            self.update_time("backward_starts")
+            self.update_tracing("backward_starts")
         if idx == len(self.models) - 1:
             loss = self.models[idx].criterion(
                 self.intermediates[idx][0],
@@ -180,16 +185,16 @@ class LinearActor:
             grad=grad,
         )
         if self.tracing:
-            self.update_time("backward_ends")
+            self.update_tracing("backward_ends")
         return grads
 
     def update(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
         if self.tracing:
-            self.update_time("update_starts")
+            self.update_tracing("update_starts")
         if grads_passed:
             grads_cat /= self.num_actors
         self.models[idx].update(grads_cat, grads_passed)
         if self.tracing:
-            self.update_time("update_ends")
+            self.update_tracing("update_ends")
         if idx == 0:
-            self.update_time("end")
+            self.update_tracing("end")
