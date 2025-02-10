@@ -61,7 +61,7 @@ for mode in ${modes[@]}; do
 		--save-model \
 		--model-file $model_file \
 		--model-prefix $model_prefix \
-		--check-tracing \
+		--tracing \
 		>$log_file 2>&1
 	status=$?
 

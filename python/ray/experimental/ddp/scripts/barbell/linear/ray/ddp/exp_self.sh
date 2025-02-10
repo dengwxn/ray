@@ -60,7 +60,7 @@ for i in "${!layer_size_values[@]}"; do
 		--output-path $output_path \
 		--latency-prefix $latency_prefix \
 		--model-prefix $model_prefix \
-		--check-tracing \
+		--tracing \
 		>$log_file 2>&1
 	status=$?
 done

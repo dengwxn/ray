@@ -49,7 +49,7 @@ python -m ray.experimental.ddp.src.main.linear.ray.no_allreduce \
 	--latency-prefix $latency_prefix \
 	--save-model \
 	--model-prefix $model_prefix \
-	--check-tracing \
+	--tracing \
 	>$log_file 2>&1
 status=$?
 

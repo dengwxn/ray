@@ -21,7 +21,7 @@ class ResnetActor:
         num_models: int,
         num_actors: int,
         device: torch.device,
-        check_tracing: bool,
+        tracing: bool,
     ):
         self.resnet = resnet_mp(weights=True)
         self.models = [bparam.to(device) for bparam in self.resnet.bucket_params]
@@ -31,7 +31,7 @@ class ResnetActor:
         self.num_models = num_models
         self.num_actors = num_actors
         self.device = device
-        self.check_tracing = check_tracing
+        self.tracing = tracing
 
         logger = logging.getLogger(__name__)
         for model in self.models:
@@ -103,7 +103,7 @@ class ResnetActor:
             "actor.total",
             total,
         )
-        if self.check_tracing:
+        if self.tracing:
             log(
                 "fw.total",
                 self.time["forward_ends"][-1] - self.time["forward_starts"][0],
@@ -142,7 +142,7 @@ class ResnetActor:
 
     def forward(self, _) -> None:
         self.update_time("start")
-        if self.check_tracing:
+        if self.tracing:
             self.update_time("forward_starts")
         self.intermediates = []
         input = self.models[0].x
@@ -153,11 +153,11 @@ class ResnetActor:
             else:
                 input = pred
             self.intermediates.append((pred, input))
-        if self.check_tracing:
+        if self.tracing:
             self.update_time("forward_ends")
 
     def backward(self, _, idx: int) -> torch.Tensor:
-        if self.check_tracing:
+        if self.tracing:
             self.update_time("backward_starts")
         if idx == len(self.models) - 1:
             loss = self.models[idx].criterion(
@@ -176,17 +176,17 @@ class ResnetActor:
             pred=pred,
             grad=grad,
         )
-        if self.check_tracing:
+        if self.tracing:
             self.update_time("backward_ends")
         return grads
 
     def update(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
-        if self.check_tracing:
+        if self.tracing:
             self.update_time("update_starts")
         if grads_passed:
             grads_cat /= self.num_actors
         self.models[idx].update(grads_cat, grads_passed)
-        if self.check_tracing:
+        if self.tracing:
             self.update_time("update_ends")
         if idx == 0:
             self.update_time("end")

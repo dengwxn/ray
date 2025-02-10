@@ -23,7 +23,7 @@ def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
     num_models = args["num_models"]
     num_actors = args["num_actors"]
     device = "cuda:0"
-    check_tracing = args["check_tracing"]
+    tracing = args["tracing"]
 
     actor_cls = LinearActor.options(num_gpus=1)
     actors = [
@@ -33,7 +33,7 @@ def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
             num_models=num_models,
             num_actors=num_actors,
             device=device,
-            check_tracing=check_tracing,
+            tracing=tracing,
         )
         for _ in range(num_actors)
     ]
@@ -41,7 +41,7 @@ def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
     return actors
 
 
-def train_cot(
+def train(
     actors: List[LinearActor],
     num_models: int,
     num_epochs: int,
@@ -49,7 +49,7 @@ def train_cot(
     latency_prefix: str,
     save_model: bool,
     model_prefix: str,
-    check_tracing: bool,
+    tracing: bool,
 ) -> None:
     with InputNode() as inp:
         actors_to_forwards = [actor.forward.bind(inp) for actor in actors]
@@ -104,7 +104,7 @@ def train_cot(
     actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
     for actor_elapses in actors_to_elapses:
         actor_elapses["total"] = total_elapses
-    if not check_tracing:
+    if not tracing:
         metrics = [
             "total",
             "actor.total",
@@ -144,7 +144,7 @@ def main(args: Dict[str, Any]) -> None:
 
     actors = init_actors(args)
 
-    train_cot(
+    train(
         actors,
         args["num_models"],
         args["num_epochs"],
@@ -152,7 +152,7 @@ def main(args: Dict[str, Any]) -> None:
         args["latency_prefix"],
         args.get("save_model", False),
         args["model_prefix"],
-        args["check_tracing"],
+        args["tracing"],
     )
 
     for actor in actors:

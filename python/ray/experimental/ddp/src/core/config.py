@@ -55,7 +55,7 @@ def parse_args() -> Dict[str, Any]:
         required=True,
     )
     parser.add_argument(
-        "--check-tracing",
+        "--tracing",
         action="store_true",
     )
     parser.add_argument(
