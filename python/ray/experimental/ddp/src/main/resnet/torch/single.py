@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 from ....core.resnet.model import (
-    resnet50_mp as resnet,  # [OPTIONS] resnet101_mp, resnet152_mp.
+    resnet152_mp as resnet,  # [OPTIONS] resnet50_mp, resnet101_mp, resnet152_mp.
 )
 
 logging.basicConfig(
