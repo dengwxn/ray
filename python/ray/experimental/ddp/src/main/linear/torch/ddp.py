@@ -72,6 +72,7 @@ def spwan_torch_ddp(
         logger = logging.getLogger(__name__)
 
         dist.init_process_group("nccl", rank=rank, world_size=world_size)
+
         device = f"cuda:{rank}"
         model = BucketParameter(
             args["layer_size"],

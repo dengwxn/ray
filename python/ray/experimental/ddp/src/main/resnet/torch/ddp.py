@@ -1,6 +1,5 @@
 import logging
 import os
-import time
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -9,7 +8,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from ....core.common import log_elapses_to_csv, secs_to_micros
+from ....core.common import log_elapses_to_csv, ms_to_micros
 from ....core.config import parse_args
 from ....core.resnet.model import resnet152_mp
 
@@ -30,7 +29,6 @@ def run_torch_ddp(
 
     mp.set_start_method("spawn", force=True)
 
-    # Use a multiprocessing manager to share data across devices.
     with mp.Manager() as manager:
         ranks_to_elapses = manager.dict()
 
@@ -73,10 +71,8 @@ def spwan_torch_ddp(
     try:
         logger = logging.getLogger(__name__)
 
-        # Initialize the process group.
         dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
-        # Create model on the device.
         device = f"cuda:{rank}"
         model = resnet152_mp(weights=True).to(device)
         size_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
@@ -115,46 +111,62 @@ def spwan_torch_ddp(
                 logger.info(f"input: {x}")
                 logger.info(f"target: {y}")
 
+            torch.cuda.synchronize()
             dist.barrier()
-            start = time.perf_counter()
+            start = torch.cuda.Event(enable_timing=True)
+            start.record()
 
-            forward_start = time.perf_counter()
+            forward_start = torch.cuda.Event(enable_timing=True)
+            forward_start.record()
             pred = ddp_model(x)
-            forward_end = time.perf_counter()
+            forward_end = torch.cuda.Event(enable_timing=True)
+            forward_end.record()
 
-            loss_compute_start = time.perf_counter()
+            loss_compute_start = torch.cuda.Event(enable_timing=True)
+            loss_compute_start.record()
             loss = criterion(pred, y)
-            loss_compute_end = time.perf_counter()
+            loss_compute_end = torch.cuda.Event(enable_timing=True)
+            loss_compute_end.record()
 
-            backward_start = time.perf_counter()
+            backward_start = torch.cuda.Event(enable_timing=True)
+            backward_start.record()
             loss.backward()
-            backward_end = time.perf_counter()
+            backward_end = torch.cuda.Event(enable_timing=True)
+            backward_end.record()
 
-            update_start = time.perf_counter()
+            update_start = torch.cuda.Event(enable_timing=True)
+            update_start.record()
             optimizer.step()
             optimizer.zero_grad()
-            update_end = time.perf_counter()
+            update_end = torch.cuda.Event(enable_timing=True)
+            update_end.record()
 
-            barrier_start = time.perf_counter()
+            torch.cuda.synchronize()
+            barrier_start = torch.cuda.Event(enable_timing=True)
+            barrier_start.record()
+
             dist.barrier()
-            end = time.perf_counter()
+            end = torch.cuda.Event(enable_timing=True)
+            end.record()
 
-            total = end - start
+            torch.cuda.synchronize()
 
-            def log(key: str, elapse: float):
-                elapses[key].append(secs_to_micros(elapse))
+            total_ms = start.elapsed_time(end)
+
+            def log(key: str, elapse_ms: float):
+                elapse_us = ms_to_micros(elapse_ms)
+                elapses[key].append(elapse_us)
                 logger.warning(
-                    f"rank: {rank}, {key} elapse: {secs_to_micros(elapse)} us, percent: {round(elapse / total * 100, 1)}%"
+                    f"rank: {rank}, {key} elapse: {elapse_us} us, percent: {round(elapse_ms / total_ms * 100, 1)}%"
                 )
 
-            log("total", total)
-            log("fw.total", forward_end - forward_start)
-            log("loss.compute", loss_compute_end - loss_compute_start)
-            log("bw.bw_ar", backward_end - backward_start)
-            log("bw.update", update_end - update_start)
-            log("barrier", end - barrier_start)
+            log("total", total_ms)
+            log("fw.total", forward_start.elapsed_time(forward_end))
+            log("loss.compute", loss_compute_start.elapsed_time(loss_compute_end))
+            log("bw.bw_ar", backward_start.elapsed_time(backward_end))
+            log("bw.update", update_start.elapsed_time(update_end))
+            log("barrier", barrier_start.elapsed_time(end))
     finally:
-        # Destroy the process group.
         dist.destroy_process_group()
 
     ranks_to_elapses[rank] = elapses

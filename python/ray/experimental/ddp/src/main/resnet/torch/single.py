@@ -18,8 +18,7 @@ torch.manual_seed(998244353)
 
 model = resnet(weights=True)
 
-num_epochs = 6
-# batch_size = 128
+num_epochs = 10
 batch_size = 32
 
 device = "cuda:0"
