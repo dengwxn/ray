@@ -50,7 +50,7 @@ for i in "${!layer_size_values[@]}"; do
 	log_file=${output_path}/${latency_prefix}.log
 
 	echo "Running layer_size $layer_size, num_layers $num_layers..."
-	python -m ray.experimental.ddp.src.main.torch.ddp \
+	python -m ray.experimental.ddp.src.main.linear.torch.ddp \
 		--layer-size $layer_size \
 		--num-layers $num_layers \
 		--num-actors $num_actors \
