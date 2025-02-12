@@ -8,7 +8,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from ....core.common import log_elapses_to_csv, ms_to_micros
+from ....core.common import get_timing_event, log_elapses_to_csv, ms_to_micros
 from ....core.config import parse_args
 from ....core.resnet.model import resnet152_mp
 
@@ -113,41 +113,30 @@ def spwan_torch_ddp(
 
             torch.cuda.synchronize()
             dist.barrier()
-            start = torch.cuda.Event(enable_timing=True)
-            start.record()
+            start = get_timing_event()
 
-            forward_start = torch.cuda.Event(enable_timing=True)
-            forward_start.record()
+            forward_start = get_timing_event()
             pred = ddp_model(x)
-            forward_end = torch.cuda.Event(enable_timing=True)
-            forward_end.record()
+            forward_end = get_timing_event()
 
-            loss_compute_start = torch.cuda.Event(enable_timing=True)
-            loss_compute_start.record()
+            loss_compute_start = get_timing_event()
             loss = criterion(pred, y)
-            loss_compute_end = torch.cuda.Event(enable_timing=True)
-            loss_compute_end.record()
+            loss_compute_end = get_timing_event()
 
-            backward_start = torch.cuda.Event(enable_timing=True)
-            backward_start.record()
+            backward_start = get_timing_event()
             loss.backward()
-            backward_end = torch.cuda.Event(enable_timing=True)
-            backward_end.record()
+            backward_end = get_timing_event()
 
-            update_start = torch.cuda.Event(enable_timing=True)
-            update_start.record()
+            update_start = get_timing_event()
             optimizer.step()
             optimizer.zero_grad()
-            update_end = torch.cuda.Event(enable_timing=True)
-            update_end.record()
+            update_end = get_timing_event()
 
             torch.cuda.synchronize()
-            barrier_start = torch.cuda.Event(enable_timing=True)
-            barrier_start.record()
+            barrier_start = get_timing_event()
 
             dist.barrier()
-            end = torch.cuda.Event(enable_timing=True)
-            end.record()
+            end = get_timing_event()
 
             torch.cuda.synchronize()
 

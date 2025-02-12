@@ -3,6 +3,13 @@ import os
 from typing import Any, Dict, List
 
 import numpy as np
+import torch
+
+
+def get_timing_event() -> torch.cuda.Event:
+    event = torch.cuda.Event(enable_timing=True)
+    event.record()
+    return event
 
 
 def secs_to_micros(secs: float) -> int:

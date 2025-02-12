@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 import torch
 
 import ray
-from ....core.common import log_elapses_to_csv
+from ....core.common import get_timing_event, log_elapses_to_csv
 from ....core.config import parse_args
 from ....core.linear.actor import LinearActor
 from ray.dag import InputNode, MultiOutputNode
@@ -86,13 +86,9 @@ def train(
             ray.get(actor.init_training.remote())
             ray.get(actor.init_tracing.remote())
 
-        start = torch.cuda.Event(enable_timing=True)
-        start.record()
-
+        start = get_timing_event()
         compiled_dag.execute(None)
-
-        end = torch.cuda.Event(enable_timing=True)
-        end.record()
+        end = get_timing_event()
         torch.cuda.synchronize()
 
         elapse_ms = start.elapsed_time(end)
