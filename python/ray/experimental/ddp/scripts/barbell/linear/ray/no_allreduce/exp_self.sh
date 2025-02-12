@@ -32,10 +32,12 @@ rm -f $output_path/*.csv
 rm -f $output_path/*.log
 
 layer_size_values=(
-	2560 1280 640 512 320 160 80
+	# 2560 1280 640 512 320 160 80
+	2560 1280 640 512
 )
 num_layers_values=(
-	10 40 160 250 640 2560 10240
+	# 10 40 160 250 640 2560 10240
+	10 40 160 250
 )
 
 num_models=10
