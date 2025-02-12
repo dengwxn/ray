@@ -28,14 +28,13 @@ export RAY_DEDUP_LOGS=0
 
 output_path=results/barbell/linear/ray/no_overlap/test_self
 mkdir -p $output_path
-rm -f $output_path/*.csv
 
 layer_size=1024
 num_layers=8
 num_models=2
 num_actors=2
 num_epochs=10
-latency_prefix=ls${layer_size}_nl${num_layers}
+latency_prefix=${timestamp}_ls${layer_size}_nl${num_layers}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 

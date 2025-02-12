@@ -46,7 +46,7 @@ for i in "${!layer_size_values[@]}"; do
 	layer_size="${layer_size_values[$i]}"
 	num_layers="${num_layers_values[$i]}"
 
-	latency_prefix=ls${layer_size}_nl${num_layers}
+	latency_prefix=${timestamp}_ls${layer_size}_nl${num_layers}
 	model_prefix=${output_path}/${latency_prefix}_model
 	log_file=${output_path}/${latency_prefix}.log
 

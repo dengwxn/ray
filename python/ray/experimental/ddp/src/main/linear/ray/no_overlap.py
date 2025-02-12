@@ -1,6 +1,7 @@
 import logging
-import time
 from typing import Any, Dict, List
+
+import torch
 
 import ray
 from ....core.common import log_elapses_to_csv
@@ -41,7 +42,7 @@ def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
     return actors
 
 
-def train_cot(
+def train(
     actors: List[LinearActor],
     num_models: int,
     num_epochs: int,
@@ -85,9 +86,17 @@ def train_cot(
             ray.get(actor.init_training.remote())
             ray.get(actor.init_tracing.remote())
 
-        start = time.perf_counter()
+        start = torch.cuda.Event(enable_timing=True)
+        start.record()
+
         compiled_dag.execute(None)
-        end = time.perf_counter()
+
+        end = torch.cuda.Event(enable_timing=True)
+        end.record()
+        torch.cuda.synchronize()
+
+        elapse_ms = start.elapsed_time(end)
+        elapse_us = round(elapse_ms * 1e3)
 
         if save_model:
             weights = ray.get(actors[0].fetch_weights.remote())
@@ -95,8 +104,8 @@ def train_cot(
                 logger.info(f"layer: {idx}, weight: {weight}")
 
         if epoch > 0:
-            logger.warning(f"epoch: {epoch}, elapse: {round((end - start) * 1e6)} us")
-            total_elapses.append(round((end - start) * 1e6))
+            logger.warning(f"epoch: {epoch}, elapse: {elapse_us} us")
+            total_elapses.append(elapse_us)
 
         for actor in actors:
             ray.get(actor.finish_tracing.remote())
@@ -144,7 +153,7 @@ def main(args: Dict[str, Any]) -> None:
 
     actors = init_actors(args)
 
-    train_cot(
+    train(
         actors,
         args["num_models"],
         args["num_epochs"],
