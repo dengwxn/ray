@@ -1,10 +1,10 @@
 #!/bin/bash
 
-sudo apt update
-sudo apt install python3.10-dev python3.10-venv curl wget -y
-
 cd
 git clone https://github.com/dengwxn/ray.git Ray-SFO
+
+sudo apt update
+sudo apt install python3.10-dev python3.10-venv curl wget -y
 
 cd ~/Ray-SFO
 python3 -m venv venv
