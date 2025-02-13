@@ -62,3 +62,8 @@ pip install -e . --verbose
 pip install --upgrade typing-extensions
 pip install pytest torch
 pip install -c requirements_compiled.txt -r requirements/lint-requirements.txt
+
+# [TODO]
+# 1. Output the `nvidia-smi` to file.
+# 2. Optionally push the `results/sfo` to remote.
+# 3. Optionally output the elapse time for each script.
