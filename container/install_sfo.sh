@@ -7,6 +7,7 @@ sudo apt update
 sudo apt install python3.10-dev python3.10-venv curl wget -y
 
 cd ~/Ray-SFO
+git checkout ddp-dev-xla-0207
 python3 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip wheel
