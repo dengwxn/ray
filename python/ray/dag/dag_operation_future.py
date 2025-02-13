@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Dict, Generic, Optional, TypeVar
 from ray.util.annotations import DeveloperAPI
+import time
 
 
 if TYPE_CHECKING:
@@ -42,7 +43,7 @@ class ResolvedFuture(DAGOperationFuture):
         """
         self._result = result
 
-    def wait(self):
+    def wait(self, _=None):
         """
         Wait and immediately return the result. This operation will not block.
         """
@@ -67,9 +68,14 @@ class GPUFuture(DAGOperationFuture[Any]):
 
     # [HACK] This prevents CUDA events from being garbage collected.
     id: int = 0
-    id_to_event: Dict[int, "cp.cuda.Event"] = {}
+    # id_to_event: Dict[int, "cp.cuda.Event"] = {}
 
-    def __init__(self, buf: Any, stream: Optional["cp.cuda.Stream"] = None):
+    def __init__(
+        self,
+        buf: Any,
+        stream: Optional["cp.cuda.Stream"] = None,
+        method_name: Optional[str] = None,
+    ):
         """
         Initialize a GPU future on the given stream.
 
@@ -86,20 +92,69 @@ class GPUFuture(DAGOperationFuture[Any]):
         self._buf = buf
         self._event = cp.cuda.Event()
         self._event.record(stream)
+        self.method_name = method_name
+        self.ready = False
         # [HACK]
         self._id = GPUFuture.id
         GPUFuture.id += 1
-        GPUFuture.id_to_event[self._id] = self._event
+        # GPUFuture.id_to_event[self._id] = self._event
+        print(
+            f"[{time.perf_counter()}][{method_name}] init gpu future: {self} id={self._id} ({self._event=})"
+        )
+        self.fut_id = None
+        # self.cache()
 
-    def wait(self) -> Any:
+    def wait(self, method_name: Optional[str] = None) -> Any:
         """
         Wait for the future on the current CUDA stream and return the result from
         the GPU operation. This operation does not block CPU.
         """
+        print(
+            f"[{time.perf_counter()}][{method_name}] wait gpu future {self} id={self._id}"
+        )
+        if self.ready:
+            return self._buf
+
         import cupy as cp
 
         current_stream = cp.cuda.get_current_stream()
         current_stream.wait_event(self._event)
-        # [HACK]
-        GPUFuture.id_to_event.pop(self._id)
+        # del self._event
+        # # [HACK]
+        # GPUFuture.id_to_event.pop(self._id)
+        self.ready = True
+
+        from ray.experimental.channel.common import ChannelContext
+
+        ctx = ChannelContext.get_current().serialization_context
+        ctx.reset_gpu_future(self.fut_id)
         return self._buf
+
+    def cache(self, fut_id: int) -> None:
+        from ray.experimental.channel.common import ChannelContext
+
+        ctx = ChannelContext.get_current().serialization_context
+        ctx.set_gpu_future(fut_id, self)
+        self.fut_id = fut_id
+
+    def destroy_event(self) -> None:
+        if self._event is None:
+            return
+
+        print(f"[{time.perf_counter()}] destroy event")
+        import cupy as cp
+
+        print(self._event.ptr)
+        cp.cuda.runtime.eventDestroy(self._event.ptr)
+        self._event.ptr = 0
+        print(self._event.ptr)
+        self._event = None
+
+    # def __del__(self) -> None:
+    #     print(f"[{time.perf_counter()}] del gpu future {self} id={self._id}")
+    #     if not self.ready:
+    #         # raise ValueError(f"{self.method_name} del w/o waiting")
+    #         print(f"waiting in delete")
+    #         self.wait()
+    #     self._event = None
+    #     self._buf = None

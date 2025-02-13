@@ -228,6 +228,8 @@ def do_profile_tasks(
 @DeveloperAPI
 def do_cancel_executable_tasks(self, tasks: List["ExecutableTask"]) -> None:
     for task in tasks:
+        task.destroy_cuda_event()
+    for task in tasks:
         task.cancel()
 
 
@@ -449,6 +451,8 @@ class ExecutableTask:
         # The result of a read operation will be used by a compute operation,
         # and the result of a compute operation will be used by a write operation.
         self._intermediate_future: Optional[DAGOperationFuture] = None
+        # self._output_future: Optional[GPUFuture] = None
+        # self._fut_id: Optional[int] = None
 
     @property
     def requires_nccl_read(self) -> bool:
@@ -470,6 +474,16 @@ class ExecutableTask:
         """
         self.input_reader.close()
         self.output_writer.close()
+
+    def destroy_cuda_event(self):
+        from ray.experimental.channel.common import ChannelContext
+
+        ctx = ChannelContext.get_current().serialization_context
+        ctx.reset_gpu_future(self.task_idx)
+        # print(f"[{self}] cancel")
+        # if self._output_future is not None:
+        #     print("cancel.destroy")
+        #     self._output_future.destroy_event()
 
     def prepare(self, overlap_gpu_communication: bool = False):
         """
@@ -537,7 +551,8 @@ class ExecutableTask:
         assert self._intermediate_future is None
 
         if wrap_in_gpu_future:
-            future = GPUFuture(val)
+            future = GPUFuture(val, method_name=self.method_name)
+            print(f"wrap&set: [{self.method_name}] {future}")
         else:
             future = ResolvedFuture(val)
         self._intermediate_future = future
@@ -625,6 +640,7 @@ class ExecutableTask:
 
         # Read and resolve input values from input channels. If an exception occurs,
         # wrap and save the exception.
+        print(f"[{self.method_name}] start exec operation")
         input_values = []
         input_exc = None
         if self.requires_nccl_read:
@@ -643,7 +659,7 @@ class ExecutableTask:
                     input_data_ready = []
                     for val in input_data:
                         if isinstance(val, DAGOperationFuture):
-                            val = val.wait()
+                            val = val.wait(self.method_name)
                             if isinstance(val, RayTaskError):
                                 raise val.as_instanceof_cause()
                         input_data_ready.append(val)
@@ -652,6 +668,7 @@ class ExecutableTask:
                 except Exception as exc:
                     input_exc = exc
                     self.wrap_and_set_intermediate_future(exc, wrap_in_gpu_future=False)
+                    print("[656] wrap exception")
 
                 if input_exc is not None and self.requires_nccl_write:
                     input_values = [P2POp.SEND, input_exc]
@@ -669,10 +686,13 @@ class ExecutableTask:
             with self.stream:
                 try:
                     output_val = method(*input_values, **self.resolved_kwargs)
+                    print("[675] output val computed")
                 except RayChannelError:
+                    print(f"{time.perf_counter()} [676] ray channel error")
                     return True
                 except Exception as exc:
                     if self.nccl_op is not None:
+                        print("[680] raise")
                         raise exc
                     else:
                         output_val = _wrap_exception(exc)
@@ -682,6 +702,7 @@ class ExecutableTask:
                     self.wrap_and_set_intermediate_future(
                         output_val, wrap_in_gpu_future=overlap_gpu_communication
                     )
+                    print("[687] normal wrap")
 
         # Write the output value to the output channel. It is either an execution result
         # or an exception.
@@ -696,9 +717,17 @@ class ExecutableTask:
                 wait_future = True
             with self.stream:
                 output_val = self.fetch_intermediate_future(wait_future)
+                print("[702] fetch future")
+            if not wait_future and overlap_gpu_communication:
+                assert isinstance(output_val, GPUFuture)
+                output_val.cache(self.task_idx)
+                # self._output_future = output_val
+                print(f"[{self}] cache output future task_idx={self.task_idx}(id={output_val.id})")
             try:
                 self.output_writer.write(output_val)
+                print("[705] write finished")
             except RayChannelError:
+                print("[707] ray channel error")
                 return True
 
         return False
