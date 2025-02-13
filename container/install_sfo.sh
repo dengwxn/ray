@@ -3,8 +3,33 @@
 # cd
 # git clone https://github.com/dengwxn/ray.git Ray-SFO
 
-sudo apt update
-sudo apt install python3.10-dev python3.10-venv curl wget -y
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends \
+	build-essential \
+	cmake \
+	git \
+	wget \
+	curl \
+	zsh \
+	vim \
+	python3 \
+	python3-pip \
+	python3-dev \
+	python3-setuptools \
+	python3-venv
+rm -rf /var/lib/apt/lists/*
+
+sudo apt-get update
+sudo apt-get install -y build-essential curl clang-12 pkg-config psmisc unzip
+
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+
+git clone https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
+
+echo 'plugins=(git zsh-autosuggestions)' >>~/.zshrc
+echo 'ZSH_THEME="robbyrussell"' >>~/.zshrc
+
+chsh -s $(which zsh)
 
 cd ~/Ray-SFO
 git checkout ddp-dev-xla-0207
@@ -34,6 +59,6 @@ npm run build
 cd ~/Ray-SFO/python
 pip install -r requirements.txt
 pip install -e . --verbose
+pip install --upgrade typing-extensions
 pip install pytest torch
 pip install -c requirements_compiled.txt -r requirements/lint-requirements.txt
-pip install --upgrade typing-extensions
