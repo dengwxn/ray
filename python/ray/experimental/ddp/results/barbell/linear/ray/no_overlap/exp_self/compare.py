@@ -22,6 +22,7 @@ class Experiment:
 
 def parse_filename(filename: str) -> Tuple[int, int, int]:
     """Extract layer_size, num_layers, and rank from filename."""
+
     pattern = r"_ls(\d+)_nl(\d+)_rank(\d+)\.csv"
     match = re.search(pattern, filename)
     if not match:
@@ -31,6 +32,7 @@ def parse_filename(filename: str) -> Tuple[int, int, int]:
 
 def read_csv_data(filepath: str) -> Dict[str, int]:
     """Read CSV file and extract name and mean columns."""
+
     data = {}
     with open(filepath, "r") as f:
         reader = csv.DictReader(f)
@@ -41,6 +43,7 @@ def read_csv_data(filepath: str) -> Dict[str, int]:
 
 def process_folder(folder_path: str) -> List[Experiment]:
     """Process all CSV files in a folder and return list of Experiment objects."""
+
     experiments = []
 
     for filename in os.listdir(folder_path):
