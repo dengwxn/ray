@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # This software may be used and distributed in accordance with the terms of the Llama 3 Community License Agreement.
 
+import logging
 import math
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -14,6 +15,8 @@ from fairscale.nn.model_parallel.layers import (
     VocabParallelEmbedding,
 )
 from torch import nn
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -299,18 +302,44 @@ class Transformer(nn.Module):
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
 
+        # buckets = [
+        #     "VocabParallelEmbedding",
+        #     [
+        #         "Attention",
+        #         "FeedForward",
+        #         "RMSNorm * 2",
+        #     ],
+        #     "ColumnParallelLinear",
+        # ]
+
+        def log_size(layer, indent=0):
+            num_params = sum(p.numel() for p in layer.parameters())
+            size_mib = num_params * 4 / (1024 * 1024)
+            indent_str = "  " * indent
+            logger.info(
+                f"{indent_str}{layer.__class__.__name__}: {round(size_mib)} MiB"
+            )
+            if size_mib < 25:
+                return
+            for _, child in layer.named_children():
+                log_size(child, indent + 1)
+
         self.tok_embeddings = VocabParallelEmbedding(
             params.vocab_size, params.dim, init_method=lambda x: x
         )
+        log_size(self.tok_embeddings)
 
         self.layers = torch.nn.ModuleList()
         for layer_id in range(params.n_layers):
             self.layers.append(TransformerBlock(layer_id, params))
+        log_size(self.layers[0])
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        log_size(self.norm)
         self.output = ColumnParallelLinear(
             params.dim, params.vocab_size, bias=False, init_method=lambda x: x
         )
+        log_size(self.output)
 
         self.freqs_cis = precompute_freqs_cis(
             params.dim // params.n_heads,
