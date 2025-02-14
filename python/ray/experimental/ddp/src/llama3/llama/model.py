@@ -32,6 +32,50 @@ class ModelArgs:
     max_seq_len: int = 2048
 
 
+LLAMA_1B = ModelArgs(
+    dim=2048,
+    n_layers=16,
+    n_heads=32,
+    n_kv_heads=8,
+    vocab_size=128256,
+    multiple_of=256,
+    ffn_dim_multiplier=1.5,
+    norm_eps=1e-5,
+    rope_theta=500000,
+    max_batch_size=32,
+    max_seq_len=2048,
+)
+
+
+LLAMA_3B = ModelArgs(
+    dim=3072,
+    n_layers=28,
+    n_heads=24,
+    n_kv_heads=8,
+    vocab_size=128256,
+    multiple_of=256,
+    ffn_dim_multiplier=1.0,
+    norm_eps=1e-5,
+    rope_theta=500000,
+    max_batch_size=32,
+    max_seq_len=2048,
+)
+
+LLAMA_8B = ModelArgs(
+    dim=4096,
+    n_layers=32,
+    n_heads=32,
+    n_kv_heads=8,
+    vocab_size=128256,
+    multiple_of=1024,
+    ffn_dim_multiplier=1.3,
+    norm_eps=1e-5,
+    rope_theta=500000,
+    max_batch_size=32,
+    max_seq_len=2048,
+)
+
+
 class RMSNorm(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
