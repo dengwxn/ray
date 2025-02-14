@@ -29,8 +29,32 @@ def main():
     torch.manual_seed(998244353)
 
     model_args = LLAMA_1B
-    model = Transformer(model_args)
+    model = Transformer(model_args).to("cuda")
     print(model)
+
+    batch_size = 2
+    seq_len = 8
+    input_ids = torch.randint(
+        0,
+        model_args.vocab_size,
+        (batch_size, seq_len),
+        device="cuda",
+    )
+    print(input_ids)
+
+    target_ids = torch.randint(
+        0,
+        model_args.vocab_size,
+        (batch_size, seq_len),
+        device="cuda",
+    )
+    print(target_ids)
+
+    logits = model.forward(input_ids, 0)  # shape: (batch_size, seq_len, vocab_size)
+
+    criterion = torch.nn.CrossEntropyLoss()
+    loss = criterion(logits.view(-1, logits.size(-1)), target_ids.view(-1))
+    print(loss)
 
 
 if __name__ == "__main__":
