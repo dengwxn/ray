@@ -8,8 +8,8 @@ from fairscale.nn.model_parallel.initialize import (
     model_parallel_is_initialized,
 )
 
-from ...core.llama3.generation import Transformer
-from ...core.llama3.model import LLAMA_1B, LLAMA_3B, LLAMA_8B
+from ....core.llama3.generation import Transformer
+from ....core.llama3.model import LLAMA_1B, LLAMA_3B, LLAMA_8B
 
 
 def main():
