@@ -1,4 +1,5 @@
 import os
+import time
 
 import torch
 from fairscale.nn.model_parallel.initialize import (
@@ -32,29 +33,46 @@ def main():
     model = Transformer(model_args).to("cuda")
     print(model)
 
-    batch_size = 2
-    seq_len = 8
-    input_ids = torch.randint(
-        0,
-        model_args.vocab_size,
-        (batch_size, seq_len),
-        device="cuda",
-    )
-    print(input_ids)
-
-    target_ids = torch.randint(
-        0,
-        model_args.vocab_size,
-        (batch_size, seq_len),
-        device="cuda",
-    )
-    print(target_ids)
-
-    logits = model.forward(input_ids, 0)  # shape: (batch_size, seq_len, vocab_size)
-
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
     criterion = torch.nn.CrossEntropyLoss()
-    loss = criterion(logits.view(-1, logits.size(-1)), target_ids.view(-1))
-    print(loss)
+
+    n_epochs = 10
+    batch_size = 1
+    seq_len = 1024
+
+    model.train()
+    for _ in range(n_epochs):
+        input_ids = torch.randint(
+            0,
+            model_args.vocab_size,
+            (batch_size, seq_len),
+        ).to("cuda")
+        target_ids = torch.randn(
+            batch_size,
+            seq_len,
+            model_args.vocab_size,
+            requires_grad=True,
+        ).to("cuda")
+
+        optimizer.zero_grad()
+        fw_start = time.perf_counter()
+        logits = model.forward(input_ids, 0)  # shape: [batch_size, seq_len, vocab_size]
+        fw_end = time.perf_counter()
+        print(f"Forward time: {round((fw_end - fw_start) * 1e3)} ms")
+
+        loss = criterion(logits, target_ids)
+        bw_start = time.perf_counter()
+        loss.backward()
+        bw_end = time.perf_counter()
+        print(f"Backward time: {round((bw_end - bw_start) * 1e3)} ms")
+
+        opt_start = time.perf_counter()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+        opt_end = time.perf_counter()
+        print(f"Optimization time: {round((opt_end - opt_start) * 1e3)} ms")
+
+        print()
 
 
 if __name__ == "__main__":
