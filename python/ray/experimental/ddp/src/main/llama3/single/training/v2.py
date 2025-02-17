@@ -43,23 +43,15 @@ def main():
         fw_end = time.perf_counter()
         print(f"Forward time: {round((fw_end - fw_start) * 1e3)} ms")
 
-        # loss = criterion(logits, target_ids)
-        # bw_start = time.perf_counter()
-        # loss.backward()
-        # bw_end = time.perf_counter()
-        # print(f"Backward time: {round((bw_end - bw_start) * 1e3)} ms")
+        bw_start = time.perf_counter()
+        actor.backward_all(None)
+        bw_end = time.perf_counter()
+        print(f"Backward time: {round((bw_end - bw_start) * 1e3)} ms")
 
-        # opt_start = time.perf_counter()
-        # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        # optimizer.step()
-        # optimizer.zero_grad()
-        # opt_end = time.perf_counter()
-        # print(f"Optimization time: {round((opt_end - opt_start) * 1e3)} ms")
-
-        # bw_start = time.perf_counter()
-        # actor.backward_all(None)
-        # bw_end = time.perf_counter()
-        # print(f"Backward time: {round((bw_end - bw_start) * 1e3)} ms")
+        upd_start = time.perf_counter()
+        actor.update_all(None)
+        upd_end = time.perf_counter()
+        print(f"Update time: {round((upd_end - upd_start) * 1e3)} ms")
 
         print()
 

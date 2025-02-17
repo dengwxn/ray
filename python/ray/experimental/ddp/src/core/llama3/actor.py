@@ -1,12 +1,6 @@
-import logging
-from collections import defaultdict
-from typing import Any, Dict, List
-
 import torch
 
-import ray
-from ...core.llama3.model import LLAMA_1B, LLAMA_3B, LLAMA_8B, TransformerBP
-from ..common import ms_to_micros
+from ...core.llama3.model import TransformerBP
 
 
 class Actor:
@@ -16,7 +10,6 @@ class Actor:
         self.bparams = self.model.bparams
 
     def init_training(self) -> None:
-        self.model.train()
         batch_size = 1
         seq_len = 1024
         self.input_ids = torch.randint(
@@ -40,12 +33,13 @@ class Actor:
                 pred = bp.forward(tokens)
                 freqs_cis, mask = bp.post_hook(tokens, pred)
             elif i == len(self.bparams) - 1:
-                input = bp.pre_hook(input)
-                pred = bp.forward(input)
+                pred = bp.forward(bp.pre_hook(input))
             else:
                 pred = bp.forward_transformer(input, 0, freqs_cis, mask)
             if i < len(self.bparams) - 1:
                 input = pred.detach().requires_grad_(True)
+                freqs_cis = freqs_cis.detach().requires_grad_(True)
+                mask = mask.detach().requires_grad_(True)
             else:
                 input = pred
             self.intermediates.append((pred, input))
@@ -62,7 +56,6 @@ class Actor:
             loss = None
             pred, input = self.intermediates[idx]
             grad = input.grad
-            self.intermediates[idx] = (None, None)
         grads = self.bparams[idx].backward(
             loss=loss,
             pred=pred,
@@ -75,4 +68,10 @@ class Actor:
             self.backward(_, i)
 
     def update(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
-        raise NotImplementedError
+        if grads_passed:
+            grads_cat /= self.num_actors
+        self.bparams[idx].update(grads_cat, grads_passed)
+
+    def update_all(self, _) -> None:
+        for i in reversed(range(len(self.bparams))):
+            self.update(_, False, i)
