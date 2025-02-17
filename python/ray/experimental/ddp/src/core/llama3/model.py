@@ -4,7 +4,7 @@
 import logging
 import math
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import fairscale.nn.model_parallel.initialize as fs_init
 import torch
@@ -14,7 +14,8 @@ from fairscale.nn.model_parallel.layers import (
     RowParallelLinear,
     VocabParallelEmbedding,
 )
-from torch import nn
+from torch import Tensor, nn
+from torch.nn.utils import parameters_to_vector
 
 logger = logging.getLogger(__name__)
 
@@ -372,4 +373,166 @@ class Transformer(nn.Module):
             h = layer(h, start_pos, freqs_cis, mask)
         h = self.norm(h)
         output = self.output(h).float()
+        return output
+
+
+class BucketParameter(nn.Module):
+    def __init__(self, layers: List[nn.Module], pre_hook=None, post_hook=None):
+        super().__init__()
+        self.layers = torch.nn.ModuleList(layers)
+        self.pre_hook = pre_hook
+        self.post_hook = post_hook
+
+        self.input = None
+        self.target = None
+        self.criterion = torch.nn.CrossEntropyLoss()
+        self.optimizer = torch.optim.SGD(self.layers.parameters(), lr=1e-6)
+
+    def forward(self, x: Tensor) -> Tensor:
+        for layer in self.layers:
+            x = layer(x)
+        return x
+
+    def forward_transformer(
+        self,
+        x: torch.Tensor,
+        start_pos: int,
+        freqs_cis: torch.Tensor,
+        mask: Optional[torch.Tensor],
+    ):
+        assert len(self.layers) == 1
+        transformer = self.layers[0]
+        h = x + transformer.attention(
+            transformer.attention_norm(x), start_pos, freqs_cis, mask
+        )
+        out = h + transformer.feed_forward(transformer.ffn_norm(h))
+        return out
+
+    def backward(
+        self,
+        loss: Optional[torch.Tensor] = None,
+        pred: Optional[torch.Tensor] = None,
+        grad: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if loss is not None:
+            assert pred is None
+            loss.backward()
+        elif pred is not None:
+            assert grad is not None
+            pred.backward(grad)
+
+        # [TODO] Check if `parameters()` is deterministic.
+        grads_cat = parameters_to_vector(
+            [p.grad for p in self.layers.parameters() if p.grad is not None]
+        )
+        return grads_cat
+
+    def update(self, grads_cat: torch.Tensor, grads_passed: bool) -> None:
+        if grads_passed:
+            offset = 0
+            # [TODO] Check if `parameters()` is deterministic.
+            for p in self.layers.parameters():
+                if p.grad is None:
+                    continue
+                size = p.data.numel()
+                grad = grads_cat[offset : offset + size].reshape(p.data.shape)
+                p.grad = grad
+                offset += size
+
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+
+
+class TransformerBP(nn.Module):
+    def __init__(self, params: ModelArgs):
+        super().__init__()
+        self.params = params
+        self.vocab_size = params.vocab_size
+        self.n_layers = params.n_layers
+
+        self.bparams: List[BucketParameter] = []
+        # buckets = [
+        #     "VocabParallelEmbedding",
+        #     [
+        #         "Attention",
+        #         "FeedForward",
+        #         "RMSNorm * 2",
+        #     ],
+        #     "ColumnParallelLinear",
+        # ]
+
+        def log_size(layer, indent=0):
+            num_params = sum(p.numel() for p in layer.parameters())
+            size_mib = num_params * 4 / (1024 * 1024)
+            indent_str = "  " * indent
+            logger.info(
+                f"{indent_str}{layer.__class__.__name__}: {round(size_mib)} MiB"
+            )
+            if size_mib < 25:
+                return
+            for _, child in layer.named_children():
+                log_size(child, indent + 1)
+
+        self.tok_embeddings = VocabParallelEmbedding(
+            params.vocab_size, params.dim, init_method=lambda x: x
+        )
+        log_size(self.tok_embeddings)
+
+        self.layers = torch.nn.ModuleList()
+        for layer_id in range(params.n_layers):
+            self.layers.append(TransformerBlock(layer_id, params))
+        log_size(self.layers[0])
+
+        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        log_size(self.norm)
+        self.output = ColumnParallelLinear(
+            params.dim, params.vocab_size, bias=False, init_method=lambda x: x
+        )
+        log_size(self.output)
+
+        self.freqs_cis = precompute_freqs_cis(
+            params.dim // params.n_heads,
+            params.max_seq_len * 2,
+            params.rope_theta,
+        )
+
+        self.bparams.append(
+            BucketParameter([self.tok_embeddings], post_hook=self.post_embeddings)
+        )
+        for layer in self.layers:
+            # [TODO] Separate attention and feedforward layers.
+            self.bparams.append(BucketParameter([layer]))
+        self.bparams.append(BucketParameter([self.output], pre_hook=self.pre_output))
+
+    def post_embeddings(self, tokens: torch.Tensor, h: torch.Tensor):
+        start_pos = 0
+        self.freqs_cis = self.freqs_cis.to(h.device)
+        _bsz, seqlen = tokens.shape
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+            mask = torch.triu(mask, diagonal=1)
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+            ).type_as(h)
+        return freqs_cis, mask
+
+    def pre_output(self, h: torch.Tensor):
+        h = self.norm(h)
+        return h
+
+    @torch.inference_mode()
+    def forward_bp(self, tokens: torch.Tensor):
+        bp = self.bparams[0]
+        h = bp.forward(tokens)
+        freqs_cis, mask = bp.post_hook(tokens, h)
+
+        for bp in self.bparams[1:-1]:
+            h = bp.forward_transformer(h, 0, freqs_cis, mask)
+
+        bp = self.bparams[-1]
+        h = bp.pre_hook(h)
+        output = bp.forward(h)
+
         return output

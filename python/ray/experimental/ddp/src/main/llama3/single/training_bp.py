@@ -8,7 +8,7 @@ from fairscale.nn.model_parallel.initialize import (
     model_parallel_is_initialized,
 )
 
-from ....core.llama3.model import LLAMA_1B, LLAMA_3B, LLAMA_8B, Transformer
+from ....core.llama3.model import LLAMA_1B, LLAMA_3B, LLAMA_8B, TransformerBP
 
 
 def main():
@@ -29,7 +29,7 @@ def main():
     torch.manual_seed(998244353)
 
     model_args = LLAMA_1B
-    model = Transformer(model_args).to("cuda")
+    model = TransformerBP(model_args).to("cuda")
     print(model)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-6)
@@ -55,7 +55,7 @@ def main():
 
         optimizer.zero_grad()
         fw_start = time.perf_counter()
-        logits = model.forward(input_ids, 0)  # shape: [batch_size, seq_len, vocab_size]
+        logits = model.forward_bp(input_ids)  # shape: [batch_size, seq_len, vocab_size]
         fw_end = time.perf_counter()
         print(f"Forward time: {round((fw_end - fw_start) * 1e3)} ms")
 
