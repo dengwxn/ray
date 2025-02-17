@@ -88,9 +88,9 @@ class Actor_V1_5:
         logger.info(f"model_args: {model_args}")
         self.model_args = model_args
         self.model = TransformerBP(model_args).to("cuda")
+        self.bparams = self.model.bparams
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
         self.criterion = torch.nn.CrossEntropyLoss()
-        # self.bparams = self.model.bparams
 
     def init_training(self) -> None:
         batch_size = 1
@@ -109,7 +109,7 @@ class Actor_V1_5:
 
     def forward(self, _) -> torch.Tensor:
         # [VERSION] Exclude per-bucket forward.
-        logits = self.model.forward_bp(self.input_ids)
+        logits = self.model.forward_bp_auto(self.input_ids)
         return logits
 
     def backward_all(self, logits) -> torch.Tensor:

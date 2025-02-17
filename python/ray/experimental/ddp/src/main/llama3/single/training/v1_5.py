@@ -37,7 +37,7 @@ def main():
 
     model_args = LLAMA_1B
     actor = Actor(model_args)
-    print(actor.model)
+    logger.info(actor.model)
 
     n_epochs = 3
 
