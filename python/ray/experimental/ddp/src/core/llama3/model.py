@@ -4,6 +4,7 @@
 import logging
 import math
 from dataclasses import dataclass
+from itertools import chain
 from typing import List, Optional, Tuple
 
 import fairscale.nn.model_parallel.initialize as fs_init
@@ -377,7 +378,15 @@ class Transformer(nn.Module):
 
 
 class BucketParameter(nn.Module):
-    def __init__(self, layers: List[nn.Module], pre_hook=None, post_hook=None):
+    # sum_params: int = 0
+
+    def __init__(
+        self,
+        layers: List[nn.Module],
+        pre_hook=None,
+        post_hook=None,
+        hook_params=None,
+    ):
         super().__init__()
         self.layers = torch.nn.ModuleList(layers)
         self.pre_hook = pre_hook
@@ -386,7 +395,13 @@ class BucketParameter(nn.Module):
         self.input = None
         self.target = None
         self.criterion = torch.nn.CrossEntropyLoss()
-        self.optimizer = torch.optim.SGD(self.layers.parameters(), lr=1e-6)
+        params = self.layers.parameters()
+        if hook_params is not None:
+            params = chain(params, hook_params)
+        # params = list(params)
+        # BucketParameter.sum_params += sum(p.numel() for p in params)
+        # print(f"sum_params: {BucketParameter.sum_params}")
+        self.optimizer = torch.optim.SGD(params, lr=1e-6)
 
     def forward(self, x: Tensor) -> Tensor:
         for layer in self.layers:

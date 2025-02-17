@@ -1,6 +1,11 @@
+import logging
+from typing import Any
+
 import torch
 
 from ...core.llama3.model import TransformerBP
+
+logger = logging.getLogger(__name__)
 
 
 class Actor:
@@ -32,10 +37,10 @@ class Actor:
             if i == 0:
                 pred = bp.forward(tokens)
                 freqs_cis, mask = bp.post_hook(tokens, pred)
-            elif i == len(self.bparams) - 1:
-                pred = bp.forward(bp.pre_hook(input))
-            else:
+            elif i < len(self.bparams) - 1:
                 pred = bp.forward_transformer(input, 0, freqs_cis, mask)
+            else:
+                pred = bp.forward(bp.pre_hook(input))
             if i < len(self.bparams) - 1:
                 input = pred.detach().requires_grad_(True)
                 freqs_cis = freqs_cis.detach().requires_grad_(True)
@@ -75,3 +80,44 @@ class Actor:
     def update_all(self, _) -> None:
         for i in reversed(range(len(self.bparams))):
             self.update(_, False, i)
+
+
+class Actor_V1_5:
+    def __init__(self, model_args):
+        model_args.n_layers = 1
+        logger.info(f"model_args: {model_args}")
+        self.model_args = model_args
+        self.model = TransformerBP(model_args).to("cuda")
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
+        self.criterion = torch.nn.CrossEntropyLoss()
+        # self.bparams = self.model.bparams
+
+    def init_training(self) -> None:
+        batch_size = 1
+        seq_len = 1024
+        self.input_ids = torch.randint(
+            0,
+            self.model_args.vocab_size,
+            (batch_size, seq_len),
+        ).to("cuda")
+        self.target_ids = torch.randn(
+            batch_size,
+            seq_len,
+            self.model_args.vocab_size,
+            requires_grad=True,
+        ).to("cuda")
+
+    def forward(self, _) -> torch.Tensor:
+        # [VERSION] Exclude per-bucket forward.
+        logits = self.model.forward_bp(self.input_ids)
+        return logits
+
+    def backward_all(self, logits) -> torch.Tensor:
+        # [VERSION] Exclude per-bucket backward.
+        loss = self.criterion(logits, self.target_ids)
+        loss.backward()
+
+    def update_all(self, _) -> None:
+        # [VERSION] Exclude optimizer.
+        self.optimizer.step()
+        self.optimizer.zero_grad()

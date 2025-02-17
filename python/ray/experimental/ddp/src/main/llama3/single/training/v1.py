@@ -33,6 +33,7 @@ def main():
     print(model)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-6)
+    print(f"params: {sum(p.numel() for p in model.parameters())}")
     criterion = torch.nn.CrossEntropyLoss()
 
     n_epochs = 3
