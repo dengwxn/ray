@@ -1,0 +1,78 @@
+import logging
+from collections import defaultdict
+from typing import Any, Dict, List
+
+import torch
+
+import ray
+from ...core.llama3.model import LLAMA_1B, LLAMA_3B, LLAMA_8B, TransformerBP
+from ..common import ms_to_micros
+
+
+class Actor:
+    def __init__(self, model_args):
+        self.model_args = model_args
+        self.model = TransformerBP(model_args).to("cuda")
+        self.bparams = self.model.bparams
+
+    def init_training(self) -> None:
+        self.model.train()
+        batch_size = 1
+        seq_len = 1024
+        self.input_ids = torch.randint(
+            0,
+            self.model_args.vocab_size,
+            (batch_size, seq_len),
+        ).to("cuda")
+        self.target_ids = torch.randn(
+            batch_size,
+            seq_len,
+            self.model_args.vocab_size,
+            requires_grad=True,
+        ).to("cuda")
+
+    def forward(self, _) -> None:
+        self.intermediates = []
+        tokens = self.input_ids
+        input, freqs_cis, mask = None, None, None
+        for i, bp in enumerate(self.bparams):
+            if i == 0:
+                pred = bp.forward(tokens)
+                freqs_cis, mask = bp.post_hook(tokens, pred)
+            elif i == len(self.bparams) - 1:
+                input = bp.pre_hook(input)
+                pred = bp.forward(input)
+            else:
+                pred = bp.forward_transformer(input, 0, freqs_cis, mask)
+            if i < len(self.bparams) - 1:
+                input = pred.detach().requires_grad_(True)
+            else:
+                input = pred
+            self.intermediates.append((pred, input))
+
+    def backward(self, _, idx: int) -> torch.Tensor:
+        if idx == len(self.bparams) - 1:
+            loss = self.bparams[idx].criterion(
+                self.intermediates[idx][0],
+                self.target_ids,
+            )
+            pred = None
+            grad = None
+        else:
+            loss = None
+            pred, input = self.intermediates[idx]
+            grad = input.grad
+            self.intermediates[idx] = (None, None)
+        grads = self.bparams[idx].backward(
+            loss=loss,
+            pred=pred,
+            grad=grad,
+        )
+        return grads
+
+    def backward_all(self, _) -> torch.Tensor:
+        for i in reversed(range(len(self.bparams))):
+            self.backward(_, i)
+
+    def update(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
+        raise NotImplementedError
