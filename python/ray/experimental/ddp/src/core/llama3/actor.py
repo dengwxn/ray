@@ -85,7 +85,7 @@ class Actor:
             self.update(_, False, i)
 
 
-class _Actor_V1_5:
+class _Actor_V2:
     def __init__(self, model_args):
         model_args.n_layers = 1
         logger.info(f"model_args: {model_args}")
