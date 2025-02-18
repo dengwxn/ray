@@ -538,7 +538,7 @@ class TransformerBP(nn.Module):
         return h
 
     @torch.inference_mode()
-    def forward_bp_manual(self, tokens: torch.Tensor):
+    def forward_manual(self, tokens: torch.Tensor):
         bp = self.bparams[0]
         h = bp.forward(tokens)
         freqs_cis, mask = bp.post_hook(tokens, h)
@@ -551,19 +551,3 @@ class TransformerBP(nn.Module):
         output = bp.forward(h)
 
         return output
-
-    @torch.inference_mode()
-    def forward_bp_auto(self, tokens: torch.Tensor):
-        input, freqs_cis, mask = None, None, None
-
-        for i, bp in enumerate(self.bparams):
-            if i == 0:
-                pred = bp.forward(tokens)
-                freqs_cis, mask = bp.post_hook(tokens, pred)
-            elif i < len(self.bparams) - 1:
-                pred = bp.forward_transformer(input, 0, freqs_cis, mask)
-            else:
-                pred = bp.forward(bp.pre_hook(input))
-            input = pred
-
-        return pred

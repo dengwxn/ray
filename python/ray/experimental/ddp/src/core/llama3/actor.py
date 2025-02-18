@@ -108,9 +108,25 @@ class Actor_V1_5:
         ).to("cuda")
 
     def forward(self, _) -> torch.Tensor:
-        # [VERSION] Exclude per-bucket forward.
-        logits = self.model.forward_bp_auto(self.input_ids)
-        return logits
+        self.intermediates = []
+        tokens = self.input_ids
+        input, freqs_cis, mask = None, None, None
+        for i, bp in enumerate(self.bparams):
+            if i == 0:
+                pred = bp.forward(tokens)
+                freqs_cis, mask = bp.post_hook(tokens, pred)
+            elif i < len(self.bparams) - 1:
+                pred = bp.forward_transformer(input, 0, freqs_cis, mask)
+            else:
+                pred = bp.forward(bp.pre_hook(input))
+            if i < len(self.bparams) - 1:
+                input = pred.detach().requires_grad_(True)
+                freqs_cis = freqs_cis.detach().requires_grad_(True)
+                mask = mask.detach().requires_grad_(True)
+            else:
+                input = pred
+            self.intermediates.append((pred, input))
+        return pred
 
     def backward_all(self, logits) -> torch.Tensor:
         # [VERSION] Exclude per-bucket backward.

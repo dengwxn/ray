@@ -56,7 +56,7 @@ def main():
 
         optimizer.zero_grad()
         fw_start = time.perf_counter()
-        logits = model.forward_bp_manual(
+        logits = model.forward_manual(
             input_ids
         )  # shape: [batch_size, seq_len, vocab_size]
         fw_end = time.perf_counter()
