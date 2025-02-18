@@ -1,15 +1,21 @@
+import logging
 import os
 import time
 
 import torch
 from fairscale.nn.model_parallel.initialize import (
-    get_model_parallel_rank,
     initialize_model_parallel,
     model_parallel_is_initialized,
 )
 
 from .....core.llama3.actor import Actor
-from .....core.llama3.model import LLAMA_1B, LLAMA_3B, LLAMA_8B, TransformerBP
+from .....core.llama3.model import LLAMA_1B
+
+logging.basicConfig(
+    format="%(asctime)s %(levelname)s %(name)s -- %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
 
 
 def main():
@@ -31,7 +37,7 @@ def main():
 
     model_args = LLAMA_1B
     actor = Actor(model_args)
-    print(actor.model)
+    logger.info(actor.model)
 
     n_epochs = 3
 
@@ -39,21 +45,21 @@ def main():
         actor.init_training()
 
         fw_start = time.perf_counter()
-        actor.forward(None)
+        logits = actor.forward(None)
         fw_end = time.perf_counter()
-        print(f"Forward time: {round((fw_end - fw_start) * 1e3)} ms")
+        logger.info(f"Forward time: {round((fw_end - fw_start) * 1e3)} ms")
 
         bw_start = time.perf_counter()
-        actor.backward_all(None)
+        actor.backward_all(logits)
         bw_end = time.perf_counter()
-        print(f"Backward time: {round((bw_end - bw_start) * 1e3)} ms")
+        logger.info(f"Backward time: {round((bw_end - bw_start) * 1e3)} ms")
 
         upd_start = time.perf_counter()
         actor.update_all(None)
         upd_end = time.perf_counter()
-        print(f"Update time: {round((upd_end - upd_start) * 1e3)} ms")
+        logger.info(f"Update time: {round((upd_end - upd_start) * 1e3)} ms")
 
-        print()
+        logger.info("")
 
 
 if __name__ == "__main__":

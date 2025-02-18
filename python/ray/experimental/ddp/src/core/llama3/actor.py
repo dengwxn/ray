@@ -11,9 +11,12 @@ logger = logging.getLogger(__name__)
 
 class Actor:
     def __init__(self, model_args):
+        logger.info(f"model_args: {model_args}")
         self.model_args = model_args
         self.model = TransformerBP(model_args).to("cuda")
         self.bparams = self.model.bparams
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
+        self.criterion = torch.nn.CrossEntropyLoss()
 
     def init_training(self) -> None:
         batch_size = 1
@@ -30,7 +33,7 @@ class Actor:
             requires_grad=True,
         ).to("cuda")
 
-    def forward(self, _) -> None:
+    def forward(self, _) -> torch.Tensor:
         self.intermediates = []
         tokens = self.input_ids
         input, freqs_cis, mask = None, None, None
@@ -44,11 +47,10 @@ class Actor:
                 pred = bp.forward(bp.pre_hook(input))
             if i < len(self.bparams) - 1:
                 input = pred.detach().requires_grad_(True)
-                freqs_cis = freqs_cis.detach().requires_grad_(False)
-                mask = mask.detach().requires_grad_(False)
             else:
                 input = pred
             self.intermediates.append((pred, input))
+        return pred
 
     def backward(self, _, idx: int) -> torch.Tensor:
         if idx == len(self.bparams) - 1:
@@ -83,7 +85,7 @@ class Actor:
             self.update(_, False, i)
 
 
-class Actor_V1_5:
+class _Actor_V1_5:
     def __init__(self, model_args):
         model_args.n_layers = 1
         logger.info(f"model_args: {model_args}")

@@ -8,11 +8,11 @@ from fairscale.nn.model_parallel.initialize import (
     model_parallel_is_initialized,
 )
 
-from .....core.llama3.actor import Actor_V1_5 as Actor
+from .....core.llama3.actor import _Actor_V1_5 as Actor
 from .....core.llama3.model import LLAMA_1B
 
 logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    format="%(asctime)s %(levelname)s %(name)s -- %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
