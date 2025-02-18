@@ -1,4 +1,5 @@
 import logging
+from collections import defaultdict
 from typing import Any
 
 import torch
@@ -43,8 +44,8 @@ class Actor:
                 pred = bp.forward(bp.pre_hook(input))
             if i < len(self.bparams) - 1:
                 input = pred.detach().requires_grad_(True)
-                freqs_cis = freqs_cis.detach().requires_grad_(True)
-                mask = mask.detach().requires_grad_(True)
+                freqs_cis = freqs_cis.detach().requires_grad_(False)
+                mask = mask.detach().requires_grad_(False)
             else:
                 input = pred
             self.intermediates.append((pred, input))
@@ -121,19 +122,37 @@ class Actor_V1_5:
                 pred = bp.forward(bp.pre_hook(input))
             if i < len(self.bparams) - 1:
                 input = pred.detach().requires_grad_(True)
-                freqs_cis = freqs_cis.detach().requires_grad_(True)
-                mask = mask.detach().requires_grad_(True)
             else:
                 input = pred
             self.intermediates.append((pred, input))
         return pred
 
+    def backward(self, _, idx: int) -> torch.Tensor:
+        if idx == len(self.bparams) - 1:
+            loss = self.bparams[idx].criterion(
+                self.intermediates[idx][0],
+                self.target_ids,
+            )
+            pred = None
+            grad = None
+        else:
+            loss = None
+            pred, input = self.intermediates[idx]
+            grad = input.grad
+        grads = self.bparams[idx].backward(
+            loss=loss,
+            pred=pred,
+            grad=grad,
+        )
+        return grads
+
     def backward_all(self, logits) -> torch.Tensor:
-        # [VERSION] Exclude per-bucket backward.
-        loss = self.criterion(logits, self.target_ids)
-        loss.backward()
+        for i in reversed(range(len(self.bparams))):
+            self.backward(None, i)
 
     def update_all(self, _) -> None:
         # [VERSION] Exclude optimizer.
-        self.optimizer.step()
-        self.optimizer.zero_grad()
+        # self.optimizer.step()
+        # self.optimizer.zero_grad()
+        for bparam in self.bparams:
+            bparam.update(None, False)

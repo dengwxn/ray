@@ -3,6 +3,7 @@
 
 import logging
 import math
+from collections import defaultdict
 from dataclasses import dataclass
 from itertools import chain
 from typing import List, Optional, Tuple
@@ -175,22 +176,23 @@ class Attention(nn.Module):
             init_method=lambda x: x,
         )
 
-        self.cache_k = torch.zeros(
-            (
-                args.max_batch_size,
-                args.max_seq_len,
-                self.n_local_kv_heads,
-                self.head_dim,
-            )
-        ).cuda()
-        self.cache_v = torch.zeros(
-            (
-                args.max_batch_size,
-                args.max_seq_len,
-                self.n_local_kv_heads,
-                self.head_dim,
-            )
-        ).cuda()
+        # [NOTE] Disable KV cache during training.
+        # self.cache_k = torch.zeros(
+        #     (
+        #         args.max_batch_size,
+        #         args.max_seq_len,
+        #         self.n_local_kv_heads,
+        #         self.head_dim,
+        #     )
+        # ).cuda()
+        # self.cache_v = torch.zeros(
+        #     (
+        #         args.max_batch_size,
+        #         args.max_seq_len,
+        #         self.n_local_kv_heads,
+        #         self.head_dim,
+        #     )
+        # ).cuda()
 
     def forward(
         self,
@@ -208,14 +210,19 @@ class Attention(nn.Module):
 
         xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
 
-        self.cache_k = self.cache_k.to(xq)
-        self.cache_v = self.cache_v.to(xq)
+        # [NOTE] Disable KV cache during training.
 
-        self.cache_k[:bsz, start_pos : start_pos + seqlen] = xk
-        self.cache_v[:bsz, start_pos : start_pos + seqlen] = xv
+        # self.cache_k = self.cache_k.to(xq)
+        # self.cache_v = self.cache_v.to(xq)
 
-        keys = self.cache_k[:bsz, : start_pos + seqlen]
-        values = self.cache_v[:bsz, : start_pos + seqlen]
+        # self.cache_k[:bsz, start_pos : start_pos + seqlen] = xk
+        # self.cache_v[:bsz, start_pos : start_pos + seqlen] = xv
+
+        # keys = self.cache_k[:bsz, : start_pos + seqlen]
+        # values = self.cache_v[:bsz, : start_pos + seqlen]
+
+        keys = xk
+        values = xv
 
         # repeat k/v heads if n_kv_heads < n_heads
         keys = repeat_kv(
@@ -378,6 +385,7 @@ class Transformer(nn.Module):
 
 
 class BucketParameter(nn.Module):
+    # [TODO] Check `sum_params`.
     # sum_params: int = 0
 
     def __init__(
@@ -385,23 +393,39 @@ class BucketParameter(nn.Module):
         layers: List[nn.Module],
         pre_hook=None,
         post_hook=None,
-        hook_params=None,
+        hook_layers: Optional[List[nn.Module]] = None,
     ):
         super().__init__()
         self.layers = torch.nn.ModuleList(layers)
         self.pre_hook = pre_hook
         self.post_hook = post_hook
+        self.hook_layers = (
+            torch.nn.ModuleList(hook_layers) if hook_layers is not None else None
+        )
 
         self.input = None
         self.target = None
         self.criterion = torch.nn.CrossEntropyLoss()
-        params = self.layers.parameters()
-        if hook_params is not None:
-            params = chain(params, hook_params)
-        # params = list(params)
-        # BucketParameter.sum_params += sum(p.numel() for p in params)
-        # print(f"sum_params: {BucketParameter.sum_params}")
+        if hook_layers is None:
+            self.named_params = list(self.layers.named_parameters())
+        else:
+            self.named_params = list(
+                chain(
+                    self.layers.named_parameters(),
+                    self.hook_layers.named_parameters(),
+                )
+            )
+        params = [param for _, param in self.named_params]
         self.optimizer = torch.optim.SGD(params, lr=1e-6)
+
+        self.init_weights()
+
+    def init_weights(self):
+        for _, param in self.named_params:
+            if param.dim() > 1:
+                nn.init.xavier_uniform_(param)
+            else:
+                nn.init.zeros_(param)
 
     def forward(self, x: Tensor) -> Tensor:
         for layer in self.layers:
@@ -436,26 +460,42 @@ class BucketParameter(nn.Module):
             assert grad is not None
             pred.backward(grad)
 
-        # [TODO] Check if `parameters()` is deterministic.
         grads_cat = parameters_to_vector(
-            [p.grad for p in self.layers.parameters() if p.grad is not None]
+            [param.grad for _, param in self.named_params if param.grad is not None]
         )
         return grads_cat
 
     def update(self, grads_cat: torch.Tensor, grads_passed: bool) -> None:
         if grads_passed:
             offset = 0
-            # [TODO] Check if `parameters()` is deterministic.
-            for p in self.layers.parameters():
-                if p.grad is None:
+            for _, param in self.named_params:
+                if param.grad is None:
                     continue
-                size = p.data.numel()
-                grad = grads_cat[offset : offset + size].reshape(p.data.shape)
-                p.grad = grad
+                size = param.data.numel()
+                grad = grads_cat[offset : offset + size].reshape(param.data.shape)
+                param.grad = grad
                 offset += size
 
         self.optimizer.step()
         self.optimizer.zero_grad()
+
+    def _log_versions(self, prompt: str, grad_is_none: bool):
+        logger.info(prompt)
+        version_to_count = defaultdict(int)
+        version_to_names = defaultdict(list)
+        version_to_count_grad = defaultdict(int)
+        for name, param in self.named_params:
+            if grad_is_none:
+                assert param.grad is None
+            else:
+                assert param.grad is not None
+            version_to_count[param._version] += 1
+            version_to_names[param._version].append(name)
+            if param.grad is not None:
+                version_to_count_grad[param.grad._version] += 1
+        logger.info(f"version_to_count: {version_to_count}")
+        logger.info(f"version_to_names: {version_to_names}")
+        logger.info(f"version_to_count_grad: {version_to_count_grad}")
 
 
 class TransformerBP(nn.Module):
@@ -517,7 +557,11 @@ class TransformerBP(nn.Module):
         for layer in self.layers:
             # [TODO] Separate attention and feedforward layers.
             self.bparams.append(BucketParameter([layer]))
-        self.bparams.append(BucketParameter([self.output], pre_hook=self.pre_output))
+        self.bparams.append(
+            BucketParameter(
+                [self.output], pre_hook=self.pre_output, hook_layers=[self.norm]
+            )
+        )
 
     def post_embeddings(self, tokens: torch.Tensor, h: torch.Tensor):
         start_pos = 0
