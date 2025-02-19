@@ -36,7 +36,7 @@ latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
-python -m ray.experimental.ddp.src.main.llama3.ray.no_overlap \
+python -m ray.experimental.ddp.src.main.llama3.ray.no_allreduce \
 	--num-partitions $num_partitions \
 	--num-actors $num_actors \
 	--num-iters $num_iters \
