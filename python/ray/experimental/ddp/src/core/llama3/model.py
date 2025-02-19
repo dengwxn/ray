@@ -8,16 +8,18 @@ from dataclasses import dataclass
 from itertools import chain
 from typing import List, Optional, Tuple
 
-import fairscale.nn.model_parallel.initialize as fs_init
 import torch
 import torch.nn.functional as F
-from fairscale.nn.model_parallel.layers import (
-    ColumnParallelLinear,
-    RowParallelLinear,
-    VocabParallelEmbedding,
-)
 from torch import Tensor, nn
 from torch.nn.utils import parameters_to_vector
+
+# import fairscale.nn.model_parallel.initialize as fs_init
+# from fairscale.nn.model_parallel.layers import (
+#     ColumnParallelLinear,
+#     RowParallelLinear,
+#     VocabParallelEmbedding,
+# )
+
 
 logger = logging.getLogger(__name__)
 
@@ -141,39 +143,44 @@ class Attention(nn.Module):
     def __init__(self, args: ModelArgs):
         super().__init__()
         self.n_kv_heads = args.n_heads if args.n_kv_heads is None else args.n_kv_heads
-        model_parallel_size = fs_init.get_model_parallel_world_size()
+        # model_parallel_size = fs_init.get_model_parallel_world_size()
+        model_parallel_size = 1
         self.n_local_heads = args.n_heads // model_parallel_size
         self.n_local_kv_heads = self.n_kv_heads // model_parallel_size
         self.n_rep = self.n_local_heads // self.n_local_kv_heads
         self.head_dim = args.dim // args.n_heads
 
-        self.wq = ColumnParallelLinear(
+        # self.wq = ColumnParallelLinear(
+        self.wq = torch.nn.Linear(
             args.dim,
             args.n_heads * self.head_dim,
             bias=False,
-            gather_output=False,
-            init_method=lambda x: x,
+            # gather_output=False,
+            # init_method=lambda x: x,
         )
-        self.wk = ColumnParallelLinear(
+        # self.wk = ColumnParallelLinear(
+        self.wk = torch.nn.Linear(
             args.dim,
             self.n_kv_heads * self.head_dim,
             bias=False,
-            gather_output=False,
-            init_method=lambda x: x,
+            # gather_output=False,
+            # init_method=lambda x: x,
         )
-        self.wv = ColumnParallelLinear(
+        # self.wv = ColumnParallelLinear(
+        self.wv = torch.nn.Linear(
             args.dim,
             self.n_kv_heads * self.head_dim,
             bias=False,
-            gather_output=False,
-            init_method=lambda x: x,
+            # gather_output=False,
+            # init_method=lambda x: x,
         )
-        self.wo = RowParallelLinear(
+        # self.wo = RowParallelLinear(
+        self.wo = torch.nn.Linear(
             args.n_heads * self.head_dim,
             args.dim,
             bias=False,
-            input_is_parallel=True,
-            init_method=lambda x: x,
+            # input_is_parallel=True,
+            # init_method=lambda x: x,
         )
 
         # [NOTE] Disable KV cache during training.
@@ -261,14 +268,29 @@ class FeedForward(nn.Module):
             hidden_dim = int(ffn_dim_multiplier * hidden_dim)
         hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
 
-        self.w1 = ColumnParallelLinear(
-            dim, hidden_dim, bias=False, gather_output=False, init_method=lambda x: x
+        # self.w1 = ColumnParallelLinear(
+        self.w1 = torch.nn.Linear(
+            dim,
+            hidden_dim,
+            bias=False,
+            # gather_output=False,
+            # init_method=lambda x: x,
         )
-        self.w2 = RowParallelLinear(
-            hidden_dim, dim, bias=False, input_is_parallel=True, init_method=lambda x: x
+        # self.w2 = RowParallelLinear(
+        self.w2 = torch.nn.Linear(
+            hidden_dim,
+            dim,
+            bias=False,
+            # input_is_parallel=True,
+            # init_method=lambda x: x,
         )
-        self.w3 = ColumnParallelLinear(
-            dim, hidden_dim, bias=False, gather_output=False, init_method=lambda x: x
+        # self.w3 = ColumnParallelLinear(
+        self.w3 = torch.nn.Linear(
+            dim,
+            hidden_dim,
+            bias=False,
+            # gather_output=False,
+            # init_method=lambda x: x,
         )
 
     def forward(self, x):
@@ -333,8 +355,11 @@ class Transformer(nn.Module):
             for _, child in layer.named_children():
                 log_size(child, indent + 1)
 
-        self.tok_embeddings = VocabParallelEmbedding(
-            params.vocab_size, params.dim, init_method=lambda x: x
+        # self.tok_embeddings = VocabParallelEmbedding(
+        self.tok_embeddings = torch.nn.Embedding(
+            params.vocab_size,
+            params.dim,
+            # init_method=lambda x: x,
         )
         log_size(self.tok_embeddings)
 
@@ -345,8 +370,12 @@ class Transformer(nn.Module):
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
         log_size(self.norm)
-        self.output = ColumnParallelLinear(
-            params.dim, params.vocab_size, bias=False, init_method=lambda x: x
+        # self.output = ColumnParallelLinear(
+        self.output = torch.nn.Linear(
+            params.dim,
+            params.vocab_size,
+            bias=False,
+            # init_method=lambda x: x,
         )
         log_size(self.output)
 
@@ -526,8 +555,10 @@ class TransformerBP(nn.Module):
             for _, child in layer.named_children():
                 log_size(child, indent + 1)
 
-        self.tok_embeddings = VocabParallelEmbedding(
-            params.vocab_size, params.dim, init_method=lambda x: x
+        # self.tok_embeddings = VocabParallelEmbedding(
+        self.tok_embeddings = torch.nn.Embedding(
+            params.vocab_size,
+            params.dim,
         )
         log_size(self.tok_embeddings)
 
@@ -538,8 +569,12 @@ class TransformerBP(nn.Module):
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
         log_size(self.norm)
-        self.output = ColumnParallelLinear(
-            params.dim, params.vocab_size, bias=False, init_method=lambda x: x
+        # self.output = ColumnParallelLinear(
+        self.output = torch.nn.Linear(
+            params.dim,
+            params.vocab_size,
+            bias=False,
+            # init_method=lambda x: x,
         )
         log_size(self.output)
 

@@ -8,7 +8,7 @@ from fairscale.nn.model_parallel.initialize import (
     model_parallel_is_initialized,
 )
 
-from .....core.llama3.actor import Actor
+from .....core.llama3.actor import _Actor_V4 as Actor
 from .....core.llama3.model import LLAMA_1B
 
 logging.basicConfig(

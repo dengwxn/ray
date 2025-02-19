@@ -3,12 +3,8 @@ import os
 import time
 
 import torch
-from fairscale.nn.model_parallel.initialize import (
-    initialize_model_parallel,
-    model_parallel_is_initialized,
-)
 
-from .....core.llama3.actor import Actor
+from .....core.llama3.actor import _Actor_V4 as Actor
 from .....core.llama3.model import LLAMA_1B
 
 logging.basicConfig(
@@ -19,20 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    os.environ["RANK"] = "0"
-    os.environ["WORLD_SIZE"] = "1"
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "25670"
-
-    if not torch.distributed.is_initialized():
-        torch.distributed.init_process_group("nccl")
-
-    if not model_parallel_is_initialized():
-        model_parallel_size = 1
-        initialize_model_parallel(model_parallel_size)
-
-    local_rank = 0
-    torch.cuda.set_device(local_rank)
+    torch.cuda.set_device(0)
     torch.manual_seed(998244353)
 
     model_args = LLAMA_1B
