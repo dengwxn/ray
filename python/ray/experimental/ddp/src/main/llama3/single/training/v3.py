@@ -39,9 +39,9 @@ def main():
     actor = Actor(model_args)
     logger.info(actor.model)
 
-    n_epochs = 3
+    n_iters = 3
 
-    for _ in range(n_epochs):
+    for _ in range(n_iters):
         actor.init_training()
 
         fw_start = time.perf_counter()

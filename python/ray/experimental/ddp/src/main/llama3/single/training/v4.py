@@ -12,7 +12,7 @@ from .....core.llama3.actor import Actor
 from .....core.llama3.model import LLAMA_1B
 
 logging.basicConfig(
-    format="%(asctime)s %(levelname)s %(name)s -- %(message)s",
+    format="%(asctime)s %(levelname)s %(filename)s:%(lineno)d -- %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
@@ -39,9 +39,9 @@ def main():
     actor = Actor(model_args)
     logger.info(actor.model)
 
-    n_epochs = 3
+    n_iters = 3
 
-    for _ in range(n_epochs):
+    for _ in range(n_iters):
         actor.init_training()
 
         fw_start = time.perf_counter()

@@ -89,7 +89,7 @@ def spwan_torch_ddp(
 
         elapses = defaultdict(list)
 
-        for epoch in range(args["num_epochs"]):
+        for iter in range(args["num_iters"]):
             model.x = torch.randn(
                 1,
                 model.layer_size,
@@ -105,7 +105,7 @@ def spwan_torch_ddp(
             )
 
             if rank == 0:
-                logger.info(f"epoch: {epoch}")
+                logger.info(f"iter: {iter}")
                 logger.info(f"input: {model.x}")
                 logger.info(f"target: {model.x}")
 

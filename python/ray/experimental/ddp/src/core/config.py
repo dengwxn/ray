@@ -18,7 +18,7 @@ def parse_args() -> Dict[str, Any]:
         # required=True,
     )
     parser.add_argument(
-        "--num-models",
+        "--num-partitions",
         type=int,
     )
     parser.add_argument(
@@ -27,7 +27,7 @@ def parse_args() -> Dict[str, Any]:
         required=True,
     )
     parser.add_argument(
-        "--num-epochs",
+        "--num-iters",
         type=int,
         required=True,
     )

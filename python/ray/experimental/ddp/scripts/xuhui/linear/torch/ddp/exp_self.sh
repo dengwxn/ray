@@ -39,7 +39,7 @@ num_layers_values=(
 )
 
 num_actors=4
-num_epochs=20
+num_iters=20
 
 for i in "${!layer_size_values[@]}"; do
 	layer_size="${layer_size_values[$i]}"
@@ -54,7 +54,7 @@ for i in "${!layer_size_values[@]}"; do
 		--layer-size $layer_size \
 		--num-layers $num_layers \
 		--num-actors $num_actors \
-		--num-epochs $num_epochs \
+		--num-iters $num_iters \
 		--output-path $output_path \
 		--latency-prefix $latency_prefix \
 		--model-prefix $model_prefix \

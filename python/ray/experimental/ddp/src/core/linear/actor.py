@@ -15,14 +15,14 @@ class LinearActor:
         self,
         layer_size: int,
         num_layers: int,
-        num_models: int,
+        num_partitions: int,
         num_actors: int,
         device: torch.device,
         tracing: bool,
     ):
         self.layer_size = layer_size
         self.num_layers = num_layers
-        self.num_models = num_models
+        self.num_partitions = num_partitions
         self.num_actors = num_actors
         self.device = device
         self.tracing = tracing
@@ -30,10 +30,10 @@ class LinearActor:
         self.models = [
             BucketParameter(
                 layer_size=layer_size,
-                num_layers=num_layers // num_models,
+                num_layers=num_layers // num_partitions,
                 device=device,
             )
-            for _ in range(num_models)
+            for _ in range(num_partitions)
         ]
         logger = logging.getLogger(__name__)
         for model in self.models:
@@ -121,7 +121,7 @@ class LinearActor:
                     self.events["backward_starts"][i].elapsed_time(
                         self.events["backward_ends"][i]
                     )
-                    for i in range(self.num_models)
+                    for i in range(self.num_partitions)
                 ]
             )
             bw_update = sum(
@@ -129,7 +129,7 @@ class LinearActor:
                     self.events["update_starts"][i].elapsed_time(
                         self.events["update_ends"][i]
                     )
-                    for i in range(self.num_models)
+                    for i in range(self.num_partitions)
                 ]
             )
             bw_others = bw_total - bw_backward - bw_update

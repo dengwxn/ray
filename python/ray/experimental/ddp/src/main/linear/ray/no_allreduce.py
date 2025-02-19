@@ -20,7 +20,7 @@ logger.info("Welcome to Downton Abbey!")
 def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
     layer_size = args["layer_size"]
     num_layers = args["num_layers"]
-    num_models = args["num_models"]
+    num_partitions = args["num_partitions"]
     num_actors = args["num_actors"]
     device = "cuda:0"
     tracing = args["tracing"]
@@ -30,7 +30,7 @@ def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
         actor_cls.remote(
             layer_size=layer_size,
             num_layers=num_layers,
-            num_models=num_models,
+            num_partitions=num_partitions,
             num_actors=num_actors,
             device=device,
             tracing=tracing,
@@ -43,8 +43,8 @@ def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
 
 def train(
     actors: List[LinearActor],
-    num_models: int,
-    num_epochs: int,
+    num_partitions: int,
+    num_iters: int,
     output_path: str,
     latency_prefix: str,
     save_model: bool,
@@ -56,7 +56,7 @@ def train(
         actors_to_backwards = actors_to_forwards
         outputs = []
 
-        for i in reversed(range(num_models)):
+        for i in reversed(range(num_partitions)):
             actors_to_backwards = [
                 actor.backward.bind(actors_to_backwards[j], i)
                 for j, actor in enumerate(actors)
@@ -74,7 +74,7 @@ def train(
         ray.get(actor.init_weights.remote())
 
     total_elapses: List[int] = []
-    for epoch in range(num_epochs):
+    for iter in range(num_iters):
         for actor in actors:
             ray.get(actor.init_training.remote())
             ray.get(actor.init_tracing.remote())
@@ -92,8 +92,8 @@ def train(
             for idx, weight in enumerate(weights):
                 logger.info(f"layer: {idx}, weight: {weight}")
 
-        if epoch > 0:
-            logger.warning(f"epoch: {epoch}, elapse: {elapse_us} us")
+        if iter > 0:
+            logger.warning(f"iter: {iter}, elapse: {elapse_us} us")
             total_elapses.append(elapse_us)
 
         for actor in actors:
@@ -144,8 +144,8 @@ def main(args: Dict[str, Any]) -> None:
 
     train(
         actors,
-        args["num_models"],
-        args["num_epochs"],
+        args["num_partitions"],
+        args["num_iters"],
         args["output_path"],
         args["latency_prefix"],
         args.get("save_model", False),

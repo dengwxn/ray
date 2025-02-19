@@ -36,7 +36,7 @@ rm -f $output_path/*.csv
 layer_size=1024
 num_layers=32
 num_actors=4
-num_epochs=20
+num_iters=20
 
 for mode in ${modes[@]}; do
 	latency_prefix=${mode}_ls${layer_size}_nl${num_layers}
@@ -45,17 +45,17 @@ for mode in ${modes[@]}; do
 	log_file=$output_path/${timestamp}_${mode}.log
 
 	if [ "$mode" != "torch.ddp" ]; then
-		num_models=4
+		num_partitions=4
 	else
-		num_models=1
+		num_partitions=1
 	fi
 
 	python -m ray.experimental.ddp.src.main.linear.${mode} \
 		--layer-size $layer_size \
 		--num-layers $num_layers \
-		--num-models $num_models \
+		--num-partitions $num_partitions \
 		--num-actors $num_actors \
-		--num-epochs $num_epochs \
+		--num-iters $num_iters \
 		--output-path $output_path \
 		--latency-prefix $latency_prefix \
 		--save-model \

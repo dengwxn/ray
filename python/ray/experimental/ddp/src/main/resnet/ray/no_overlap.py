@@ -19,7 +19,7 @@ logger.info("Welcome to Downton Abbey!")
 
 
 def init_actors(args: Dict[str, Any]) -> List[ResnetActor]:
-    num_models = args["num_models"]
+    num_partitions = args["num_partitions"]
     num_actors = args["num_actors"]
     device = "cuda:0"
     tracing = args["tracing"]
@@ -28,7 +28,7 @@ def init_actors(args: Dict[str, Any]) -> List[ResnetActor]:
     actors = [
         actor_cls.remote(
             rank=i,
-            num_models=num_models,
+            num_partitions=num_partitions,
             num_actors=num_actors,
             device=device,
             tracing=tracing,
@@ -41,7 +41,7 @@ def init_actors(args: Dict[str, Any]) -> List[ResnetActor]:
 
 def train(
     actors: List[ResnetActor],
-    num_models: int,
+    num_partitions: int,
     num_epochs: int,
     output_path: str,
     latency_prefix: str,
@@ -55,10 +55,10 @@ def train(
         outputs = []
 
         actors_to_backwards = [
-            actor.backward.bind(actors_to_backwards[j], num_models - 1)
+            actor.backward.bind(actors_to_backwards[j], num_partitions - 1)
             for j, actor in enumerate(actors)
         ]
-        for i in reversed(range(num_models)):
+        for i in reversed(range(num_partitions)):
             grads_allreduced = allreduce.bind(actors_to_backwards)
             if i > 0:
                 actors_to_backwards = [
@@ -143,7 +143,7 @@ def main(args: Dict[str, Any]) -> None:
 
     train(
         actors,
-        args["num_models"],
+        args["num_partitions"],
         args["num_epochs"],
         args["output_path"],
         args["latency_prefix"],

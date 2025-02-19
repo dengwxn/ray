@@ -88,7 +88,7 @@ def spwan_torch_ddp(
 
         BATCH_SIZE = 32
 
-        for epoch in range(args["num_epochs"]):
+        for iter in range(args["num_iters"]):
             x = torch.randn(
                 BATCH_SIZE,
                 3,
@@ -107,7 +107,7 @@ def spwan_torch_ddp(
             )
 
             if rank == 0:
-                logger.info(f"epoch: {epoch}")
+                logger.info(f"iter: {iter}")
                 logger.info(f"input: {x}")
                 logger.info(f"target: {y}")
 

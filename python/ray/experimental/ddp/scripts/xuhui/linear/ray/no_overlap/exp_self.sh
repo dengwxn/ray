@@ -38,9 +38,9 @@ num_layers_values=(
 	10 40 160 250 640 2560 10240
 )
 
-num_models=10
+num_partitions=10
 num_actors=4
-num_epochs=20
+num_iters=20
 
 for i in "${!layer_size_values[@]}"; do
 	layer_size="${layer_size_values[$i]}"
@@ -54,9 +54,9 @@ for i in "${!layer_size_values[@]}"; do
 	python -m ray.experimental.ddp.src.main.linear.ray.no_overlap \
 		--layer-size $layer_size \
 		--num-layers $num_layers \
-		--num-models $num_models \
+		--num-partitions $num_partitions \
 		--num-actors $num_actors \
-		--num-epochs $num_epochs \
+		--num-iters $num_iters \
 		--output-path $output_path \
 		--latency-prefix $latency_prefix \
 		--model-prefix $model_prefix \

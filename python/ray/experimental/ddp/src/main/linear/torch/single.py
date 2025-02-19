@@ -19,15 +19,15 @@ def init_models(args: Dict[str, Any]) -> List[BucketParameter]:
     layer_size = args["layer_size"]
     num_layers = args["num_layers"]
     device = "cuda:0"
-    num_models = args["num_models"]
+    num_partitions = args["num_partitions"]
 
     models = [
         BucketParameter(
             layer_size=layer_size,
-            num_layers=num_layers // num_models,
+            num_layers=num_layers // num_partitions,
             device=device,
         )
-        for _ in range(num_models)
+        for _ in range(num_partitions)
     ]
 
     return models
@@ -104,17 +104,17 @@ def update(
 
 def train_cot(
     models: List[BucketParameter],
-    num_epochs: int,
+    num_iters: int,
     model_file: str,
 ) -> None:
     init_weights(models)
 
-    for epoch in range(num_epochs):
+    for iter in range(num_iters):
         start = time.perf_counter()
 
         init_training(models)
 
-        logger.info(f"epoch: {epoch}")
+        logger.info(f"iter: {iter}")
         logger.info(f"input: {models[0].x}")
         logger.info(f"target: {models[-1].y}")
 
@@ -146,8 +146,8 @@ def train_cot(
                     f"model: {model_idx}, layer: {layer_idx}, weight: {layer_weight}"
                 )
 
-        if epoch > 0:
-            logger.warning(f"epoch: {epoch}, elapse: {round((end - start) * 1e6)} us")
+        if iter > 0:
+            logger.warning(f"iter: {iter}, elapse: {round((end - start) * 1e6)} us")
 
     with open(model_file, "w") as f:
         for model in models:
@@ -161,7 +161,7 @@ def main(args: Dict[str, Any]) -> None:
 
     train_cot(
         models,
-        args["num_epochs"],
+        args["num_iters"],
         args["model_file"],
     )
 

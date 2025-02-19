@@ -18,7 +18,7 @@ torch.manual_seed(998244353)
 
 model = resnet(weights=True)
 
-num_epochs = 10
+num_iters = 10
 batch_size = 32
 
 device = "cuda:0"
@@ -31,7 +31,7 @@ random_input = torch.randn(batch_size, 3, 224, 224).to(device)
 random_targets = torch.randint(0, 1000, (batch_size,)).to(device)
 
 model.train()
-for epoch in range(num_epochs):
+for iter in range(num_iters):
     optimizer.zero_grad()
 
     outputs = model(random_input)
@@ -41,12 +41,12 @@ for epoch in range(num_epochs):
 
     optimizer.step()
 
-    if (epoch + 1) % 1 == 0:
+    if (iter + 1) % 1 == 0:
         _, predicted = torch.max(outputs.data, 1)
         correct = (predicted == random_targets).sum().item()
         accuracy = 100 * correct / batch_size
         print(
-            f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}, Accuracy: {accuracy:.2f}%"
+            f"iter [{iter+1}/{num_iters}], Loss: {loss.item():.4f}, Accuracy: {accuracy:.2f}%"
         )
 
 model.eval()

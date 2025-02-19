@@ -35,12 +35,12 @@ def main():
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-6)
     criterion = torch.nn.CrossEntropyLoss()
 
-    n_epochs = 3
+    n_iters = 3
     batch_size = 1
     seq_len = 1024
 
     model.train()
-    for _ in range(n_epochs):
+    for _ in range(n_iters):
         input_ids = torch.randint(
             0,
             model_args.vocab_size,

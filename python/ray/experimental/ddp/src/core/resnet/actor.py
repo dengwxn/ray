@@ -17,17 +17,17 @@ class ResnetActor:
     def __init__(
         self,
         rank: int,
-        num_models: int,
+        num_partitions: int,
         num_actors: int,
         device: torch.device,
         tracing: bool,
     ):
         self.resnet = resnet_mp(weights=True)
         self.models = [bparam.to(device) for bparam in self.resnet.bucket_params]
-        assert num_models == len(self.models)
+        assert num_partitions == len(self.models)
 
         self.rank = rank
-        self.num_models = num_models
+        self.num_partitions = num_partitions
         self.num_actors = num_actors
         self.device = device
         self.tracing = tracing
@@ -119,7 +119,7 @@ class ResnetActor:
                     self.events["backward_starts"][i].elapsed_time(
                         self.events["backward_ends"][i]
                     )
-                    for i in range(self.num_models)
+                    for i in range(self.num_partitions)
                 ]
             )
             bw_update = sum(
@@ -127,7 +127,7 @@ class ResnetActor:
                     self.events["update_starts"][i].elapsed_time(
                         self.events["update_ends"][i]
                     )
-                    for i in range(self.num_models)
+                    for i in range(self.num_partitions)
                 ]
             )
             bw_others = bw_total - bw_backward - bw_update

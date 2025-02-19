@@ -30,17 +30,17 @@ output_path=results/barbell/resnet/ray/no_allreduce
 mkdir -p $output_path
 # rm -f ${output_path}/*.csv
 
-num_models=12
+num_partitions=12
 num_actors=2
-num_epochs=10
+num_iters=10
 latency_prefix=${timestamp}_latency
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
 python -m ray.experimental.ddp.src.main.resnet.ray.no_allreduce \
-	--num-models $num_models \
+	--num-partitions $num_partitions \
 	--num-actors $num_actors \
-	--num-epochs $num_epochs \
+	--num-iters $num_iters \
 	--output-path $output_path \
 	--latency-prefix $latency_prefix \
 	--model-prefix $model_prefix \

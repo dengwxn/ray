@@ -31,9 +31,9 @@ mkdir -p $output_path
 
 layer_size=1024
 num_layers=8
-num_models=2
+num_partitions=2
 num_actors=4
-num_epochs=10
+num_iters=10
 latency_prefix=${timestamp}_ls${layer_size}_nl${num_layers}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
@@ -41,9 +41,9 @@ log_file=$output_path/${timestamp}.log
 python -m ray.experimental.ddp.src.main.linear.ray.no_allreduce \
 	--layer-size $layer_size \
 	--num-layers $num_layers \
-	--num-models $num_models \
+	--num-partitions $num_partitions \
 	--num-actors $num_actors \
-	--num-epochs $num_epochs \
+	--num-iters $num_iters \
 	--output-path $output_path \
 	--latency-prefix $latency_prefix \
 	--save-model \
