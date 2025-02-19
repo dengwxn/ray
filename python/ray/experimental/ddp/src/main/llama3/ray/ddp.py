@@ -1,10 +1,11 @@
 import logging
+import time
 from typing import Any, Dict, List
 
 import torch
 
 import ray
-from ....core.common import get_timing_event, log_elapses_to_csv
+from ....core.common import log_elapses_to_csv
 from ....core.config import parse_args
 from ....core.llama3.actor import LlamaActor
 from ....core.llama3.model import LLAMA_1B
@@ -100,13 +101,12 @@ def train(
         for actor in actors:
             ray.get(actor.init_training.remote())
 
-        start = get_timing_event()
+        start = time.perf_counter()
         compiled_dag.execute(None)
-        end = get_timing_event()
         torch.cuda.synchronize()
+        end = time.perf_counter()
 
-        elapse_ms = start.elapsed_time(end)
-        elapse_us = round(elapse_ms * 1e3)
+        elapse_us = round((end - start) * 1e6)
 
         if iter > 0:
             logger.warning(f"iter: {iter}, elapse: {elapse_us} us")
