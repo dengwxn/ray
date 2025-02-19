@@ -628,3 +628,19 @@ class TransformerBP(nn.Module):
         output = bp.forward(h)
 
         return output
+
+    @torch.inference_mode()
+    def forward(self, tokens: torch.Tensor):
+        # [NOTE] This is used for torch DDP.
+        bp = self.bparams[0]
+        h = bp.forward(tokens)
+        freqs_cis, mask = bp.post_hook(tokens, h)
+
+        for bp in self.bparams[1:-1]:
+            h = bp.forward_transformer(h, 0, freqs_cis, mask)
+
+        bp = self.bparams[-1]
+        h = bp.pre_hook(h)
+        output = bp.forward(h)
+
+        return output
