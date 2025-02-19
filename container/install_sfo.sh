@@ -29,10 +29,8 @@ git clone https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-m
 echo 'plugins=(git zsh-autosuggestions)' >>~/.zshrc
 echo 'ZSH_THEME="robbyrussell"' >>~/.zshrc
 
-chsh -s $(which zsh)
-
 cd ~/Ray-SFO
-git checkout ddp-dev-xla-0207
+git checkout ddp-dev-link-0213
 python3 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip wheel
