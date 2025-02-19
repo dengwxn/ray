@@ -57,9 +57,12 @@ npm run build
 cd ~/Ray-SFO/python
 pip install -r requirements.txt
 pip install -e . --verbose
-pip install --upgrade typing-extensions
 pip install pytest torch
 pip install -c requirements_compiled.txt -r requirements/lint-requirements.txt
+pip install --upgrade typing-extensions
+
+git config --global user.email "weixin@cs.washington.edu"
+git config --global user.name "Weixin Deng"
 
 # [TODO]
 # 1. Output the `nvidia-smi` to file.
