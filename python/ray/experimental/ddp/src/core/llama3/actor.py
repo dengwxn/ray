@@ -28,18 +28,23 @@ class LlamaActor:
         self.model_args = model_args
         self.model = TransformerBP(model_args).to("cuda")
         self.bparams = self.model.bparams
+        assert len(self.bparams) == num_partitions
 
         self.rank = rank
-        assert len(self.bparams) == num_partitions
+        self.num_partitions = num_partitions
         self.num_actors = num_actors
         self.tracing = tracing
 
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
         self.criterion = torch.nn.CrossEntropyLoss()
 
+        self.it = 0
+        self.elapses: Dict[str, List] = defaultdict(list)
+
     def init_training(self) -> None:
         batch_size = 1
         seq_len = 1024
+
         self.input_ids = torch.randint(
             0,
             self.model_args.vocab_size,
@@ -52,7 +57,6 @@ class LlamaActor:
             requires_grad=True,
         ).to("cuda")
 
-        self.it = 0
         self.events: Dict[str, List] = {
             "start": [],
             "end": [],
@@ -63,7 +67,6 @@ class LlamaActor:
             "update_starts": [],
             "update_ends": [],
         }
-        self.elapses: Dict[str, List] = defaultdict(list)
 
     def update_tracing(self, key: str) -> None:
         if self.tracing or key in ["start", "end"]:
