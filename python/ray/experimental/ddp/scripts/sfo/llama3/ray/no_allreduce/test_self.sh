@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/sfo/llama3/ray/no_overlap/test_self
+output_path=results/sfo/llama3/ray/no_allreduce/test_self
 mkdir -p $output_path
 
 num_partitions=18

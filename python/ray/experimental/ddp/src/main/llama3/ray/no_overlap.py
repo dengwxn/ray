@@ -23,7 +23,7 @@ def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
     model_args = LLAMA_1B
     num_partitions = args["num_partitions"]
     num_actors = args["num_actors"]
-    # tracing = args["tracing"]
+    tracing = args["tracing"]
 
     actor_cls = LlamaActor.options(num_gpus=1)
     actors = [
@@ -32,12 +32,31 @@ def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
             rank=i,
             num_partitions=num_partitions,
             num_actors=num_actors,
-            # tracing=tracing,
+            tracing=tracing,
         )
         for i in range(num_actors)
     ]
 
     return actors
+
+
+def get_metrics(tracing: bool) -> List[str]:
+    if not tracing:
+        metrics = [
+            "total",
+            "actor.total",
+        ]
+    else:
+        metrics = [
+            "total",
+            "actor.total",
+            "fw.total",
+            "bw.total",
+            "bw.backward",
+            "bw.others",
+            "bw.update",
+        ]
+    return metrics
 
 
 def train(
@@ -80,7 +99,6 @@ def train(
     for iter in range(num_iters):
         for actor in actors:
             ray.get(actor.init_training.remote())
-            # ray.get(actor.init_tracing.remote())
 
         start = get_timing_event()
         compiled_dag.execute(None)
@@ -94,45 +112,31 @@ def train(
             logger.warning(f"iter: {iter}, elapse: {elapse_us} us")
             total_elapses.append(elapse_us)
 
-        # for actor in actors:
-        #     ray.get(actor.finish_tracing.remote())
+        for actor in actors:
+            ray.get(actor.finish_tracing.remote())
 
-    # actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
-    # for actor_elapses in actors_to_elapses:
-    #     actor_elapses["total"] = total_elapses
-    # if not tracing:
-    #     metrics = [
-    #         "total",
-    #         "actor.total",
-    #     ]
-    # else:
-    #     metrics = [
-    #         "total",
-    #         "actor.total",
-    #         "fw.total",
-    #         "bw.total",
-    #         "bw.backward",
-    #         "bw.others",
-    #         "bw.update",
-    #     ]
-    # log_elapses_to_csv(
-    #     actors_to_elapses,
-    #     output_path,
-    #     latency_prefix,
-    #     metrics,
-    # )
+    actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
+    for actor_elapses in actors_to_elapses:
+        actor_elapses["total"] = total_elapses
+    metrics = get_metrics(tracing)
+    log_elapses_to_csv(
+        actors_to_elapses,
+        output_path,
+        latency_prefix,
+        metrics,
+    )
 
-    # if save_model:
-    #     model_file = f"{model_prefix}.log"
-    #     with open(model_file, "w") as f:
-    #         for weight in weights:
-    #             f.write(f"{weight}\n")
-    #     for i, actor in enumerate(actors):
-    #         weights = ray.get(actor.fetch_weights.remote())
-    #         model_file = f"{model_prefix}_{i}.log"
-    #         with open(model_file, "w") as f:
-    #             for weight in weights:
-    #                 f.write(f"{weight}\n")
+    if save_model:
+        model_file = f"{model_prefix}.log"
+        with open(model_file, "w") as f:
+            for weight in weights:
+                f.write(f"{weight}\n")
+        for i, actor in enumerate(actors):
+            weights = ray.get(actor.fetch_weights.remote())
+            model_file = f"{model_prefix}_{i}.log"
+            with open(model_file, "w") as f:
+                for weight in weights:
+                    f.write(f"{weight}\n")
 
 
 def main(args: Dict[str, Any]) -> None:

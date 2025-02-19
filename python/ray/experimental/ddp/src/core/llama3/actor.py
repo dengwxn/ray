@@ -1,16 +1,26 @@
 import logging
+from collections import defaultdict
+from typing import Any, Dict, List
 
 import torch
 
 import ray
 from ...core.llama3.model import TransformerBP
+from ..common import ms_to_micros
 
 logger = logging.getLogger(__name__)
 
 
 @ray.remote
 class LlamaActor:
-    def __init__(self, model_args, rank: int, num_partitions: int, num_actors: int):
+    def __init__(
+        self,
+        model_args,
+        rank: int,
+        num_partitions: int,
+        num_actors: int,
+        tracing: bool,
+    ):
         torch.cuda.set_device(0)
         torch.manual_seed(998244353)
 
@@ -18,9 +28,11 @@ class LlamaActor:
         self.model_args = model_args
         self.model = TransformerBP(model_args).to("cuda")
         self.bparams = self.model.bparams
+
         self.rank = rank
         assert len(self.bparams) == num_partitions
         self.num_actors = num_actors
+        self.tracing = tracing
 
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
         self.criterion = torch.nn.CrossEntropyLoss()
@@ -40,7 +52,84 @@ class LlamaActor:
             requires_grad=True,
         ).to("cuda")
 
+        self.it = 0
+        self.events: Dict[str, List] = {
+            "start": [],
+            "end": [],
+            "forward_starts": [],
+            "forward_ends": [],
+            "backward_starts": [],
+            "backward_ends": [],
+            "update_starts": [],
+            "update_ends": [],
+        }
+        self.elapses: Dict[str, List] = defaultdict(list)
+
+    def update_tracing(self, key: str) -> None:
+        if self.tracing or key in ["start", "end"]:
+            event = torch.cuda.Event(enable_timing=True)
+            event.record()
+            assert key in self.events
+            self.events[key].append(event)
+
+    def finish_tracing(self) -> None:
+        torch.cuda.synchronize()
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Actor {self.rank} finished iteration {self.it}")
+        self.intermediates = []
+        self.it += 1
+        if self.it <= 1:
+            return
+
+        total = self.events["start"][0].elapsed_time(self.events["end"][0])
+
+        def log(key: str, elapse_ms: float):
+            elapse_us = ms_to_micros(elapse_ms)
+            self.elapses[key].append(elapse_us)
+            logger.warning(
+                f"{key} elapse: {elapse_us} us, percent: {round(elapse_ms / total * 100, 1)}%"
+            )
+
+        log(
+            "actor.total",
+            total,
+        )
+        if self.tracing:
+            log(
+                "fw.total",
+                self.events["forward_starts"][0].elapsed_time(
+                    self.events["forward_ends"][-1]
+                ),
+            )
+            bw_total = self.events["backward_starts"][0].elapsed_time(
+                self.events["update_ends"][-1]
+            )
+            bw_backward = sum(
+                [
+                    self.events["backward_starts"][i].elapsed_time(
+                        self.events["backward_ends"][i]
+                    )
+                    for i in range(self.num_partitions)
+                ]
+            )
+            bw_update = sum(
+                [
+                    self.events["update_starts"][i].elapsed_time(
+                        self.events["update_ends"][i]
+                    )
+                    for i in range(self.num_partitions)
+                ]
+            )
+            bw_others = bw_total - bw_backward - bw_update
+            log("bw.total", bw_total)
+            log("bw.backward", bw_backward)
+            log("bw.others", bw_others)
+            log("bw.update", bw_update)
+        logger.warning("")
+
     def forward(self, _) -> torch.Tensor:
+        self.update_tracing("start")
+        self.update_tracing("forward_starts")
         self.intermediates = []
         tokens = self.input_ids
         input, freqs_cis, mask = None, None, None
@@ -57,9 +146,11 @@ class LlamaActor:
             else:
                 input = pred
             self.intermediates.append((pred, input))
+        self.update_tracing("forward_ends")
         return pred
 
     def backward(self, _, idx: int) -> torch.Tensor:
+        self.update_tracing("backward_starts")
         if idx == len(self.bparams) - 1:
             loss = self.bparams[idx].criterion(
                 self.intermediates[idx][0],
@@ -76,6 +167,7 @@ class LlamaActor:
             pred=pred,
             grad=grad,
         )
+        self.update_tracing("backward_ends")
         return grads
 
     def backward_aio(self, _) -> torch.Tensor:
@@ -102,8 +194,12 @@ class LlamaActor:
             self.step(i)
 
     def update(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
+        self.update_tracing("update_starts")
         self.copy(grads_cat, grads_passed, idx)
         self.bparams[idx].step()
+        self.update_tracing("update_ends")
+        if idx == 0:
+            self.update_tracing("end")
 
     def update_aio(self, _) -> None:
         for i in reversed(range(len(self.bparams))):
