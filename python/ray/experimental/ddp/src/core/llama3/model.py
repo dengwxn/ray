@@ -385,9 +385,6 @@ class Transformer(nn.Module):
 
 
 class BucketParameter(nn.Module):
-    # [TODO] Check `sum_params`.
-    # sum_params: int = 0
-
     def __init__(
         self,
         layers: List[nn.Module],
@@ -465,7 +462,7 @@ class BucketParameter(nn.Module):
         )
         return grads_cat
 
-    def update(self, grads_cat: torch.Tensor, grads_passed: bool) -> None:
+    def copy(self, grads_cat: torch.Tensor, grads_passed: bool) -> None:
         if grads_passed:
             offset = 0
             for _, param in self.named_params:
@@ -476,6 +473,7 @@ class BucketParameter(nn.Module):
                 param.grad = grad
                 offset += size
 
+    def step(self) -> None:
         self.optimizer.step()
         self.optimizer.zero_grad()
 

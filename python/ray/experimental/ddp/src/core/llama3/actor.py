@@ -71,16 +71,34 @@ class Actor:
         )
         return grads
 
-    def backward_all(self, _) -> torch.Tensor:
+    def backward_aio(self, _) -> torch.Tensor:
         for i in reversed(range(len(self.bparams))):
             self.backward(_, i)
 
-    def update(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
+    def copy(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
         if grads_passed:
             grads_cat /= self.num_actors
-        self.bparams[idx].update(grads_cat, grads_passed)
+        self.bparams[idx].copy(grads_cat, grads_passed)
 
-    def update_all(self, _) -> None:
+    def copy_aio(self, _) -> None:
+        for i in reversed(range(len(self.bparams))):
+            self.copy(_, False, i)
+
+    def step(self, idx: int) -> None:
+        self.bparams[idx].step()
+
+    def step_aio(self, _) -> None:
+        # [NOTE] It is slower to use a single optimizer.
+        # self.optimizer.step()
+        # self.optimizer.zero_grad()
+        for i in reversed(range(len(self.bparams))):
+            self.step(i)
+
+    def update(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
+        self.copy(grads_cat, grads_passed, idx)
+        self.bparams[idx].step()
+
+    def update_aio(self, _) -> None:
         for i in reversed(range(len(self.bparams))):
             self.update(_, False, i)
 
@@ -148,13 +166,13 @@ class _Actor_V2:
         )
         return grads
 
-    def backward_all(self, logits) -> torch.Tensor:
+    def backward_aio(self, logits) -> torch.Tensor:
         for i in reversed(range(len(self.bparams))):
             self.backward(None, i)
 
-    def update_all(self, _) -> None:
+    def update_aio(self, _) -> None:
         # [VERSION] Exclude optimizer.
         # self.optimizer.step()
         # self.optimizer.zero_grad()
         for bparam in self.bparams:
-            bparam.update(None, False)
+            bparam.step(None, False)

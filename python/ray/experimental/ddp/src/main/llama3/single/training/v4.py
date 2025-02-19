@@ -55,9 +55,14 @@ def main():
         logger.info(f"Backward time: {round((bw_end - bw_start) * 1e3)} ms")
 
         upd_start = time.perf_counter()
-        actor.update_aio(None)
+        actor.copy_aio(None)
         upd_end = time.perf_counter()
-        logger.info(f"Update time: {round((upd_end - upd_start) * 1e3)} ms")
+        logger.info(f"Copy time: {round((upd_end - upd_start) * 1e3)} ms")
+
+        upd_start = time.perf_counter()
+        actor.step_aio(None)
+        upd_end = time.perf_counter()
+        logger.info(f"Step time: {round((upd_end - upd_start) * 1e3)} ms")
 
         logger.info("")
 

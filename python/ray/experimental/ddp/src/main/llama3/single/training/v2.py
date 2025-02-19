@@ -50,12 +50,12 @@ def main():
         logger.info(f"Forward time: {round((fw_end - fw_start) * 1e3)} ms")
 
         bw_start = time.perf_counter()
-        actor.backward_all(logits)
+        actor.backward_aio(logits)
         bw_end = time.perf_counter()
         logger.info(f"Backward time: {round((bw_end - bw_start) * 1e3)} ms")
 
         upd_start = time.perf_counter()
-        actor.update_all(None)
+        actor.update_aio(None)
         upd_end = time.perf_counter()
         logger.info(f"Update time: {round((upd_end - upd_start) * 1e3)} ms")
 
