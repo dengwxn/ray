@@ -31,7 +31,7 @@ mkdir -p $output_path
 
 num_partitions=18
 num_actors=2
-num_iters=3
+num_iters=20
 latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
