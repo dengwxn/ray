@@ -127,6 +127,9 @@ class LlamaActor:
             log("bw.update", bw_update)
         logger.warning("")
 
+    def fetch_traces(self) -> Dict[str, List[float]]:
+        return self.elapses
+
     def forward(self, _) -> torch.Tensor:
         self.update_tracing("start")
         self.update_tracing("forward_starts")
