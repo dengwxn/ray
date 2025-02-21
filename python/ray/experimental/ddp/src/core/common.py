@@ -1,9 +1,19 @@
 import csv
 import os
+import time
 from typing import Any, Dict, List
 
 import numpy as np
 import torch
+
+
+def get_start_time() -> float:
+    return time.perf_counter()
+
+
+def get_end_time() -> float:
+    torch.cuda.synchronize()
+    return time.perf_counter()
 
 
 def get_timing_event() -> torch.cuda.Event:

@@ -385,7 +385,6 @@ class Transformer(nn.Module):
             params.rope_theta,
         )
 
-    @torch.inference_mode()
     def forward(self, tokens: torch.Tensor, start_pos: int):
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
@@ -431,7 +430,6 @@ class BucketParameter(nn.Module):
 
         self.input = None
         self.target = None
-        self.criterion = torch.nn.CrossEntropyLoss()
         if hook_layers is None:
             self.named_params = list(self.layers.named_parameters())
         else:
@@ -442,6 +440,7 @@ class BucketParameter(nn.Module):
                 )
             )
         params = [param for _, param in self.named_params]
+        self.criterion = torch.nn.CrossEntropyLoss()
         self.optimizer = torch.optim.SGD(params, lr=1e-6)
 
         self.init_weights()
@@ -614,7 +613,6 @@ class TransformerBP(nn.Module):
         h = self.norm(h)
         return h
 
-    @torch.inference_mode()
     def forward_manual(self, tokens: torch.Tensor):
         bp = self.bparams[0]
         h = bp.forward(tokens)
@@ -629,7 +627,6 @@ class TransformerBP(nn.Module):
 
         return output
 
-    @torch.inference_mode()
     def forward(self, tokens: torch.Tensor):
         # [NOTE] This is used for torch DDP.
         bp = self.bparams[0]

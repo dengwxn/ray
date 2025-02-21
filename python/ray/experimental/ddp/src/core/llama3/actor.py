@@ -35,8 +35,8 @@ class LlamaActor:
         self.num_actors = num_actors
         self.tracing = tracing
 
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
         self.criterion = torch.nn.CrossEntropyLoss()
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
 
         self.it = 0
         self.elapses: Dict[str, List] = defaultdict(list)
@@ -202,7 +202,7 @@ class LlamaActor:
     def update(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
         self.update_tracing("update_starts")
         self.copy(grads_cat, grads_passed, idx)
-        self.bparams[idx].step()
+        self.step(idx)
         self.update_tracing("update_ends")
         if idx == 0:
             self.update_tracing("end")
@@ -212,14 +212,66 @@ class LlamaActor:
             self.update(_, False, i)
 
 
+class _Actor_V5:
+    def __init__(self, model_args):
+        logger.info(f"model_args: {model_args}")
+        self.model_args = model_args
+        self.model = TransformerBP(model_args).to("cuda")
+        self.bparams = self.model.bparams
+        self.criterion = torch.nn.CrossEntropyLoss()
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
+
+    def init_training(self) -> None:
+        batch_size = 1
+        seq_len = 1024
+        self.input_ids = torch.randint(
+            0,
+            self.model_args.vocab_size,
+            (batch_size, seq_len),
+        ).to("cuda")
+        self.target_ids = torch.randn(
+            batch_size,
+            seq_len,
+            self.model_args.vocab_size,
+            requires_grad=True,
+        ).to("cuda")
+
+    def forward(self, _) -> torch.Tensor:
+        self.intermediates = []
+        tokens = self.input_ids
+        input, freqs_cis, mask = None, None, None
+        for i, bp in enumerate(self.bparams):
+            if i == 0:
+                pred = bp.forward(tokens)
+                freqs_cis, mask = bp.post_hook(tokens, pred)
+            elif i < len(self.bparams) - 1:
+                pred = bp.forward_transformer(input, 0, freqs_cis, mask)
+            else:
+                pred = bp.forward(bp.pre_hook(input))
+            input = pred
+            self.intermediates.append((pred, input))
+        return pred
+
+    def backward(self, _) -> None:
+        loss = self.criterion(
+            self.intermediates[-1][0],
+            self.target_ids,
+        )
+        loss.backward()
+
+    def update(self, _) -> None:
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+
+
 class _Actor_V4:
     def __init__(self, model_args):
         logger.info(f"model_args: {model_args}")
         self.model_args = model_args
         self.model = TransformerBP(model_args).to("cuda")
         self.bparams = self.model.bparams
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
         self.criterion = torch.nn.CrossEntropyLoss()
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
 
     def init_training(self) -> None:
         batch_size = 1
@@ -278,16 +330,16 @@ class _Actor_V4:
         for i in reversed(range(len(self.bparams))):
             self.backward(_, i)
 
-    def copy(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
+    def _copy(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
         if grads_passed:
             grads_cat /= self.num_actors
         self.bparams[idx].copy(grads_cat, grads_passed)
 
     def copy_aio(self, _) -> None:
         for i in reversed(range(len(self.bparams))):
-            self.copy(_, False, i)
+            self._copy(_, False, i)
 
-    def step(self, idx: int) -> None:
+    def _step(self, idx: int) -> None:
         self.bparams[idx].step()
 
     def step_aio(self, _) -> None:
@@ -295,11 +347,11 @@ class _Actor_V4:
         # self.optimizer.step()
         # self.optimizer.zero_grad()
         for i in reversed(range(len(self.bparams))):
-            self.step(i)
+            self._step(i)
 
     def update(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
-        self.copy(grads_cat, grads_passed, idx)
-        self.bparams[idx].step()
+        self._copy(grads_cat, grads_passed, idx)
+        self._step(idx)
 
     def update_aio(self, _) -> None:
         for i in reversed(range(len(self.bparams))):
@@ -313,8 +365,8 @@ class _Actor_V2:
         self.model_args = model_args
         self.model = TransformerBP(model_args).to("cuda")
         self.bparams = self.model.bparams
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
         self.criterion = torch.nn.CrossEntropyLoss()
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
 
     def init_training(self) -> None:
         batch_size = 1
