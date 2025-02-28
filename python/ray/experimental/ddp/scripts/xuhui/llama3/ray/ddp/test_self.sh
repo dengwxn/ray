@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/xuhui/llama3/ray/no_overlap/test_self
+output_path=results/xuhui/llama3/ray/ddp/test_self
 mkdir -p $output_path
 
 num_partitions=18
@@ -36,7 +36,7 @@ latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
-python -m ray.experimental.ddp.src.main.llama3.ray.no_overlap \
+python -m ray.experimental.ddp.src.main.llama3.ray.ddp \
 	--num-partitions $num_partitions \
 	--num-actors $num_actors \
 	--num-iters $num_iters \
