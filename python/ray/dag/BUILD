@@ -134,7 +134,7 @@ py_test_module_list(
 
 py_test(
     name = "test_torch_tensor_dag_gpu",
-    size = "large",
+    size = "enormous",
     srcs = [
         "tests/experimental/test_torch_tensor_dag.py",
     ],
@@ -148,4 +148,16 @@ py_test(
         "team:core",
     ],
     deps = ["//:ray_lib"],
+)
+
+py_test(
+    name = "test_cpu_communicator_dag",
+    size = "medium",
+    srcs = dag_tests_srcs,
+    tags = [
+        "exclusive",
+        "ray_dag_tests",
+        "team:core",
+    ],
+    deps = [":dag_lib"],
 )

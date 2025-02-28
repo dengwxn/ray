@@ -1,6 +1,6 @@
 import logging
 from types import ModuleType
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
 import ray
 from ray.exceptions import RayChannelError
@@ -254,11 +254,12 @@ class _NcclGroup(Communicator):
             raise RayChannelError("NCCL group has been destroyed.")
         return buf
 
-    def allreduce(
+    def _exec_collective(
         self,
         send_buf: "torch.Tensor",
         recv_buf: "torch.Tensor",
-        op: ReduceOp = ReduceOp.SUM,
+        operation: "Callable[..., None]",
+        *operation_args,
     ):
         import torch
 
@@ -274,14 +275,7 @@ class _NcclGroup(Communicator):
         # Record the buffer is used by the collective stream.
         send_buf.record_stream(torch.cuda.ExternalStream(self._coll_stream.ptr))
 
-        self._comm.allReduce(
-            self.nccl_util.get_tensor_ptr(send_buf),
-            self.nccl_util.get_tensor_ptr(recv_buf),
-            send_buf.numel(),
-            self.nccl_util.get_nccl_tensor_dtype(send_buf),
-            op.value,
-            self._coll_stream.ptr,
-        )
+        operation(*operation_args)
 
         # Buffer values are undefined if NCCL ops are aborted. Therefore, we
         # need to synchronize here and check that the channel is still open to
@@ -296,6 +290,67 @@ class _NcclGroup(Communicator):
                 "There may be a dtype mismatch between input tensors from "
                 "different ranks."
             )
+
+    def allgather(
+        self,
+        send_buf: "torch.Tensor",
+        recv_buf: "torch.Tensor",
+    ):
+        operation_args = [
+            self.nccl_util.get_tensor_ptr(send_buf),
+            self.nccl_util.get_tensor_ptr(recv_buf),
+            send_buf.numel(),
+            self.nccl_util.get_nccl_tensor_dtype(send_buf),
+            self._coll_stream.ptr,
+        ]
+        self._exec_collective(
+            send_buf,
+            recv_buf,
+            self._comm.allGather,
+            *operation_args,
+        )
+
+    def allreduce(
+        self,
+        send_buf: "torch.Tensor",
+        recv_buf: "torch.Tensor",
+        op: ReduceOp = ReduceOp.SUM,
+    ):
+        operation_args = [
+            self.nccl_util.get_tensor_ptr(send_buf),
+            self.nccl_util.get_tensor_ptr(recv_buf),
+            send_buf.numel(),
+            self.nccl_util.get_nccl_tensor_dtype(send_buf),
+            op.value,
+            self._coll_stream.ptr,
+        ]
+        self._exec_collective(
+            send_buf,
+            recv_buf,
+            self._comm.allReduce,
+            *operation_args,
+        )
+
+    def reducescatter(
+        self,
+        send_buf: "torch.Tensor",
+        recv_buf: "torch.Tensor",
+        op: ReduceOp = ReduceOp.SUM,
+    ):
+        operation_args = [
+            self.nccl_util.get_tensor_ptr(send_buf),
+            self.nccl_util.get_tensor_ptr(recv_buf),
+            recv_buf.numel(),
+            self.nccl_util.get_nccl_tensor_dtype(send_buf),
+            op.value,
+            self._coll_stream.ptr,
+        ]
+        self._exec_collective(
+            send_buf,
+            recv_buf,
+            self._comm.reduceScatter,
+            *operation_args,
+        )
 
     @property
     def recv_stream(self) -> Optional["cp.cuda.ExternalStream"]:
