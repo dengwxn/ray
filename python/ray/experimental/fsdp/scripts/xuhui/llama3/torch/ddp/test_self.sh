@@ -1,7 +1,7 @@
 #!/bin/bash
 
-if [[ "$(pwd)" != */python/ray/experimental/ddp ]]; then
-	echo "Please run in the python/ray/experimental/ddp directory"
+if [[ "$(pwd)" != */python/ray/experimental/fsdp ]]; then
+	echo "Please run in the python/ray/experimental/fsdp directory"
 	exit 1
 fi
 
@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/xuhui/llama3/torch/ddp
+output_path=results/xuhui/llama3/torch/fsdp
 mkdir -p $output_path
 # rm -f ${output_path}/*.csv
 
@@ -36,7 +36,7 @@ latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
-python -m ray.experimental.ddp.src.main.llama3.torch.ddp \
+python -m ray.experimental.fsdp.src.main.llama3.torch.fsdp \
 	--num-actors $num_actors \
 	--num-iters $num_iters \
 	--output-path $output_path \

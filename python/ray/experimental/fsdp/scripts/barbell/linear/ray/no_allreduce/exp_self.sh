@@ -1,7 +1,7 @@
 #!/bin/bash
 
-if [[ "$(pwd)" != */python/ray/experimental/ddp ]]; then
-	echo "Please run in the python/ray/experimental/ddp directory"
+if [[ "$(pwd)" != */python/ray/experimental/fsdp ]]; then
+	echo "Please run in the python/ray/experimental/fsdp directory"
 	exit 1
 fi
 
@@ -53,7 +53,7 @@ for i in "${!layer_size_values[@]}"; do
 	log_file=${output_path}/${latency_prefix}.log
 
 	echo "Running layer_size $layer_size, num_layers $num_layers..."
-	python -m ray.experimental.ddp.src.main.linear.ray.no_allreduce \
+	python -m ray.experimental.fsdp.src.main.linear.ray.no_allreduce \
 		--layer-size $layer_size \
 		--num-layers $num_layers \
 		--num-partitions $num_partitions \

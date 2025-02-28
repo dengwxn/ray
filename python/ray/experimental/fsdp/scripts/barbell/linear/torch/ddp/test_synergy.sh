@@ -1,7 +1,7 @@
 #!/bin/bash
 
-if [[ "$(pwd)" != */python/ray/experimental/ddp ]]; then
-	echo "Please run in the python/ray/experimental/ddp directory"
+if [[ "$(pwd)" != */python/ray/experimental/fsdp ]]; then
+	echo "Please run in the python/ray/experimental/fsdp directory"
 	exit 1
 fi
 
@@ -25,11 +25,11 @@ export TZ="America/Los_Angeles"
 timestamp=$(date '+%Y%m%d_%H%M%S')
 
 modes=(
-	torch.ddp
+	torch.fsdp
 	torch.bp # [TODO]
 )
 
-output_path=results/barbell/linear/torch/ddp/test_synergy
+output_path=results/barbell/linear/torch/fsdp/test_synergy
 mkdir -p $output_path
 rm -f $output_path/*.csv
 
@@ -44,13 +44,13 @@ for mode in ${modes[@]}; do
 	model_prefix=$output_path/${timestamp}_${mode}_model
 	log_file=$output_path/${timestamp}_${mode}.log
 
-	if [ "$mode" != "torch_ddp" ]; then
+	if [ "$mode" != "torch_fsdp" ]; then
 		num_partitions=4
 	else
 		num_partitions=1
 	fi
 
-	python -m ray.experimental.ddp.src.main.${mode} \
+	python -m ray.experimental.fsdp.src.main.${mode} \
 		--layer-size $layer_size \
 		--num-layers $num_layers \
 		--num-partitions $num_partitions \

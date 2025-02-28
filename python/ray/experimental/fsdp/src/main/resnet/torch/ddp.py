@@ -20,7 +20,7 @@ logging.basicConfig(
 logger.info("Welcome to Downton Abbey!")
 
 
-def run_torch_ddp(
+def run_torch_fsdp(
     args: Dict[str, Any]
 ) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
     num_gpus = torch.cuda.device_count()
@@ -33,7 +33,7 @@ def run_torch_ddp(
         ranks_to_elapses = manager.dict()
 
         mp.spawn(
-            spwan_torch_ddp,
+            spwan_torch_fsdp,
             args=(world_size, ranks_to_elapses, args),
             nprocs=world_size,
             join=True,
@@ -59,7 +59,7 @@ def run_torch_ddp(
     )
 
 
-def spwan_torch_ddp(
+def spwan_torch_fsdp(
     rank: int,
     world_size: int,
     ranks_to_elapses: Dict[int, int],
@@ -82,7 +82,7 @@ def spwan_torch_ddp(
         optimizer = torch.optim.SGD(model.parameters(), lr=0.001)
 
         torch.manual_seed(998244353)
-        ddp_model = DDP(model, device_ids=[rank])
+        fsdp_model = DDP(model, device_ids=[rank])
 
         elapses = defaultdict(list)
 
@@ -116,7 +116,7 @@ def spwan_torch_ddp(
             start = get_timing_event()
 
             forward_start = get_timing_event()
-            pred = ddp_model(x)
+            pred = fsdp_model(x)
             forward_end = get_timing_event()
 
             loss_compute_start = get_timing_event()
@@ -163,4 +163,4 @@ def spwan_torch_ddp(
 
 if __name__ == "__main__":
     args = parse_args()
-    run_torch_ddp(args)
+    run_torch_fsdp(args)

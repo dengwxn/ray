@@ -1,7 +1,7 @@
 #!/bin/bash
 
-if [[ "$(pwd)" != */python/ray/experimental/ddp ]]; then
-	echo "Please run in the python/ray/experimental/ddp directory"
+if [[ "$(pwd)" != */python/ray/experimental/fsdp ]]; then
+	echo "Please run in the python/ray/experimental/fsdp directory"
 	exit 1
 fi
 
@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 modes=(
 	ray.no_overlap
-	ray.ddp
+	ray.fsdp
 )
 
 output_path=results/barbell/linear/ray/no_overlap/test_synergy
@@ -44,13 +44,13 @@ for mode in ${modes[@]}; do
 	model_prefix=$output_path/${timestamp}_${mode}_model
 	log_file=$output_path/${timestamp}_${mode}.log
 
-	if [ "$mode" != "torch.ddp" ]; then
+	if [ "$mode" != "torch.fsdp" ]; then
 		num_partitions=4
 	else
 		num_partitions=1
 	fi
 
-	python -m ray.experimental.ddp.src.main.linear.${mode} \
+	python -m ray.experimental.fsdp.src.main.linear.${mode} \
 		--layer-size $layer_size \
 		--num-layers $num_layers \
 		--num-partitions $num_partitions \

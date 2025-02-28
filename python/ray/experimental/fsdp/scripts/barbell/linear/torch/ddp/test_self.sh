@@ -1,7 +1,7 @@
 #!/bin/bash
 
-if [[ "$(pwd)" != */python/ray/experimental/ddp ]]; then
-	echo "Please run in the python/ray/experimental/ddp directory"
+if [[ "$(pwd)" != */python/ray/experimental/fsdp ]]; then
+	echo "Please run in the python/ray/experimental/fsdp directory"
 	exit 1
 fi
 
@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/barbell/linear/torch/ddp/test_self
+output_path=results/barbell/linear/torch/fsdp/test_self
 mkdir -p $output_path
 
 layer_size=1024
@@ -37,7 +37,7 @@ latency_prefix=${timestamp}_ls${layer_size}_nl${num_layers}
 model_prefix=${output_path}/${timestamp}_model
 log_file=${output_path}/${timestamp}.log
 
-python -m ray.experimental.ddp.src.main.linear.torch.ddp \
+python -m ray.experimental.fsdp.src.main.linear.torch.fsdp \
 	--layer-size $layer_size \
 	--num-layers $num_layers \
 	--num-actors $num_actors \

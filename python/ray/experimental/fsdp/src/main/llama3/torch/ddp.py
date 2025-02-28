@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 logger.info("Welcome to Downton Abbey!")
 
 
-def run_torch_ddp(
+def run_torch_fsdp(
     args: Dict[str, Any]
 ) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
     num_gpus = torch.cuda.device_count()
@@ -38,7 +38,7 @@ def run_torch_ddp(
         ranks_to_elapses = manager.dict()
 
         mp.spawn(
-            spwan_torch_ddp,
+            spwan_torch_fsdp,
             args=(world_size, ranks_to_elapses, args),
             nprocs=world_size,
             join=True,
@@ -64,7 +64,7 @@ def run_torch_ddp(
     )
 
 
-def spwan_torch_ddp(
+def spwan_torch_fsdp(
     rank: int,
     world_size: int,
     ranks_to_elapses: Dict[int, int],
@@ -87,7 +87,7 @@ def spwan_torch_ddp(
         size_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
         logger.warning(f"Model size: {size_bytes / 1024 / 1024} MiB")
 
-        ddp_model = DDP(model, device_ids=[rank])
+        fsdp_model = DDP(model, device_ids=[rank])
 
         batch_size = 1
         seq_len = 1024
@@ -118,7 +118,7 @@ def spwan_torch_ddp(
             start = get_start_time()
 
             forward_start = get_start_time()
-            pred = ddp_model(input_ids)
+            pred = fsdp_model(input_ids)
             forward_end = get_end_time()
 
             loss_compute_start = get_start_time()
@@ -161,4 +161,4 @@ def spwan_torch_ddp(
 
 if __name__ == "__main__":
     args = parse_args()
-    run_torch_ddp(args)
+    run_torch_fsdp(args)
