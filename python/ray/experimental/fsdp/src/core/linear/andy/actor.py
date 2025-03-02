@@ -39,7 +39,7 @@ class LinearActor:
         self.elapses: Dict[str, List] = defaultdict(list)
 
     def init_and_shard_model(self) -> List[List[Shard]]:
-        sharding_factor = self.num_actors
+        num_shards = self.num_actors
         fsdp_units = [
             BucketParameter(
                 layer_size=self.layer_size,
@@ -48,9 +48,9 @@ class LinearActor:
             )
             for _ in range(self.num_units)
         ]
-        shards_across_units = [[] for _ in range(sharding_factor)]
+        shards_across_units = [[] for _ in range(num_shards)]
         for unit in fsdp_units:
-            single_unit_shards = shard_model(unit, sharding_factor)
+            single_unit_shards = shard_model(unit, num_shards)
             for rank, shard in enumerate(single_unit_shards):
                 shards_across_units[rank].append(shard)
         return shards_across_units
@@ -145,7 +145,7 @@ class LinearActor:
     def fetch_weights(self) -> List[torch.Tensor]:
         weights = []
         for shard in self.shards:
-            weights.extend(shard.unwrap())
+            weights.extend(shard.get_sharded_param())
         return weights
 
     def fetch_traces(self) -> Dict[str, List[float]]:
@@ -161,18 +161,18 @@ class LinearActor:
 
     def get_shard(self, unit: int, _) -> torch.Tensor:
         assert self.shards
-        return self.shards[unit].unwrap()
+        return self.shards[unit].get_sharded_param()
 
     def forward(
-        self, unit: int, unsharded_param: torch.Tensor, x: torch.Tensor
+        self, unit: int, flat_param: torch.Tensor, input: torch.Tensor
     ) -> torch.Tensor:
         shard = self.shards[unit]
-        shard.unshard(unsharded_param)
+        shard.set_flat_param(flat_param)
         if unit == 0:
             self.update_tracing("start")
         if self.tracing:
             self.update_tracing("forward_starts")
-        pred: torch.Tensor = shard(x)
+        pred: torch.Tensor = shard(input)
         if unit == self.num_units - 1:
             next_layer_input = pred
         else:
@@ -184,8 +184,8 @@ class LinearActor:
             shard.free_peer_shards()
         return next_layer_input
 
-    def compute_loss(self, pred: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        return self.criterion(pred, y)
+    def compute_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        return self.criterion(pred, target)
 
     def backward_loss(self, loss: torch.Tensor) -> torch.Tensor:
         loss.backward()
@@ -194,13 +194,13 @@ class LinearActor:
         shard.free_peer_shards()
         return flat_grad
 
-    def backward(self, unit: int, unsharded_param: torch.Tensor) -> torch.Tensor:
-        shard = self.shards[unit]
-        shard.unshard(unsharded_param)
+    def backward(self, idx: int, flat_param: torch.Tensor) -> torch.Tensor:
+        shard = self.shards[idx]
+        shard.set_flat_param(flat_param)
         if self.tracing:
             self.update_tracing("backward_starts")
-        pred, next_layer_input = self.intermediates[unit]
-        grad = next_layer_input.grad
+        pred, pred_as_input = self.intermediates[idx]
+        grad = pred_as_input.grad
         pred.backward(gradient=grad)
         if self.tracing:
             self.update_tracing("backward_ends")
@@ -208,13 +208,13 @@ class LinearActor:
         shard.free_peer_shards()
         return flat_grad
 
-    def update(self, unit: int, reduced_grad: torch.Tensor) -> None:
+    def update(self, idx: int, grad: torch.Tensor) -> None:
         if self.tracing:
             self.update_tracing("update_starts")
-        reduced_grad /= self.num_actors
-        shard = self.shards[unit]
-        shard.update(reduced_grad)
+        grad /= self.num_actors
+        shard = self.shards[idx]
+        shard.update(grad)
         if self.tracing:
             self.update_tracing("update_ends")
-        if unit == 0:
+        if idx == 0:
             self.update_tracing("end")

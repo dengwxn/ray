@@ -90,39 +90,38 @@ class BucketParameter(torch.nn.Module):
 class Shard(torch.nn.Module):
     def __init__(
         self,
-        module: torch.nn.Module,
-        shard: torch.Tensor,
-        param_metadata: List[Tuple[torch.Size, int]],
+        model: torch.nn.Module,
+        sharded_param: torch.Tensor,
+        model_metadata: List[Tuple[torch.Size, int]],
     ) -> None:
         super().__init__()
 
-        self.shard = torch.nn.Parameter(shard, requires_grad=True)
-        self.shard_size = len(shard)
-        self.sharded_module = module
-        self.param_metadata = param_metadata
-        self.optimizer = torch.optim.Adam([self.shard], lr=1e-3)
+        self.model = model
+        self.sharded_param = torch.nn.Parameter(sharded_param, requires_grad=True)
+        self.model_metadata = model_metadata
+        self.optimizer = torch.optim.SGD([self.sharded_param], lr=1e-3)
 
-    def unwrap(self) -> torch.nn.Parameter:
-        return self.shard
+    def get_sharded_param(self) -> torch.nn.Parameter:
+        return self.sharded_param
 
-    def unshard(self, flat_param: torch.Tensor) -> None:
-        unshard_model(self.sharded_module, flat_param, self.param_metadata)
+    def set_flat_param(self, flat_param: torch.Tensor) -> None:
+        _set_flat_param(self.model, flat_param, self.model_metadata)
 
-    def free_peer_shards(self) -> None:
-        _free_model(self.sharded_module)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.sharded_module(x)
-
-    def flat_grad(self) -> torch.Tensor:
+    def get_flat_grad(self) -> torch.Tensor:
         flat_grad = parameters_to_vector(
-            [param.grad for param in self.sharded_module.parameters()]
+            [param.grad for param in self.model.parameters()]
         )
         return flat_grad
 
+    def free_peer_shards(self) -> None:
+        _free_peer_shards(self.model)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.model(x)
+
     def update(self, reduced_grad: torch.Tensor) -> None:
         self.optimizer.zero_grad()
-        self.shard.grad = reduced_grad
+        self.sharded_param.grad = reduced_grad
         self.optimizer.step()
 
 
@@ -140,16 +139,31 @@ def shard_model(model: torch.nn.Module, sharding_factor: int) -> List[Shard]:
         flat_param[shard_size * i : shard_size * (i + 1)]
         for i in range(sharding_factor)
     ]
-    param_metadata = _model_param_metadata(model)
-    model = _free_model(model)
+    param_metadata = _get_param_metadata(model)
+    model = _free_peer_shards(model)
     return [Shard(model, shard, param_metadata) for shard in shards]
 
 
-def _model_param_metadata(model: torch.nn.Module) -> List[Tuple[torch.Size, int]]:
+def _get_param_metadata(model: torch.nn.Module) -> List[Tuple[torch.Size, int]]:
     return [(param.shape, param.numel()) for param in model.parameters()]
 
 
-def _free_model(model: torch.nn.Module) -> torch.nn.Module:
+def _set_flat_param(
+    model: torch.nn.Module,
+    flat_param: torch.Tensor,
+    param_metedata: List[Tuple[torch.Size, int]],
+) -> torch.nn.Module:
+    start_idx = 0
+    with torch.no_grad():
+        for param, metadata in zip(model.parameters(), param_metedata):
+            shape, numel = metadata
+            end_idx = start_idx + numel
+            param.data = flat_param[start_idx:end_idx].reshape(shape)
+            start_idx = end_idx
+    return model
+
+
+def _free_peer_shards(model: torch.nn.Module) -> torch.nn.Module:
     def get_first_param():
         for param in model.parameters():
             return param
@@ -162,19 +176,4 @@ def _free_model(model: torch.nn.Module) -> torch.nn.Module:
     for param in model.parameters():
         param.data = empty_tensor
         param.grad = None
-    return model
-
-
-def unshard_model(
-    model: torch.nn.Module,
-    flat_param: torch.Tensor,
-    param_metedata: List[Tuple[torch.Size, int]],
-) -> torch.nn.Module:
-    start_idx = 0
-    with torch.no_grad():
-        for param, metadata in zip(model.parameters(), param_metedata):
-            shape, numel = metadata
-            end_idx = start_idx + numel
-            param.data = flat_param[start_idx:end_idx].reshape(shape)
-            start_idx = end_idx
     return model

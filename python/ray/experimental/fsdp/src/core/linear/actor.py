@@ -1,12 +1,12 @@
 import logging
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
 import ray
 from ..common import ms_to_micros
-from .model import BucketParameter
+from .model import BucketParameter, Shard, shard_model
 
 
 @ray.remote
@@ -27,44 +27,47 @@ class LinearActor:
         self.device = device
         self.tracing = tracing
 
-        self.models = [
-            BucketParameter(
-                layer_size=layer_size,
-                num_layers=num_layers // num_partitions,
-                device=device,
-            )
-            for _ in range(num_partitions)
-        ]
-        logger = logging.getLogger(__name__)
-        for model in self.models:
-            size_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
-            logger.warning(f"Model size: {size_bytes / 1024 / 1024} MB")
-        self.intermediates: List[torch.Tensor, torch.Tensor] = []
+        self.shards: List[Shard] = []
+        self.input: Optional[torch.Tensor] = None
+        self.target: Optional[torch.Tensor] = None
+        self.intermediates: List[Tuple[torch.Tensor, torch.Tensor]] = []
+        self.criterion = torch.nn.MSELoss()
 
         self.it = 0
         self.events: Dict[str, Any] = {}
         self.elapses: Dict[str, List] = defaultdict(list)
 
-    def init_weights(self) -> None:
-        torch.manual_seed(998244353)
-        for model in self.models:
-            model.init_weights()
-            model = model.to(model.device)
+    def init_and_shard_model(self) -> List[List[Shard]]:
+        num_shards = self.num_actors
+        fsdp_units = [
+            BucketParameter(
+                layer_size=self.layer_size,
+                num_layers=self.num_layers // self.num_partitions,
+                device=self.device,
+            )
+            for _ in range(self.num_partitions)
+        ]
+        actor_to_shards = [[] for _ in range(self.num_partitions)]
+        for unit in fsdp_units:
+            shards = shard_model(unit, num_shards)
+            for rank, shard in enumerate(shards):
+                actor_to_shards[rank].append(shard)
+        return actor_to_shards
+
+    def set_shards(self, shards: List[Shard]) -> None:
+        self.shards = [shard.to(self.device) for shard in shards]
 
     def init_training(self) -> None:
-        self.models[0].x = torch.randn(
-            1,
-            self.models[0].layer_size,
+        self.input = torch.randn(
+            (1, self.layer_size),
+            device=self.device,
             requires_grad=True,
-        ).to(
-            self.models[0].device,
         )
-        self.models[-1].y = torch.randn(
-            1,
-            self.models[-1].layer_size,
-        ).to(
-            self.models[-1].device,
+        self.target = torch.randn(
+            (1, self.layer_size),
+            device=self.device,
         )
+        self.intermediates = []
 
     def update_tracing(self, key: str) -> None:
         event = torch.cuda.Event(enable_timing=True)
@@ -141,58 +144,76 @@ class LinearActor:
 
     def fetch_weights(self) -> List[torch.Tensor]:
         weights = []
-        for model in self.models:
-            weights.extend(model.fetch_weights())
+        for shard in self.shards:
+            weights.extend(shard.sharded_param)
         return weights
 
     def fetch_traces(self) -> Dict[str, List[float]]:
         return self.elapses
 
-    def forward(self, _) -> None:
-        self.update_tracing("start")
+    def get_input(self, _) -> torch.Tensor:
+        assert self.input is not None
+        return self.input
+
+    def get_target(self, _) -> torch.Tensor:
+        assert self.target is not None
+        return self.target
+
+    def get_shard(self, idx: int, _) -> torch.Tensor:
+        assert self.shards
+        return self.shards[idx].sharded_param
+
+    def forward(self, flat_param: torch.Tensor, input: torch.Tensor, idx: int) -> None:
+        if idx == 0:
+            self.update_tracing("start")
         if self.tracing:
             self.update_tracing("forward_starts")
-        self.intermediates = []
-        input = self.models[0].x
-        for i, model in enumerate(self.models):
-            pred = model.forward(input)
-            if i < len(self.models) - 1:
-                input = pred.detach().requires_grad_(True)
-            else:
-                input = pred
-            self.intermediates.append((pred, input))
+        shard = self.shards[idx]
+        shard.set_flat_param(flat_param)
+        pred = shard.forward(input)
+        if idx < len(self.models) - 1:
+            pred_as_input = pred.detach().requires_grad_(True)
+        else:
+            pred_as_input = pred
+        self.intermediates.append((pred, pred_as_input))
+        if idx < len(self.models) - 1:
+            shard.free_peer_shards()
         if self.tracing:
             self.update_tracing("forward_ends")
+        return pred_as_input
 
-    def backward(self, _, idx: int) -> torch.Tensor:
+    def compute_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        # [TODO] update_tracing.
+        return self.criterion(pred, target)
+
+    def backward_loss(self, loss: torch.Tensor) -> None:
+        # [TODO] update_tracing.
+        loss.backward()
+        shard = self.shards[-1]
+        flat_grad = shard.get_flat_grad()
+        shard.free_peer_shards()
+        return flat_grad
+
+    def backward(self, flat_param: torch.Tensor, idx: int) -> torch.Tensor:
         if self.tracing:
             self.update_tracing("backward_starts")
-        if idx == len(self.models) - 1:
-            loss = self.models[idx].criterion(
-                self.intermediates[idx][0],
-                self.models[idx].y,
-            )
-            pred = None
-            grad = None
-        else:
-            loss = None
-            pred, input = self.intermediates[idx]
-            grad = input.grad
-        grads = self.models[idx].backward(
-            loss=loss,
-            pred=pred,
-            grad=grad,
-        )
+        shard = self.shards[idx]
+        shard.set_flat_param(flat_param)
+        pred, pred_as_input = self.intermediates[idx]
+        grad = pred_as_input.grad
+        pred.backward(gradient=grad)
+        flat_grad = shard.get_flat_grad()
+        shard.free_peer_shards()
         if self.tracing:
             self.update_tracing("backward_ends")
-        return grads
+        return flat_grad
 
-    def update(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
+    def update(self, grad: torch.Tensor, grad_passed: bool, idx: int) -> None:
         if self.tracing:
             self.update_tracing("update_starts")
-        if grads_passed:
-            grads_cat /= self.num_actors
-        self.models[idx].update(grads_cat, grads_passed)
+        if grad_passed:
+            grad /= self.num_actors
+        self.shards[idx].update(grad, grad_passed)
         if self.tracing:
             self.update_tracing("update_ends")
         if idx == 0:
