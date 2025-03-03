@@ -15,14 +15,14 @@ class LinearActor:
         self,
         layer_size: int,
         num_layers: int,
-        num_partitions: int,
+        num_units: int,
         num_actors: int,
         device: torch.device,
         tracing: bool,
     ):
         self.layer_size = layer_size
         self.num_layers = num_layers
-        self.num_partitions = num_partitions
+        self.num_units = num_units
         self.num_actors = num_actors
         self.device = device
         self.tracing = tracing
@@ -42,12 +42,12 @@ class LinearActor:
         fsdp_units = [
             BucketParameter(
                 layer_size=self.layer_size,
-                num_layers=self.num_layers // self.num_partitions,
+                num_layers=self.num_layers // self.num_units,
                 device=self.device,
             )
-            for _ in range(self.num_partitions)
+            for _ in range(self.num_units)
         ]
-        actor_to_shards = [[] for _ in range(self.num_partitions)]
+        actor_to_shards = [[] for _ in range(self.num_units)]
         for unit in fsdp_units:
             shards = shard_model(unit, num_shards)
             for rank, shard in enumerate(shards):
@@ -79,6 +79,7 @@ class LinearActor:
             self.events[key].append(event)
 
     def init_tracing(self) -> None:
+        # [TODO] update_tracing.
         self.events: Dict[str, torch.cuda.Event] = {
             "forward_starts": [],
             "forward_ends": [],
@@ -124,7 +125,7 @@ class LinearActor:
                     self.events["backward_starts"][i].elapsed_time(
                         self.events["backward_ends"][i]
                     )
-                    for i in range(self.num_partitions)
+                    for i in range(self.num_units)
                 ]
             )
             bw_update = sum(
@@ -132,7 +133,7 @@ class LinearActor:
                     self.events["update_starts"][i].elapsed_time(
                         self.events["update_ends"][i]
                     )
-                    for i in range(self.num_partitions)
+                    for i in range(self.num_units)
                 ]
             )
             bw_others = bw_total - bw_backward - bw_update
@@ -143,9 +144,7 @@ class LinearActor:
         logger.warning("")
 
     def fetch_weights(self) -> List[torch.Tensor]:
-        weights = []
-        for shard in self.shards:
-            weights.extend(shard.sharded_param)
+        weights = [shard.sharded_param for shard in self.shards]
         return weights
 
     def fetch_traces(self) -> Dict[str, List[float]]:
@@ -201,7 +200,7 @@ class LinearActor:
         shard.set_flat_param(flat_param)
         pred, pred_as_input = self.intermediates[idx]
         grad = pred_as_input.grad
-        pred.backward(gradient=grad)
+        pred.backward(grad)
         flat_grad = shard.get_flat_grad()
         shard.free_peer_shards()
         if self.tracing:

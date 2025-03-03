@@ -21,7 +21,7 @@ logger.info("Welcome to Downton Abbey!")
 def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
     layer_size = args["layer_size"]
     num_layers = args["num_layers"]
-    num_partitions = args["num_partitions"]
+    num_units = args["num_partitions"]
     num_actors = args["num_actors"]
     device = "cuda:0"
     tracing = args["tracing"]
@@ -31,7 +31,7 @@ def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
         actor_cls.remote(
             layer_size=layer_size,
             num_layers=num_layers,
-            num_partitions=num_partitions,
+            num_units=num_units,
             num_actors=num_actors,
             device=device,
             tracing=tracing,
@@ -44,7 +44,7 @@ def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
 
 def train(
     actors: List[LinearActor],
-    num_partitions: int,
+    num_units: int,
     num_iters: int,
     output_path: str,
     latency_prefix: str,
@@ -54,7 +54,7 @@ def train(
 ) -> None:
     with InputNode() as inp:
         inputs = [actor.get_input.bind(inp) for actor in actors]
-        for idx in range(num_partitions):
+        for idx in range(num_units):
             shards = [actor.get_shard.bind(idx, inp) for actor in actors]
             params = allgather.bind(shards)
             inputs = [
@@ -71,11 +71,11 @@ def train(
         grads = [actor.backward_loss.bind(loss) for actor, loss in zip(actors, losses)]
         reduced_grads = reducescatter.bind(grads)
         updates = [
-            actor.update.bind(num_partitions - 1, grad)
+            actor.update.bind(num_units - 1, grad)
             for actor, grad in zip(actors, reduced_grads)
         ]
 
-        for idx in reversed(range(num_partitions - 1)):
+        for idx in reversed(range(num_units - 1)):
             shards = [actor.get_shard.bind(idx, inp) for actor in actors]
             params = allgather.bind(shards)
             grads = [
