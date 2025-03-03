@@ -79,21 +79,23 @@ class LinearActor:
     def update_tracing(self, key: str) -> None:
         event = torch.cuda.Event(enable_timing=True)
         event.record()
-        if key not in self.events:
-            self.events[key] = event
-        else:
-            assert isinstance(self.events[key], list)
-            self.events[key].append(event)
+        assert key in self.events
+        self.events[key].append(event)
 
     def init_tracing(self) -> None:
-        # [TODO] update_tracing.
         self.events: Dict[str, torch.cuda.Event] = {
-            "forward_starts": [],
-            "forward_ends": [],
-            "backward_starts": [],
-            "backward_ends": [],
-            "update_starts": [],
-            "update_ends": [],
+            "start": [],
+            "end": [],
+            "fw.starts": [],
+            "fw.ends": [],
+            "comp.loss.starts": [],
+            "comp.loss.ends": [],
+            "bw.loss.starts": [],
+            "bw.loss.ends": [],
+            "bw.grad.starts": [],
+            "bw.grad.ends": [],
+            "bw.upd.starts": [],
+            "bw.upd.ends": [],
         }
 
     def finish_tracing(self) -> None:
@@ -104,7 +106,9 @@ class LinearActor:
         if self.it <= 1:
             return
 
-        total = self.events["start"].elapsed_time(self.events["end"])
+        assert len(self.events["start"]) == 1
+        assert len(self.events["end"]) == 1
+        total = self.events["start"][0].elapsed_time(self.events["end"][0])
 
         def log(key: str, elapse_ms: float):
             elapse_us = ms_to_micros(elapse_ms)
@@ -120,34 +124,46 @@ class LinearActor:
         if self.tracing:
             log(
                 "fw.total",
-                self.events["forward_starts"][0].elapsed_time(
-                    self.events["forward_ends"][-1]
+                self.events["fw.starts"][0].elapsed_time(self.events["fw.ends"][-1]),
+            )
+            assert len(self.events["comp.loss.starts"]) == 1
+            assert len(self.events["comp.loss.ends"]) == 1
+            log(
+                "comp.loss.total",
+                self.events["comp.loss.starts"][0].elapsed_time(
+                    self.events["comp.loss.ends"][0]
                 ),
             )
-            bw_total = self.events["backward_starts"][0].elapsed_time(
-                self.events["update_ends"][-1]
+            bw_total = self.events["bw.loss.starts"][0].elapsed_time(
+                self.events["bw.upd.ends"][-1]
             )
-            bw_backward = sum(
+            assert len(self.events["bw.loss.starts"]) == 1
+            assert len(self.events["bw.loss.ends"]) == 1
+            bw_loss = self.events["bw.loss.starts"][0].elapsed_time(
+                self.events["bw.loss.ends"][0]
+            )
+            bw_grad = sum(
                 [
-                    bw_start.elapsed_time(bw_end)
-                    for bw_start, bw_end in zip(
-                        self.events["backward_starts"], self.events["backward_ends"]
+                    bw_grad_start.elapsed_time(bw_grad_end)
+                    for bw_grad_start, bw_grad_end in zip(
+                        self.events["bw.grad.starts"], self.events["bw.grad.ends"]
                     )
                 ]
             )
-            bw_update = sum(
+            bw_upd = sum(
                 [
-                    upd_start.elapsed_time(upd_end)
-                    for upd_start, upd_end in zip(
-                        self.events["update_starts"], self.events["update_ends"]
+                    bw_upd_start.elapsed_time(bw_upd_end)
+                    for bw_upd_start, bw_upd_end in zip(
+                        self.events["bw.upd.starts"], self.events["bw.upd.ends"]
                     )
                 ]
             )
-            bw_others = bw_total - bw_backward - bw_update
+            bw_others = bw_total - bw_grad - bw_upd
             log("bw.total", bw_total)
-            log("bw.backward", bw_backward)
+            log("bw.loss", bw_loss)
+            log("bw.grad", bw_grad)
             log("bw.others", bw_others)
-            log("bw.update", bw_update)
+            log("bw.upd", bw_upd)
         logger.warning("")
 
     def fetch_weights(self) -> List[torch.Tensor]:
@@ -173,7 +189,7 @@ class LinearActor:
         if idx == 0:
             self.update_tracing("start")
         if self.tracing:
-            self.update_tracing("forward_starts")
+            self.update_tracing("fw.starts")
         shard = self.shards[idx]
         shard.set_flat_param(flat_param)
         pred = shard.forward(input)
@@ -185,24 +201,31 @@ class LinearActor:
         if idx < len(self.shards) - 1:
             shard.free_peer_shards()
         if self.tracing:
-            self.update_tracing("forward_ends")
+            self.update_tracing("fw.ends")
         return pred_as_input
 
     def compute_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        # [TODO] update_tracing.
-        return self.criterion(pred, target)
+        if self.tracing:
+            self.update_tracing("comp.loss.starts")
+        loss = self.criterion(pred, target)
+        if self.tracing:
+            self.update_tracing("comp.loss.ends")
+        return loss
 
     def backward_loss(self, loss: torch.Tensor) -> None:
-        # [TODO] update_tracing.
+        if self.tracing:
+            self.update_tracing("bw.loss.starts")
         loss.backward()
         shard = self.shards[-1]
         flat_grad = shard.get_flat_grad()
         shard.free_peer_shards()
+        if self.tracing:
+            self.update_tracing("bw.loss.ends")
         return flat_grad
 
     def backward(self, idx: int, flat_param: torch.Tensor) -> torch.Tensor:
         if self.tracing:
-            self.update_tracing("backward_starts")
+            self.update_tracing("bw.grad.starts")
         shard = self.shards[idx]
         shard.set_flat_param(flat_param)
         pred, pred_as_input = self.intermediates[idx]
@@ -211,16 +234,16 @@ class LinearActor:
         flat_grad = shard.get_flat_grad()
         shard.free_peer_shards()
         if self.tracing:
-            self.update_tracing("backward_ends")
+            self.update_tracing("bw.grad.ends")
         return flat_grad
 
     def update(self, idx: int, grad: torch.Tensor, grad_passed: bool) -> None:
         if self.tracing:
-            self.update_tracing("update_starts")
+            self.update_tracing("bw.upd.starts")
         if grad_passed:
             grad /= self.num_actors
         self.shards[idx].update(grad, grad_passed)
         if self.tracing:
-            self.update_tracing("update_ends")
+            self.update_tracing("bw.upd.ends")
         if idx == 0:
             self.update_tracing("end")

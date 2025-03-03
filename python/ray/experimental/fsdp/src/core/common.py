@@ -11,8 +11,9 @@ def get_start_time() -> float:
     return time.perf_counter()
 
 
-def get_end_time() -> float:
-    torch.cuda.synchronize()
+def get_end_time(sync: bool = True) -> float:
+    if sync:
+        torch.cuda.synchronize()
     return time.perf_counter()
 
 
