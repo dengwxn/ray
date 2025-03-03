@@ -20,6 +20,8 @@ class LinearActor:
         device: torch.device,
         tracing: bool,
     ):
+        self.seed = 998244353
+
         self.layer_size = layer_size
         self.num_layers = num_layers
         self.num_units = num_units
@@ -38,6 +40,7 @@ class LinearActor:
         self.elapses: Dict[str, List] = defaultdict(list)
 
     def init_and_shard_model(self) -> List[List[Shard]]:
+        torch.manual_seed(2025)
         num_shards = self.num_actors
         fsdp_units = [
             BucketParameter(
@@ -47,6 +50,8 @@ class LinearActor:
             )
             for _ in range(self.num_units)
         ]
+        for unit in fsdp_units:
+            unit.init_weights()
         actor_to_shards = [[] for _ in range(self.num_units)]
         for unit in fsdp_units:
             shards = shard_model(unit, num_shards)
@@ -58,6 +63,8 @@ class LinearActor:
         self.shards = [shard.to(self.device) for shard in shards]
 
     def init_training(self) -> None:
+        torch.manual_seed(self.seed)
+        self.seed += 1
         self.input = torch.randn(
             (1, self.layer_size),
             device=self.device,

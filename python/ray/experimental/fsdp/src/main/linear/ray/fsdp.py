@@ -111,9 +111,10 @@ def train(
         elapse_us = round(elapse_ms * 1e3)
 
         if save_model:
-            weights = ray.get(actors[0].fetch_weights.remote())
-            for idx, weight in enumerate(weights):
-                logger.info(f"layer: {idx}, weight: {weight}")
+            for i, actor in enumerate(actors):
+                weights = ray.get(actor.fetch_weights.remote())
+                for idx, weight in enumerate(weights):
+                    logger.info(f"actor: {i}, layer: {idx}, shard: {weight}")
 
         if iter > 0:
             logger.warning(f"iter: {iter}, elapse: {elapse_us} us")

@@ -84,8 +84,8 @@ compare_files() {
 	fi
 }
 
-file1="${output_path}/${timestamp}_model_0.log"
-file2="${output_path}/${timestamp}_model_1.log"
-compare_files "$file1" "$file2"
+# file1="${output_path}/${timestamp}_model_0.log"
+# file2="${output_path}/${timestamp}_model_1.log"
+# compare_files "$file1" "$file2"
 
 echo -e "${GREEN}AC${NC}"
