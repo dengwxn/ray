@@ -62,16 +62,16 @@ def train(
                 for actor, param, input in zip(actors, params, inputs)
             ]
 
-        outputs = [actor.get_output.bind(inp) for actor in actors]
+        targets = [actor.get_target.bind(inp) for actor in actors]
         losses = [
-            actor.compute_loss.bind(input, output)
-            for actor, input, output in zip(actors, inputs, outputs)
+            actor.compute_loss.bind(output, target)
+            for actor, output, target in zip(actors, inputs, targets)
         ]
 
         grads = [actor.backward_loss.bind(loss) for actor, loss in zip(actors, losses)]
         reduced_grads = reducescatter.bind(grads)
         updates = [
-            actor.update.bind(num_units - 1, grad)
+            actor.update.bind(num_units - 1, grad, True)
             for actor, grad in zip(actors, reduced_grads)
         ]
 
@@ -84,7 +84,7 @@ def train(
             reduced_grads = reducescatter.bind(grads)
             updates.extend(
                 [
-                    actor.update.bind(idx, grad)
+                    actor.update.bind(idx, grad, True)
                     for actor, grad in zip(actors, reduced_grads)
                 ]
             )

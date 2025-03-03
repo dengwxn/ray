@@ -122,18 +122,18 @@ class LinearActor:
             )
             bw_backward = sum(
                 [
-                    self.events["backward_starts"][i].elapsed_time(
-                        self.events["backward_ends"][i]
+                    bw_start.elapsed_time(bw_end)
+                    for bw_start, bw_end in zip(
+                        self.events["backward_starts"], self.events["backward_ends"]
                     )
-                    for i in range(self.num_units)
                 ]
             )
             bw_update = sum(
                 [
-                    self.events["update_starts"][i].elapsed_time(
-                        self.events["update_ends"][i]
+                    upd_start.elapsed_time(upd_end)
+                    for upd_start, upd_end in zip(
+                        self.events["update_starts"], self.events["update_ends"]
                     )
-                    for i in range(self.num_units)
                 ]
             )
             bw_others = bw_total - bw_backward - bw_update
@@ -170,12 +170,12 @@ class LinearActor:
         shard = self.shards[idx]
         shard.set_flat_param(flat_param)
         pred = shard.forward(input)
-        if idx < len(self.models) - 1:
+        if idx < len(self.shards) - 1:
             pred_as_input = pred.detach().requires_grad_(True)
         else:
             pred_as_input = pred
         self.intermediates.append((pred, pred_as_input))
-        if idx < len(self.models) - 1:
+        if idx < len(self.shards) - 1:
             shard.free_peer_shards()
         if self.tracing:
             self.update_tracing("forward_ends")
