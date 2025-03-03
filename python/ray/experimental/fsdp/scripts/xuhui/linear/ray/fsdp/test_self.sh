@@ -31,7 +31,7 @@ mkdir -p $output_path
 
 layer_size=1024
 num_layers=8
-num_partitions=2
+num_partitions=4
 num_actors=4
 num_iters=10
 latency_prefix=${timestamp}_ls${layer_size}_nl${num_layers}
