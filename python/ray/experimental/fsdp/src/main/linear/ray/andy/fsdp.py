@@ -53,45 +53,53 @@ def train(
     tracing: bool,
 ) -> None:
     with InputNode() as inp:
-        xs = [actor.get_input.bind(inp) for actor in actors]
-        for unit in range(num_units):
-            shards = [actor.get_shard.bind(unit, inp) for actor in actors]
-            unsharded_params = allgather.bind(shards)
-            xs = [
-                actor.forward.bind(unit, unsharded_param, x)
-                for actor, unsharded_param, x in zip(actors, unsharded_params, xs)
+        inputs = [actor.get_input.bind(inp) for actor in actors]
+        for idx in range(num_units):
+            shards = [actor.get_shard.bind(idx, inp) for actor in actors]
+            params = allgather.bind(shards)
+            inputs = [
+                actor.forward.bind(idx, param, input)
+                for actor, param, input in zip(actors, params, inputs)
             ]
-        ys = [actor.get_output.bind(inp) for actor in actors]
-        losses = [actor.compute_loss.bind(x, y) for actor, x, y in zip(actors, xs, ys)]
+
+        outputs = [actor.get_output.bind(inp) for actor in actors]
+        losses = [
+            actor.compute_loss.bind(input, output)
+            for actor, input, output in zip(actors, inputs, outputs)
+        ]
+
+        outputs = []
         grads = [actor.backward_loss.bind(loss) for actor, loss in zip(actors, losses)]
         reduced_grads = reducescatter.bind(grads)
-        outputs = []
-        updates = [
-            actor.update.bind(num_units - 1, reduced_grad)
-            for actor, reduced_grad in zip(actors, reduced_grads)
-        ]
-        outputs.extend(updates)
-        for unit in reversed(range(num_units - 1)):
-            shards = [actor.get_shard.bind(unit, inp) for actor in actors]
-            unsharded_params = allgather.bind(shards)
+        outputs.extend(
+            [
+                actor.update.bind(num_units - 1, grad)
+                for actor, grad in zip(actors, reduced_grads)
+            ]
+        )
+
+        for idx in reversed(range(num_units - 1)):
+            shards = [actor.get_shard.bind(idx, inp) for actor in actors]
+            params = allgather.bind(shards)
             grads = [
-                actor.backward.bind(unit, unsharded_param)
-                for actor, unsharded_param in zip(actors, unsharded_params)
+                actor.backward.bind(idx, param) for actor, param in zip(actors, params)
             ]
             reduced_grads = reducescatter.bind(grads)
-            updates = [
-                actor.update.bind(unit, reduced_grad)
-                for actor, reduced_grad in zip(actors, reduced_grads)
-            ]
-            outputs.extend(updates)
+            outputs.extend(
+                [
+                    actor.update.bind(idx, grad)
+                    for actor, grad in zip(actors, reduced_grads)
+                ]
+            )
+
         dag = MultiOutputNode(outputs)
 
     compiled_dag = dag.experimental_compile(_overlap_gpu_communication=True)
 
     logger.warning("=====START=====")
-    shards_across_actors = ray.get(actors[0].init_and_shard_model.remote())
+    actor_to_shards = ray.get(actors[0].init_and_shard_model.remote())
     logger.warning("Initialized and sharded model")
-    for actor, shards in zip(actors, shards_across_actors):
+    for actor, shards in zip(actors, actor_to_shards):
         ray.get(actor.set_shards.remote(shards))
     logger.warning("Set shards")
 

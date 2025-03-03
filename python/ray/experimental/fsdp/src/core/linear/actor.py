@@ -163,7 +163,7 @@ class LinearActor:
         assert self.shards
         return self.shards[idx].sharded_param
 
-    def forward(self, flat_param: torch.Tensor, input: torch.Tensor, idx: int) -> None:
+    def forward(self, idx: int, flat_param: torch.Tensor, input: torch.Tensor) -> None:
         if idx == 0:
             self.update_tracing("start")
         if self.tracing:
@@ -194,7 +194,7 @@ class LinearActor:
         shard.free_peer_shards()
         return flat_grad
 
-    def backward(self, flat_param: torch.Tensor, idx: int) -> torch.Tensor:
+    def backward(self, idx: int, flat_param: torch.Tensor) -> torch.Tensor:
         if self.tracing:
             self.update_tracing("backward_starts")
         shard = self.shards[idx]
@@ -208,7 +208,7 @@ class LinearActor:
             self.update_tracing("backward_ends")
         return flat_grad
 
-    def update(self, grad: torch.Tensor, grad_passed: bool, idx: int) -> None:
+    def update(self, idx: int, grad: torch.Tensor, grad_passed: bool) -> None:
         if self.tracing:
             self.update_tracing("update_starts")
         if grad_passed:

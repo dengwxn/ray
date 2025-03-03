@@ -8,7 +8,7 @@ from ....core.common import get_timing_event, log_elapses_to_csv
 from ....core.config import parse_args
 from ....core.linear.actor import LinearActor
 from ray.dag import InputNode, MultiOutputNode
-from ray.experimental.collective import allreduce
+from ray.experimental.collective import allgather, reducescatter
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -53,32 +53,48 @@ def train(
     tracing: bool,
 ) -> None:
     with InputNode() as inp:
-        actors_to_forwards = [actor.forward.bind(inp) for actor in actors]
-        actors_to_backwards = actors_to_forwards
-        outputs = []
-
-        actors_to_backwards = [
-            actor.backward.bind(actors_to_backwards[j], num_partitions - 1)
-            for j, actor in enumerate(actors)
-        ]
-        for i in reversed(range(num_partitions)):
-            grads_allreduced = allreduce.bind(actors_to_backwards)
-            if i > 0:
-                actors_to_backwards = [
-                    actor.backward.bind(actors_to_backwards[j], i - 1)
-                    for j, actor in enumerate(actors)
-                ]
-            actors_to_updates = [
-                actor.update.bind(grads_allreduced[j], True, i)
-                for j, actor in enumerate(actors)
+        inputs = [actor.get_input.bind(inp) for actor in actors]
+        for idx in range(num_partitions):
+            shards = [actor.get_shard.bind(idx, inp) for actor in actors]
+            params = allgather.bind(shards)
+            inputs = [
+                actor.forward.bind(idx, param, input)
+                for actor, param, input in zip(actors, params, inputs)
             ]
-            outputs.extend(actors_to_updates)
 
-        dag = MultiOutputNode(outputs)
+        outputs = [actor.get_output.bind(inp) for actor in actors]
+        losses = [
+            actor.compute_loss.bind(input, output)
+            for actor, input, output in zip(actors, inputs, outputs)
+        ]
+
+        grads = [actor.backward_loss.bind(loss) for actor, loss in zip(actors, losses)]
+        reduced_grads = reducescatter.bind(grads)
+        updates = [
+            actor.update.bind(num_partitions - 1, grad)
+            for actor, grad in zip(actors, reduced_grads)
+        ]
+
+        for idx in reversed(range(num_partitions - 1)):
+            shards = [actor.get_shard.bind(idx, inp) for actor in actors]
+            params = allgather.bind(shards)
+            grads = [
+                actor.backward.bind(idx, param) for actor, param in zip(actors, params)
+            ]
+            reduced_grads = reducescatter.bind(grads)
+            updates.extend(
+                [
+                    actor.update.bind(idx, grad)
+                    for actor, grad in zip(actors, reduced_grads)
+                ]
+            )
+
+        dag = MultiOutputNode(updates)
 
     compiled_dag = dag.experimental_compile(_overlap_gpu_communication=True)
-    for actor in actors:
-        ray.get(actor.init_weights.remote())
+    actor_to_shards = ray.get(actors[0].init_and_shard_model.remote())
+    for actor, shards in zip(actors, actor_to_shards):
+        ray.get(actor.set_shards.remote(shards))
 
     total_elapses: List[int] = []
     for iter in range(num_iters):
