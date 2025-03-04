@@ -32,6 +32,6 @@ npm run build
 cd /app/python
 pip install -r requirements.txt
 pip install -e . --verbose
-pip install pytest torch
+pip install pytest torch graphviz
 pip install -c requirements_compiled.txt -r requirements/lint-requirements.txt
 pip install --upgrade typing-extensions

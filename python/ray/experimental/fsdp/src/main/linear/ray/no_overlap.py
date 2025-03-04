@@ -4,11 +4,11 @@ from typing import Any, Dict, List
 import torch
 
 import ray
-from ....core.common import get_timing_event, log_elapses_to_csv
+from ....core.common import get_end_time, get_start_time, log_elapses_to_csv
 from ....core.config import parse_args
 from ....core.linear.actor import LinearActor
 from ray.dag import InputNode, MultiOutputNode
-from ray.experimental.collective import allreduce
+from ray.experimental.collective import allgather, reducescatter
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -21,7 +21,7 @@ logger.info("Welcome to Downton Abbey!")
 def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
     layer_size = args["layer_size"]
     num_layers = args["num_layers"]
-    num_partitions = args["num_partitions"]
+    num_units = args["num_partitions"]
     num_actors = args["num_actors"]
     device = "cuda:0"
     tracing = args["tracing"]
@@ -31,7 +31,7 @@ def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
         actor_cls.remote(
             layer_size=layer_size,
             num_layers=num_layers,
-            num_partitions=num_partitions,
+            num_units=num_units,
             num_actors=num_actors,
             device=device,
             tracing=tracing,
@@ -42,73 +42,7 @@ def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
     return actors
 
 
-def train(
-    actors: List[LinearActor],
-    num_partitions: int,
-    num_iters: int,
-    output_path: str,
-    latency_prefix: str,
-    save_model: bool,
-    model_prefix: str,
-    tracing: bool,
-) -> None:
-    with InputNode() as inp:
-        actors_to_forwards = [actor.forward.bind(inp) for actor in actors]
-        actors_to_backwards = actors_to_forwards
-        outputs = []
-
-        actors_to_backwards = [
-            actor.backward.bind(actors_to_backwards[j], num_partitions - 1)
-            for j, actor in enumerate(actors)
-        ]
-        for i in reversed(range(num_partitions)):
-            grads_allreduced = allreduce.bind(actors_to_backwards)
-            if i > 0:
-                actors_to_backwards = [
-                    actor.backward.bind(actors_to_backwards[j], i - 1)
-                    for j, actor in enumerate(actors)
-                ]
-            actors_to_updates = [
-                actor.update.bind(grads_allreduced[j], True, i)
-                for j, actor in enumerate(actors)
-            ]
-            outputs.extend(actors_to_updates)
-
-        dag = MultiOutputNode(outputs)
-
-    compiled_dag = dag.experimental_compile()
-    for actor in actors:
-        ray.get(actor.init_weights.remote())
-
-    total_elapses: List[int] = []
-    for iter in range(num_iters):
-        for actor in actors:
-            ray.get(actor.init_training.remote())
-            ray.get(actor.init_tracing.remote())
-
-        start = get_timing_event()
-        compiled_dag.execute(None)
-        end = get_timing_event()
-        torch.cuda.synchronize()
-
-        elapse_ms = start.elapsed_time(end)
-        elapse_us = round(elapse_ms * 1e3)
-
-        if save_model:
-            weights = ray.get(actors[0].fetch_weights.remote())
-            for idx, weight in enumerate(weights):
-                logger.info(f"layer: {idx}, weight: {weight}")
-
-        if iter > 0:
-            logger.warning(f"iter: {iter}, elapse: {elapse_us} us")
-            total_elapses.append(elapse_us)
-
-        for actor in actors:
-            ray.get(actor.finish_tracing.remote())
-
-    actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
-    for actor_elapses in actors_to_elapses:
-        actor_elapses["total"] = total_elapses
+def get_metrics(tracing: bool) -> List[str]:
     if not tracing:
         metrics = [
             "total",
@@ -120,15 +54,100 @@ def train(
             "actor.total",
             "fw.total",
             "bw.total",
-            "bw.backward",
+            "bw.loss",
+            "bw.grad",
             "bw.others",
-            "bw.update",
+            "bw.upd",
         ]
+    return metrics
+
+
+def train(
+    actors: List[LinearActor],
+    num_units: int,
+    num_iters: int,
+    output_path: str,
+    latency_prefix: str,
+    save_model: bool,
+    model_prefix: str,
+    tracing: bool,
+) -> None:
+    with InputNode() as inp:
+        inputs = [actor.get_input.bind(inp) for actor in actors]
+        for idx in range(num_units):
+            shards = [actor.get_shard.bind(idx, inp) for actor in actors]
+            params = allgather.bind(shards)
+            inputs = [
+                actor.forward.bind(idx, param, input)
+                for actor, param, input in zip(actors, params, inputs)
+            ]
+
+        targets = [actor.get_target.bind(inp) for actor in actors]
+        losses = [
+            actor.compute_loss.bind(output, target)
+            for actor, output, target in zip(actors, inputs, targets)
+        ]
+
+        grads = [actor.backward_loss.bind(loss) for actor, loss in zip(actors, losses)]
+        reduced_grads = reducescatter.bind(grads)
+        updates = [
+            actor.update.bind(num_units - 1, grad, True)
+            for actor, grad in zip(actors, reduced_grads)
+        ]
+
+        for idx in reversed(range(num_units - 1)):
+            shards = [actor.get_shard.bind(idx, inp) for actor in actors]
+            params = allgather.bind(shards)
+            grads = [
+                actor.backward.bind(idx, param) for actor, param in zip(actors, params)
+            ]
+            reduced_grads = reducescatter.bind(grads)
+            updates.extend(
+                [
+                    actor.update.bind(idx, grad, True)
+                    for actor, grad in zip(actors, reduced_grads)
+                ]
+            )
+
+        dag = MultiOutputNode(updates)
+
+    compiled_dag = dag.experimental_compile()
+    actor_to_shards = ray.get(actors[0].init_and_shard_model.remote())
+    for actor, shards in zip(actors, actor_to_shards):
+        ray.get(actor.set_shards.remote(shards))
+
+    total_elapses: List[int] = []
+    for iter in range(num_iters):
+        for actor in actors:
+            ray.get(actor.init_training.remote())
+            ray.get(actor.init_tracing.remote())
+
+        start = get_start_time()
+        compiled_dag.execute(None)
+        end = get_end_time()
+        elapse_us = round((end - start) * 1e6)
+
+        if save_model:
+            for i, actor in enumerate(actors):
+                weights = ray.get(actor.fetch_weights.remote())
+                for idx, weight in enumerate(weights):
+                    logger.info(f"actor: {i}, layer: {idx}, shard: {weight}")
+
+        if iter > 0:
+            logger.warning(f"iter: {iter}, elapse: {elapse_us} us")
+            total_elapses.append(elapse_us)
+
+        for actor in actors:
+            ray.get(actor.finish_tracing.remote())
+
+    actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
+    for actor_elapses in actors_to_elapses:
+        actor_elapses["total"] = total_elapses
     log_elapses_to_csv(
         actors_to_elapses,
         output_path,
         latency_prefix,
-        metrics,
+        get_metrics(tracing),
     )
 
     if save_model:

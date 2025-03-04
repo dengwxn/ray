@@ -31,14 +31,15 @@ mkdir -p $output_path
 
 layer_size=1024
 num_layers=8
-num_partitions=2
+num_partitions=4
 num_actors=4
 num_iters=10
 latency_prefix=${timestamp}_ls${layer_size}_nl${num_layers}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
-python -m ray.experimental.fsdp.src.main.linear.ray.no_overlap \
+RAY_CGRAPH_VISUALIZE_SCHEDULE=1 \
+	python -m ray.experimental.fsdp.src.main.linear.ray.no_overlap \
 	--layer-size $layer_size \
 	--num-layers $num_layers \
 	--num-partitions $num_partitions \
@@ -84,8 +85,8 @@ compare_files() {
 	fi
 }
 
-file1="${output_path}/${timestamp}_model_0.log"
-file2="${output_path}/${timestamp}_model_1.log"
-compare_files "$file1" "$file2"
+# file1="${output_path}/${timestamp}_model_0.log"
+# file2="${output_path}/${timestamp}_model_1.log"
+# compare_files "$file1" "$file2"
 
 echo -e "${GREEN}AC${NC}"

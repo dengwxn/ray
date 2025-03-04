@@ -74,13 +74,18 @@ def train(
 ) -> None:
     with InputNode() as inp:
         inputs = [actor.get_input.bind(inp) for actor in actors]
+        shards = [actor.get_shard.bind(0, inp) for actor in actors]
+        params = allgather.bind(shards)
         for idx in range(num_units):
-            shards = [actor.get_shard.bind(idx, inp) for actor in actors]
-            params = allgather.bind(shards)
+            if idx < num_units - 1:
+                shards_pf = [actor.get_shard.bind(idx + 1, inp) for actor in actors]
+                params_pf = allgather.bind(shards_pf)
             inputs = [
                 actor.forward.bind(idx, param, input)
                 for actor, param, input in zip(actors, params, inputs)
             ]
+            if idx < num_units - 1:
+                params = params_pf
 
         targets = [actor.get_target.bind(inp) for actor in actors]
         losses = [
@@ -88,19 +93,21 @@ def train(
             for actor, output, target in zip(actors, inputs, targets)
         ]
 
-        grads = [actor.backward_loss.bind(loss) for actor, loss in zip(actors, losses)]
-        reduced_grads = reducescatter.bind(grads)
-        updates = [
-            actor.update.bind(num_units - 1, grad, True)
-            for actor, grad in zip(actors, reduced_grads)
-        ]
-
-        for idx in reversed(range(num_units - 1)):
-            shards = [actor.get_shard.bind(idx, inp) for actor in actors]
-            params = allgather.bind(shards)
-            grads = [
-                actor.backward.bind(idx, param) for actor, param in zip(actors, params)
-            ]
+        updates = []
+        for idx in reversed(range(num_units)):
+            if idx > 0:
+                shards_pf = [actor.get_shard.bind(idx - 1, inp) for actor in actors]
+                params_pf = allgather.bind(shards_pf)
+            if idx == num_units - 1:
+                grads = [
+                    actor.backward_loss.bind(loss)
+                    for actor, loss in zip(actors, losses)
+                ]
+            else:
+                grads = [
+                    actor.backward.bind(idx, param)
+                    for actor, param in zip(actors, params)
+                ]
             reduced_grads = reducescatter.bind(grads)
             updates.extend(
                 [
@@ -108,6 +115,8 @@ def train(
                     for actor, grad in zip(actors, reduced_grads)
                 ]
             )
+            if idx > 0:
+                params = params_pf
 
         dag = MultiOutputNode(updates)
 
