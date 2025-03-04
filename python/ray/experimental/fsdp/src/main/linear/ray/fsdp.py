@@ -108,6 +108,8 @@ def train(
                     actor.backward.bind(idx, param)
                     for actor, param in zip(actors, params)
                 ]
+            # [TODO] Timing for backward is not accurate since it is a future.
+            # [TODO] Overlap this as well.
             reduced_grads = reducescatter.bind(grads)
             updates.extend(
                 [
