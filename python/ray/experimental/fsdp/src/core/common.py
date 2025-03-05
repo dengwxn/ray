@@ -1,7 +1,7 @@
 import csv
 import os
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple, Union
 
 import numpy as np
 import torch
@@ -42,6 +42,7 @@ def log_elapses_to_csv(
     output_path: str,
     latency_prefix: str,
     metrics: List[str],
+    alias: List[str],
     warmup: float = 0.2,
 ) -> None:
     # Create output directory if it doesn't exist
@@ -65,7 +66,9 @@ def log_elapses_to_csv(
             writer = csv.writer(csvfile)
             writer.writerow(["name", "mean", "std", "cv", "percent"])
 
-            for metric in metrics:
+            for metric, alias in zip(metrics, alias):
+                if alias is None:
+                    alias = metric
                 values = np.array(metric_values[metric])
                 mean = np.mean(values)
                 std = np.std(values)
@@ -74,7 +77,7 @@ def log_elapses_to_csv(
 
                 writer.writerow(
                     [
-                        metric,
+                        alias,
                         round(mean),
                         round(std),
                         round(cv, 1),

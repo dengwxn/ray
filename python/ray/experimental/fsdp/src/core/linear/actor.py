@@ -157,11 +157,11 @@ class LinearActor:
                     )
                 ]
             )
-            bw_others = bw_total - bw_grad - bw_upd
+            bw_grad_others = bw_total - bw_loss - bw_upd
             log("bw.total", bw_total)
             log("bw.loss", bw_loss)
             log("bw.grad", bw_grad)
-            log("bw.others", bw_others)
+            log("bw.grad_others", bw_grad_others)
             log("bw.upd", bw_upd)
         logger.warning("")
 

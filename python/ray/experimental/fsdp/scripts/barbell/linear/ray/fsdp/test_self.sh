@@ -38,7 +38,11 @@ latency_prefix=${timestamp}_ls${layer_size}_nl${num_layers}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
-python -m ray.experimental.fsdp.src.main.linear.ray.fsdp \
+# RAY_CGRAPH_ENABLE_NVTX_PROFILING=1 \
+# nsys profile -t nvtx,cuda -o profile \
+
+RAY_CGRAPH_VISUALIZE_SCHEDULE=1 \
+	python -m ray.experimental.fsdp.src.main.linear.ray.fsdp \
 	--layer-size $layer_size \
 	--num-layers $num_layers \
 	--num-partitions $num_partitions \
@@ -89,3 +93,4 @@ compare_files() {
 # compare_files "$file1" "$file2"
 
 echo -e "${GREEN}AC${NC}"
+echo $log_file

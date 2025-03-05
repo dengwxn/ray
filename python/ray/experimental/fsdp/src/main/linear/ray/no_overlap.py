@@ -1,7 +1,5 @@
 import logging
-from typing import Any, Dict, List
-
-import torch
+from typing import Any, Dict, List, Optional, Tuple
 
 import ray
 from ....core.common import get_end_time, get_start_time, log_elapses_to_csv
@@ -42,11 +40,15 @@ def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
     return actors
 
 
-def get_metrics(tracing: bool) -> List[str]:
+def get_metrics_aliases(tracing: bool) -> Tuple[List[str], List[Optional[str]]]:
     if not tracing:
         metrics = [
             "total",
             "actor.total",
+        ]
+        alias = [
+            "!total",
+            None,
         ]
     else:
         metrics = [
@@ -56,10 +58,20 @@ def get_metrics(tracing: bool) -> List[str]:
             "bw.total",
             "bw.loss",
             "bw.grad",
-            "bw.others",
+            "bw.grad_others",
             "bw.upd",
         ]
-    return metrics
+        alias = [
+            "!total",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ]
+    return metrics, alias
 
 
 def train(
@@ -143,11 +155,13 @@ def train(
     actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
     for actor_elapses in actors_to_elapses:
         actor_elapses["total"] = total_elapses
+    metrics, alias = get_metrics_aliases(tracing)
     log_elapses_to_csv(
         actors_to_elapses,
         output_path,
         latency_prefix,
-        get_metrics(tracing),
+        metrics,
+        alias,
     )
 
     if save_model:
