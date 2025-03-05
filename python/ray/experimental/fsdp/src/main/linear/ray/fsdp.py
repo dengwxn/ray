@@ -80,10 +80,12 @@ def train(
             if idx < num_units - 1:
                 shards_pf = [actor.get_shard.bind(idx + 1, inp) for actor in actors]
                 params_pf = allgather.bind(shards_pf)
+
             inputs = [
                 actor.forward.bind(idx, param, input)
                 for actor, param, input in zip(actors, params, inputs)
             ]
+
             if idx < num_units - 1:
                 params = params_pf
 
@@ -93,32 +95,46 @@ def train(
             for actor, output, target in zip(actors, inputs, targets)
         ]
 
-        updates = []
-        for idx in reversed(range(num_units)):
-            if idx > 0:
+        unit_to_grads = []
+        for idx in reversed(range(-1, num_units)):
+            if idx + 1 < num_units:
+                # Reduce grads for unit (idx + 1).
+                reduced_grads = reducescatter.bind(grads)
+                unit_to_grads.append(reduced_grads)
+
+            if idx - 1 >= 0:
+                # Prefetch params for unit (idx - 1).
                 shards_pf = [actor.get_shard.bind(idx - 1, inp) for actor in actors]
                 params_pf = allgather.bind(shards_pf)
+
+            # [TODO] Timing for backward is not accurate since it is a future.
             if idx == num_units - 1:
+                # Backward grads for unit (num_units - 1).
                 grads = [
                     actor.backward_loss.bind(loss)
                     for actor, loss in zip(actors, losses)
                 ]
-            else:
+            elif idx >= 0:
+                # Backward grads for unit (idx).
                 grads = [
                     actor.backward.bind(idx, param)
                     for actor, param in zip(actors, params)
                 ]
-            # [TODO] Timing for backward is not accurate since it is a future.
-            # [TODO] Overlap this as well.
-            reduced_grads = reducescatter.bind(grads)
+
+            if idx - 1 >= 0:
+                # Set params for unit (idx - 1).
+                params = params_pf
+
+        unit_to_grads = unit_to_grads[::-1]
+        updates = []
+        for idx in reversed(range(num_units)):
+            grads = unit_to_grads[idx]
             updates.extend(
                 [
                     actor.update.bind(idx, grad, True)
-                    for actor, grad in zip(actors, reduced_grads)
+                    for actor, grad in zip(actors, grads)
                 ]
             )
-            if idx > 0:
-                params = params_pf
 
         dag = MultiOutputNode(updates)
 
