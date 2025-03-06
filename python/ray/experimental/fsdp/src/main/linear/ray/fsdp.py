@@ -1,8 +1,13 @@
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 import ray
-from ....core.common import get_end_time, get_start_time, log_elapses_to_csv
+from ....core.common import (
+    get_end_time,
+    get_metrics_aliases,
+    get_start_time,
+    log_elapses_to_csv,
+)
 from ....core.config import parse_args
 from ....core.linear.actor import LinearActor
 from ray.dag import InputNode, MultiOutputNode
@@ -38,42 +43,6 @@ def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
     ]
 
     return actors
-
-
-def get_metrics_aliases(tracing: bool) -> Tuple[List[str], List[Optional[str]]]:
-    if not tracing:
-        metrics = [
-            "total",
-            "actor.total",
-        ]
-        alias = [
-            "!total",
-            None,
-        ]
-    else:
-        metrics = [
-            "total",
-            "actor.total",
-            "fw.total",
-            "comp.loss.total",
-            "bw.total",
-            "bw.loss",
-            "bw.grad",
-            "bw.grad_others",
-            "bw.upd",
-        ]
-        alias = [
-            "!total",
-            None,  # "actor.total",
-            "!fw.total",
-            None,  # "comp.loss.total",
-            None,  # "bw.total",
-            "!bw.loss",
-            "!bw.grad",
-            "!bw.grad_others",
-            None,  # "bw.upd",
-        ]
-    return metrics, alias
 
 
 def train(
@@ -184,13 +153,13 @@ def train(
     actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
     for actor_elapses in actors_to_elapses:
         actor_elapses["total"] = total_elapses
-    metrics, alias = get_metrics_aliases(tracing)
+    metrics, aliases = get_metrics_aliases(tracing)
     log_elapses_to_csv(
         actors_to_elapses,
         output_path,
         latency_prefix,
         metrics,
-        alias,
+        aliases,
     )
 
     if save_model:

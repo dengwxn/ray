@@ -57,6 +57,7 @@ class LlamaActor:
             requires_grad=True,
         ).to("cuda")
 
+        # [TODO] fix this.
         self.events: Dict[str, List] = {
             "start": [],
             "end": [],

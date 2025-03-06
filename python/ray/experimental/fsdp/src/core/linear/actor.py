@@ -41,7 +41,7 @@ class LinearActor:
 
     def init_and_shard_model(self) -> List[List[Shard]]:
         torch.manual_seed(2025)
-        fsdp_units = [
+        bparams = [
             BucketParameter(
                 layer_size=self.layer_size,
                 num_layers=self.num_layers // self.num_units,
@@ -49,11 +49,11 @@ class LinearActor:
             )
             for _ in range(self.num_units)
         ]
-        for unit in fsdp_units:
-            unit.init_weights()
+        for bparam in bparams:
+            bparam.init_weights()
         actor_to_shards = [[] for _ in range(self.num_actors)]
-        for unit in fsdp_units:
-            shards = shard_model(unit, self.num_actors)
+        for bparam in bparams:
+            shards = shard_model(bparam, self.num_actors)
             for rank, shard in enumerate(shards):
                 actor_to_shards[rank].append(shard)
         return actor_to_shards

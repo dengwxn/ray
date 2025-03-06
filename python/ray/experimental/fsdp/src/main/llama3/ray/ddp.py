@@ -5,10 +5,10 @@ from typing import Any, Dict, List
 import torch
 
 import ray
-from ....core.common import log_elapses_to_csv
+from ....core.common import get_metrics_aliases, log_elapses_to_csv
 from ....core.config import parse_args
 from ....core.llama3.actor import LlamaActor
-from ....core.llama3.model import LLAMA_1B
+from ....core.llama3.model import LLAMA_DEBUG as LLAMA
 from ray.dag import InputNode, MultiOutputNode
 from ray.experimental.collective import allreduce
 
@@ -21,7 +21,7 @@ logger.info("Welcome to Downton Abbey!")
 
 
 def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
-    model_args = LLAMA_1B
+    model_args = LLAMA
     num_partitions = args["num_partitions"]
     num_actors = args["num_actors"]
     tracing = args["tracing"]
@@ -39,25 +39,6 @@ def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
     ]
 
     return actors
-
-
-def get_metrics(tracing: bool) -> List[str]:
-    if not tracing:
-        metrics = [
-            "total",
-            "actor.total",
-        ]
-    else:
-        metrics = [
-            "total",
-            "actor.total",
-            "fw.total",
-            "bw.total",
-            "bw.backward",
-            "bw.others",
-            "bw.update",
-        ]
-    return metrics
 
 
 def train(
@@ -118,12 +99,13 @@ def train(
     actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
     for actor_elapses in actors_to_elapses:
         actor_elapses["total"] = total_elapses
-    metrics = get_metrics(tracing)
+    metrics, aliases = get_metrics_aliases(tracing)
     log_elapses_to_csv(
         actors_to_elapses,
         output_path,
         latency_prefix,
         metrics,
+        aliases,
     )
 
     if save_model:

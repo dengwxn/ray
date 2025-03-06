@@ -4,7 +4,7 @@ import torch
 
 from .....core.common import get_end_time, get_start_time
 from .....core.llama3.actor import _Actor_V4 as Actor
-from .....core.llama3.model import LLAMA_1B
+from .....core.llama3.model import LLAMA_DEBUG as LLAMA
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(filename)s:%(lineno)d -- %(message)s",
@@ -17,11 +17,11 @@ def main():
     torch.cuda.set_device(0)
     torch.manual_seed(998244353)
 
-    model_args = LLAMA_1B
+    model_args = LLAMA
     actor = Actor(model_args)
     logger.info(actor.model)
 
-    n_iters = 10
+    n_iters = 5
     n_warmup_iters = int(n_iters * 0.2)
 
     for i in range(n_iters):

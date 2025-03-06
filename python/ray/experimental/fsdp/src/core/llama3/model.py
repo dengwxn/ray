@@ -40,6 +40,21 @@ class ModelArgs:
     max_seq_len: int = 2048
 
 
+LLAMA_DEBUG = ModelArgs(
+    dim=256,  # 1/8
+    n_layers=16,
+    n_heads=4,  # 1/8
+    n_kv_heads=1,  # 1/8
+    vocab_size=128256,
+    multiple_of=256,
+    ffn_dim_multiplier=1.5,
+    norm_eps=1e-5,
+    rope_theta=500000,
+    max_batch_size=32,
+    max_seq_len=2048,
+)
+
+
 LLAMA_1B = ModelArgs(
     dim=2048,
     n_layers=16,
