@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 import torch
 
 import ray
-from ..common import ms_to_micros
+from ..common import millis_to_micros
 from .model import resnet152_mp as resnet_mp
 
 # from .resnet import resnet101_mp as resnet_mp
@@ -94,7 +94,7 @@ class ResnetActor:
         total = self.events["start"].elapsed_time(self.events["end"])
 
         def log(key: str, elapse_ms: float):
-            elapse_us = ms_to_micros(elapse_ms)
+            elapse_us = millis_to_micros(elapse_ms)
             self.elapses[key].append(elapse_us)
             logger.warning(
                 f"{key} elapse: {elapse_us} us, percent: {round(elapse_ms / total * 100, 1)}%"

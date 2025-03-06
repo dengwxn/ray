@@ -21,7 +21,7 @@ logger.info("Welcome to Downton Abbey!")
 
 
 def run_torch_ddp(
-    args: Dict[str, Any]
+    args: Dict[str, Any],
 ) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
     num_gpus = torch.cuda.device_count()
     assert num_gpus >= args["num_actors"]

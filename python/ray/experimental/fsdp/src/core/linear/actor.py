@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 
 import ray
-from ..common import ms_to_micros
+from ..common import millis_to_micros
 from .model import BucketParameter, Shard, shard_model
 
 
@@ -74,6 +74,7 @@ class LinearActor:
             device=self.device,
         )
         self.intermediates = []
+        torch.cuda.synchronize()
 
     def update_tracing(self, key: str) -> None:
         event = torch.cuda.Event(enable_timing=True)
@@ -109,12 +110,18 @@ class LinearActor:
         assert len(self.events["end"]) == 1
         total = self.events["start"][0].elapsed_time(self.events["end"][0])
 
-        def log(key: str, elapse_ms: float):
-            elapse_us = ms_to_micros(elapse_ms)
-            self.elapses[key].append(elapse_us)
-            logger.warning(
-                f"{key} elapse: {elapse_us} us, percent: {round(elapse_ms / total * 100, 1)}%"
-            )
+        def log(key: str, total_ms: float, count: int = 1) -> None:
+            total_us = millis_to_micros(total_ms)
+            self.elapses[key].append(total_us)
+            if count == 1:
+                logger.warning(
+                    f"{key}: {total_us} us, percent: {round(total_ms / total * 100, 1)}%"
+                )
+            else:
+                avg_us = round(total_us / count)
+                logger.warning(
+                    f"{key}: {total_us} us, avg: {avg_us} us, count: {count}, percent: {round(total_ms / total * 100, 1)}%"
+                )
 
         log(
             "actor.total",
@@ -124,6 +131,7 @@ class LinearActor:
             log(
                 "fw.total",
                 self.events["fw.starts"][0].elapsed_time(self.events["fw.ends"][-1]),
+                len(self.events["fw.starts"]),
             )
             assert len(self.events["comp.loss.starts"]) == 1
             assert len(self.events["comp.loss.ends"]) == 1
@@ -160,9 +168,9 @@ class LinearActor:
             bw_grad_others = bw_total - bw_loss - bw_upd
             log("bw.total", bw_total)
             log("bw.loss", bw_loss)
-            log("bw.grad", bw_grad)
+            log("bw.grad", bw_grad, len(self.events["bw.grad.starts"]))
             log("bw.grad_others", bw_grad_others)
-            log("bw.upd", bw_upd)
+            log("bw.upd", bw_upd, len(self.events["bw.upd.starts"]))
         logger.warning("")
 
     def fetch_weights(self) -> List[torch.Tensor]:

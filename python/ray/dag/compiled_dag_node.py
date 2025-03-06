@@ -223,19 +223,74 @@ def do_exec_tasks(
             nvtx_profile = nvtx.Profile()
             nvtx_profile.enable()
 
+        events: List[
+            "ExecutableTask", Optional["cp.cuda.Event"], Optional["cp.cuda.Event"]
+        ] = []
         done = False
         while True:
             if done:
                 break
             for operation in schedule:
-                done = tasks[operation.exec_task_idx].exec_operation_with_contexts(
-                    self, overlap_gpu_communication
+                task = tasks[operation.exec_task_idx]
+                done = task.exec_operation_with_contexts(
+                    self, events, overlap_gpu_communication
                 )
                 if done:
                     break
 
         if RAY_CGRAPH_ENABLE_NVTX_PROFILING:
             nvtx_profile.disable()
+
+        import torch
+
+        torch.cuda.synchronize()
+        events = events[int(len(events) * 0.2) :]
+        method_to_count: Dict[str, int] = defaultdict(int)
+        method_to_elapse: Dict[str, float] = defaultdict(float)
+        for task, start, end in events:
+            if start is not None and end is not None:
+                elapse_us = start.elapsed_time(end) * 1e3
+                method_to_count[task.method_name] += 1
+                method_to_elapse[task.method_name] += elapse_us
+
+        method_to_percent: Dict[str, float] = {}
+        total_us = sum(method_to_elapse.values())
+        for method, elapse in method_to_elapse.items():
+            count = method_to_count[method]
+            avg_us = round(elapse / count)
+            percent = round(elapse / total_us * 100, 1)
+            method_to_percent[method] = percent
+            logger.warning(f"dag.{method} avg: {avg_us} us, percent: {percent}%")
+
+        method_to_percent["compute.backward"] = round(
+            method_to_percent["compute_loss"]
+            + method_to_percent["backward_loss"]
+            + method_to_percent["backward"],
+            1,
+        )
+        method_to_percent["compute.others"] = round(
+            method_to_percent["forward"]
+            + method_to_percent["update"]
+            + method_to_percent["get_input"]
+            + method_to_percent["get_shard"]
+            + method_to_percent["get_target"],
+            1,
+        )
+        method_to_percent["communication"] = round(
+            method_to_percent["allgather"] + method_to_percent["reducescatter"], 1
+        )
+        logger.warning("")
+        logger.warning(
+            f"dag.compute.backward, percent: {method_to_percent['compute.backward']}%"
+        )
+        logger.warning(
+            f"dag.compute.others, percent: {method_to_percent['compute.others']}%"
+        )
+        logger.warning(
+            f"dag.communication, percent: {method_to_percent['communication']}%"
+        )
+
+        logger.warning("")
     except Exception:
         logging.exception("Compiled DAG task exited with exception")
         raise
@@ -644,6 +699,7 @@ class ExecutableTask:
     def exec_operation_with_contexts(
         self,
         class_handle: "ray.actor.ActorHandle",
+        events: List[Tuple[bool, "cp.cuda.Event", "cp.cuda.Event"]],
         overlap_gpu_communication: bool = False,
     ) -> bool:
         """
@@ -659,7 +715,16 @@ class ExecutableTask:
         """
         with _device_context_manager():
             with self.stream:
-                return self.exec_operation(class_handle, overlap_gpu_communication)
+                result = self.exec_operation(class_handle, overlap_gpu_communication)
+                if isinstance(result, tuple):
+                    assert len(result) == 3
+                    done, start, end = result
+                else:
+                    assert isinstance(result, bool)
+                    done = result
+                    start, end = None, None
+                events.append((self, start, end))
+                return done
 
     def exec_operation(
         self,
@@ -678,6 +743,13 @@ class ExecutableTask:
         Returns:
             True if the next operation should not be executed; otherwise, False.
         """
+        import torch
+
+        def get_timing_event() -> torch.cuda.Event:
+            ev = torch.cuda.Event(enable_timing=True)
+            ev.record()
+            return ev
+
         input_values = []
         input_exc = None
         output_val = None
@@ -715,8 +787,10 @@ class ExecutableTask:
         if input_exc is not None:
             try:
                 assert self.output_writer is not None
+                start = get_timing_event()
                 self.output_writer.write(input_exc)
-                return False
+                end = get_timing_event()
+                return False, start, end
             except RayChannelError:
                 return True
 
@@ -727,7 +801,9 @@ class ExecutableTask:
             method = getattr(class_handle, self.method_name)
 
         try:
+            start = get_timing_event()
             output_val = method(*input_values, **self.resolved_kwargs)
+            end = get_timing_event()
         except RayChannelError:
             return True
         except Exception as exc:
@@ -747,7 +823,7 @@ class ExecutableTask:
             except RayChannelError:
                 return True
 
-        return False
+        return False, start, end
 
 
 @dataclass

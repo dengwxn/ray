@@ -8,7 +8,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from ....core.common import get_timing_event, log_elapses_to_csv, ms_to_micros
+from ....core.common import get_timing_event, log_elapses_to_csv, millis_to_micros
 from ....core.config import parse_args
 from ....core.linear.actor import BucketParameter
 
@@ -21,7 +21,7 @@ logger.info("Welcome to Downton Abbey!")
 
 
 def run_torch_fsdp(
-    args: Dict[str, Any]
+    args: Dict[str, Any],
 ) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
     num_gpus = torch.cuda.device_count()
     assert num_gpus >= args["num_actors"]
@@ -146,7 +146,7 @@ def spwan_torch_fsdp(
             total_ms = start.elapsed_time(end)
 
             def log(key: str, elapse_ms: float):
-                elapse_us = ms_to_micros(elapse_ms)
+                elapse_us = millis_to_micros(elapse_ms)
                 elapses[key].append(elapse_us)
                 logger.warning(
                     f"rank: {rank}, {key} elapse: {elapse_us} us, percent: {round(elapse_ms / total_ms * 100, 1)}%"

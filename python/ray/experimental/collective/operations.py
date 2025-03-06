@@ -59,9 +59,9 @@ def _bind(
         if actor_handle is None:
             raise ValueError("Expected an actor handle from the input node")
         if isinstance(op, AllReduceOp):
-            method_name = f"allreduce.{op.reduceOp}"
+            method_name = f"allreduce"
         elif isinstance(op, ReduceScatterOp):
-            method_name = f"reducescatter.{op.reduceOp}"
+            method_name = f"reducescatter"
         elif isinstance(op, AllGatherOp):
             method_name = "allgather"
         else:

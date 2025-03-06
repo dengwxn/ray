@@ -6,7 +6,7 @@ import torch
 
 import ray
 from ...core.llama3.model import TransformerBP
-from ..common import ms_to_micros
+from ..common import millis_to_micros
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ class LlamaActor:
         total = self.events["start"][0].elapsed_time(self.events["end"][0])
 
         def log(key: str, elapse_ms: float):
-            elapse_us = ms_to_micros(elapse_ms)
+            elapse_us = millis_to_micros(elapse_ms)
             self.elapses[key].append(elapse_us)
             logger.warning(
                 f"{key} elapse: {elapse_us} us, percent: {round(elapse_ms / total * 100, 1)}%"
