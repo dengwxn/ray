@@ -252,6 +252,8 @@ def do_exec_tasks(
                 elapse_us = start.elapsed_time(end) * 1e3
                 method_to_count[task.method_name] += 1
                 method_to_elapse[task.method_name] += elapse_us
+        for method in method_to_elapse:
+            method_to_elapse[method] = round(method_to_elapse[method])
 
         method_to_percent: Dict[str, float] = {}
         total_us = sum(method_to_elapse.values())
@@ -260,34 +262,59 @@ def do_exec_tasks(
             avg_us = round(elapse / count)
             percent = round(elapse / total_us * 100, 1)
             method_to_percent[method] = percent
-            logger.warning(f"dag.{method} avg: {avg_us} us, percent: {percent}%")
+            logger.warning(f"dag.{method} sum: {elapse} us, avg: {avg_us} us, percent: {percent}%")
 
-        method_to_percent["compute.backward"] = round(
+        method_to_elapse["comp.backward"] = (
+            method_to_elapse["compute_loss"]
+            + method_to_elapse["backward_loss"]
+            + method_to_elapse["backward"]
+        )
+        method_to_percent["comp.backward"] = round(
             method_to_percent["compute_loss"]
             + method_to_percent["backward_loss"]
             + method_to_percent["backward"],
             1,
         )
-        method_to_percent["compute.others"] = round(
-            method_to_percent["forward"]
+
+        method_to_elapse["comp.others"] = (
+            + method_to_elapse["update"]
+            + method_to_elapse["get_input"]
+            + method_to_elapse["get_shard"]
+            + method_to_elapse["get_target"]
+        )
+        method_to_percent["comp.others"] = round(
             + method_to_percent["update"]
             + method_to_percent["get_input"]
             + method_to_percent["get_shard"]
             + method_to_percent["get_target"],
             1,
         )
-        method_to_percent["communication"] = round(
+
+        method_to_elapse["comm"] = (
+            method_to_elapse["allgather"] + method_to_elapse["reducescatter"]
+        )
+        method_to_percent["comm"] = round(
             method_to_percent["allgather"] + method_to_percent["reducescatter"], 1
         )
+
         logger.warning("")
         logger.warning(
-            f"dag.compute.backward, percent: {method_to_percent['compute.backward']}%"
+            f"dag.comp.forward sum {method_to_elapse['forward']} us, percent: {method_to_percent['forward']}%"
         )
         logger.warning(
-            f"dag.compute.others, percent: {method_to_percent['compute.others']}%"
+            f"dag.comp.backward sum {method_to_elapse['comp.backward']} us, percent: {method_to_percent['comp.backward']}%"
         )
         logger.warning(
-            f"dag.communication, percent: {method_to_percent['communication']}%"
+            f"dag.comp.others sum {method_to_elapse['comp.others']} us, percent: {method_to_percent['comp.others']}%"
+        )
+        logger.warning(
+            f"dag.comm.allgather sum {method_to_elapse['allgather']} us, percent: {method_to_percent['allgather']}%"
+        )
+        logger.warning(
+            f"dag.comm.reducescatter sum {method_to_elapse['reducescatter']} us, percent: {method_to_percent['reducescatter']}%"
+        )
+        logger.warning(
+            f"dag.comm sum {method_to_elapse['comm']} us, percent: {method_to_percent['comm']}%"
         )
 
         logger.warning("")
