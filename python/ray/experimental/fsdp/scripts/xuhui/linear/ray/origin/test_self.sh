@@ -26,23 +26,20 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/barbell/linear/ray/no_overlap/test_self
+output_path=results/xuhui/linear/ray/origin/test_self
 mkdir -p $output_path
 
-layer_size=2560
-num_layers=10
-num_partitions=10
-num_actors=2
+layer_size=1024
+num_layers=8
+num_partitions=4
+num_actors=4
 num_iters=10
 latency_prefix=${timestamp}_ls${layer_size}_nl${num_layers}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
-# RAY_CGRAPH_ENABLE_NVTX_PROFILING=1 \
-# nsys profile -t nvtx,cuda -o profile \
-
 RAY_CGRAPH_VISUALIZE_SCHEDULE=1 \
-	python -m ray.experimental.fsdp.src.main.linear.ray.no_overlap \
+	python -m ray.experimental.fsdp.src.main.linear.ray.origin \
 	--layer-size $layer_size \
 	--num-layers $num_layers \
 	--num-partitions $num_partitions \
@@ -93,4 +90,3 @@ compare_files() {
 # compare_files "$file1" "$file2"
 
 echo -e "${GREEN}AC${NC}"
-echo $log_file
