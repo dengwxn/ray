@@ -76,12 +76,6 @@ class LinearActor:
         self.intermediates = []
         torch.cuda.synchronize()
 
-    def update_tracing(self, key: str) -> None:
-        event = torch.cuda.Event(enable_timing=True)
-        event.record()
-        assert key in self.events
-        self.events[key].append(event)
-
     def init_tracing(self) -> None:
         self.events: Dict[str, torch.cuda.Event] = {
             "start": [],
@@ -97,6 +91,12 @@ class LinearActor:
             "bw.upd.starts": [],
             "bw.upd.ends": [],
         }
+
+    def update_tracing(self, key: str) -> None:
+        event = torch.cuda.Event(enable_timing=True)
+        event.record()
+        assert key in self.events
+        self.events[key].append(event)
 
     def finish_tracing(self) -> None:
         torch.cuda.synchronize()
@@ -197,14 +197,17 @@ class LinearActor:
             self.update_tracing("start")
         if self.tracing:
             self.update_tracing("fw.starts")
+
         shard = self.shards[idx]
         shard.set_flat_param(flat_param)
         pred = shard.forward(input)
+
         if idx < len(self.shards) - 1:
             pred_as_input = pred.detach().requires_grad_(True)
         else:
             pred_as_input = pred
         self.intermediates.append((pred, pred_as_input))
+
         if idx < len(self.shards) - 1:
             shard.free_peer_shards()
         if self.tracing:

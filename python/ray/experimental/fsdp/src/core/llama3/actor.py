@@ -1,12 +1,12 @@
 import logging
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
 import ray
 from ..common import millis_to_micros
-from .model import BucketParameter, Shard, TransformerBP, shard_model
+from .model import Shard, TransformerBP, shard_model
 
 logger = logging.getLogger(__name__)
 
@@ -16,33 +16,33 @@ class LlamaActor:
     def __init__(
         self,
         model_args,
-        rank: int,
         num_partitions: int,
         num_actors: int,
         tracing: bool,
     ):
-        torch.manual_seed(998244353)
-
         self.device = torch.device("cuda:0")
+
         logger.info(f"model_args: {model_args}")
         self.model_args = model_args
-        self.model = TransformerBP(model_args).to(self.device)
-        self.bparams = self.model.bparams
-        assert len(self.bparams) == num_partitions
-
-        self.rank = rank
         self.num_partitions = num_partitions
         self.num_actors = num_actors
         self.tracing = tracing
 
+        self.shards: List[Shard] = []
+        self.input: Optional[torch.Tensor] = None
+        self.target: Optional[torch.Tensor] = None
+        self.intermediates: List[Tuple[torch.Tensor, torch.Tensor]] = []
         self.criterion = torch.nn.CrossEntropyLoss()
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
 
         self.it = 0
+        self.events: Dict[str, Any] = {}
         self.elapses: Dict[str, List] = defaultdict(list)
 
     def init_and_shard_model(self) -> List[List[Shard]]:
-        bparams = self.bparams
+        torch.manual_seed(998244353)
+        model = TransformerBP(self.model_args).to(self.device)
+        bparams = model.bparams
+        assert len(bparams) == self.num_partitions
         for bparam in bparams:
             bparam.init_weights()
         actor_to_shards = [[] for _ in range(self.num_actors)]
@@ -56,6 +56,7 @@ class LlamaActor:
         self.shards = [shard.to(self.device) for shard in shards]
 
     def init_training(self) -> None:
+        # [TODO] Seed.
         batch_size = 1
         seq_len = 1024
 
@@ -72,6 +73,8 @@ class LlamaActor:
             requires_grad=True,
             device=self.device,
         )
+        self.intermediates = []
+        torch.cuda.synchronize()
 
         self.events: Dict[str, torch.cuda.Event] = {
             "start": [],
@@ -189,20 +192,23 @@ class LlamaActor:
             self.update_tracing("start")
         if self.tracing:
             self.update_tracing("fw.starts")
+
         shard = self.shards[idx]
         shard.set_flat_param(flat_param)
         if idx == 0:
             pred = shard.forward(input)
             freqs_cis, mask = shard.post_hook(input, pred)
-        elif idx < len(self.bparams) - 1:
+        elif idx < len(self.shards) - 1:
             pred = shard.forward_transformer(input, 0, freqs_cis, mask)
         else:
             pred = shard.forward(shard.pre_hook(input))
+
         if idx < len(self.shards) - 1:
             pred_as_input = pred.detach().requires_grad_(True)
         else:
             pred_as_input = pred
         self.intermediates.append((pred, pred_as_input))
+
         if idx < len(self.shards) - 1:
             shard.free_peer_shards()
         if self.tracing:
@@ -210,6 +216,7 @@ class LlamaActor:
         return pred_as_input
 
     def forward_origin(self, _) -> torch.Tensor:
+        raise NotImplementedError
         self.update_tracing("start")
         self.update_tracing("fw.starts")
         self.intermediates = []
@@ -264,31 +271,6 @@ class LlamaActor:
             self.update_tracing("bw.grad.ends")
         return flat_grad
 
-    def backward_origin(self, _, idx: int) -> torch.Tensor:
-        self.update_tracing("bw.grad.starts")
-        if idx == len(self.bparams) - 1:
-            loss = self.bparams[idx].criterion(
-                self.intermediates[idx][0],
-                self.target,
-            )
-            pred = None
-            grad = None
-        else:
-            loss = None
-            pred, input = self.intermediates[idx]
-            grad = input.grad
-        grads = self.bparams[idx].backward(
-            loss=loss,
-            pred=pred,
-            grad=grad,
-        )
-        self.update_tracing("bw.grad.ends")
-        return grads
-
-    def backward_aio(self, _) -> torch.Tensor:
-        for i in reversed(range(len(self.bparams))):
-            self.backward_origin(_, i)
-
     def update(self, idx: int, grad: torch.Tensor, grad_passed: bool) -> None:
         if self.tracing:
             self.update_tracing("bw.upd.starts")
@@ -301,18 +283,22 @@ class LlamaActor:
             self.update_tracing("end")
 
     def copy(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
+        raise NotImplementedError
         if grads_passed:
             grads_cat /= self.num_actors
         self.bparams[idx].copy(grads_cat, grads_passed)
 
     def copy_aio(self, _) -> None:
+        raise NotImplementedError
         for i in reversed(range(len(self.bparams))):
             self.copy(_, False, i)
 
     def step(self, idx: int) -> None:
+        raise NotImplementedError
         self.bparams[idx].step()
 
     def step_aio(self, _) -> None:
+        raise NotImplementedError
         # [NOTE] It is slower to use a single optimizer.
         # self.optimizer.step()
         # self.optimizer.zero_grad()
@@ -322,6 +308,7 @@ class LlamaActor:
     def update_origin(
         self, grads_cat: torch.Tensor, grads_passed: bool, idx: int
     ) -> None:
+        raise NotImplementedError
         self.update_tracing("bw.upd.starts")
         self.copy(grads_cat, grads_passed, idx)
         self.step(idx)
@@ -330,6 +317,7 @@ class LlamaActor:
             self.update_tracing("end")
 
     def update_aio(self, _) -> None:
+        raise NotImplementedError
         for i in reversed(range(len(self.bparams))):
             self.update_origin(_, False, i)
 

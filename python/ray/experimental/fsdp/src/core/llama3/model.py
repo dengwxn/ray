@@ -456,7 +456,7 @@ class BucketParameter(nn.Module):
             )
         params = [param for _, param in self.named_params]
         self.criterion = torch.nn.CrossEntropyLoss()
-        self.optimizer = torch.optim.SGD(params, lr=1e-6)
+        self.optimizer = torch.optim.AdamW(params, lr=1e-6)
 
         self.init_weights()
 
@@ -467,7 +467,7 @@ class BucketParameter(nn.Module):
             else:
                 nn.init.zeros_(param)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         for layer in self.layers:
             x = layer(x)
         return x
@@ -507,21 +507,6 @@ class BucketParameter(nn.Module):
         )
         return grads_cat
 
-    def copy(self, grads_cat: torch.Tensor, grads_passed: bool) -> None:
-        if grads_passed:
-            offset = 0
-            for _, param in self.named_params:
-                # if param.grad is None:
-                #     continue
-                size = param.data.numel()
-                grad = grads_cat[offset : offset + size].reshape(param.data.shape)
-                param.grad = grad
-                offset += size
-
-    def step(self) -> None:
-        self.optimizer.step()
-        self.optimizer.zero_grad()
-
     def update(self, grads_cat: torch.Tensor, grads_passed: bool) -> None:
         if grads_passed:
             offset = 0
@@ -534,6 +519,23 @@ class BucketParameter(nn.Module):
                 offset += size
             del grads_cat
 
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+
+    def copy(self, grads_cat: torch.Tensor, grads_passed: bool) -> None:
+        raise NotImplementedError
+        if grads_passed:
+            offset = 0
+            for _, param in self.named_params:
+                # if param.grad is None:
+                #     continue
+                size = param.data.numel()
+                grad = grads_cat[offset : offset + size].reshape(param.data.shape)
+                param.grad = grad
+                offset += size
+
+    def step(self) -> None:
+        raise NotImplementedError
         self.optimizer.step()
         self.optimizer.zero_grad()
 
@@ -561,16 +563,18 @@ class Shard(torch.nn.Module):
 
     def __init__(
         self,
-        model: torch.nn.Module,
+        model: BucketParameter,
         sharded_param: torch.Tensor,
         model_metadata: List[Tuple[torch.Size, int]],
     ) -> None:
         super().__init__()
 
         self.model = model
+        self.pre_hook = model.pre_hook
+        self.post_hook = model.post_hook
         self.sharded_param = torch.nn.Parameter(sharded_param, requires_grad=True)
         self.model_metadata = model_metadata
-        self.optimizer = torch.optim.SGD([self.sharded_param], lr=1e-3)
+        self.optimizer = torch.optim.AdamW([self.sharded_param], lr=1e-6)
 
     def set_flat_param(self, flat_param: torch.Tensor) -> None:
         _set_flat_param(self.model, flat_param, self.model_metadata)
@@ -585,7 +589,16 @@ class Shard(torch.nn.Module):
         _free_peer_shards(self.model)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.model(x)
+        return self.model.forward(x)
+
+    def forward_transformer(
+        self,
+        x: torch.Tensor,
+        start_pos: int,
+        freqs_cis: torch.Tensor,
+        mask: Optional[torch.Tensor],
+    ):
+        return self.model.forward_transformer(x, start_pos, freqs_cis, mask)
 
     def update(self, grad: torch.Tensor, grad_passed: bool) -> None:
         if grad_passed:
