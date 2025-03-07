@@ -26,17 +26,17 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/barbell/llama3/ray/no_overlap/exp_self
+output_path=results/barbell/llama3/ray/origin/test_self
 mkdir -p $output_path
 
 num_partitions=18
 num_actors=2
-num_iters=20
+num_iters=5
 latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
-python -m ray.experimental.fsdp.src.main.llama3.ray.no_overlap \
+python -m ray.experimental.fsdp.src.main.llama3.ray.origin \
 	--num-partitions $num_partitions \
 	--num-actors $num_actors \
 	--num-iters $num_iters \

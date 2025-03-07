@@ -41,10 +41,10 @@ class ModelArgs:
 
 
 LLAMA_DEBUG = ModelArgs(
-    dim=256,  # 1/8
+    dim=1024,  # 1/2
     n_layers=16,
-    n_heads=4,  # 1/8
-    n_kv_heads=1,  # 1/8
+    n_heads=32,
+    n_kv_heads=8,
     vocab_size=128256,
     multiple_of=256,
     ffn_dim_multiplier=1.5,
