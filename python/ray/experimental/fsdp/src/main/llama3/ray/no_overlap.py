@@ -27,12 +27,11 @@ def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
     actors = [
         actor_cls.remote(
             model_args,
-            rank=i,
             num_partitions=num_partitions,
             num_actors=num_actors,
             tracing=tracing,
         )
-        for i in range(num_actors)
+        for _ in range(num_actors)
     ]
 
     return actors
@@ -157,7 +156,6 @@ def train(
     for iter in range(num_iters):
         for actor in actors:
             ray.get(actor.init_training.remote())
-            ray.get(actor.init_tracing.remote())
 
         start = get_start_time()
         compiled_dag.execute(None)
