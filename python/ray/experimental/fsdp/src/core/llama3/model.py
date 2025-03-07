@@ -454,8 +454,8 @@ class BucketParameter(nn.Module):
                     self.hook_layers.named_parameters(),
                 )
             )
-        params = [param for _, param in self.named_params]
         self.criterion = torch.nn.CrossEntropyLoss()
+        params = [param for _, param in self.named_params]
         self.optimizer = torch.optim.AdamW(params, lr=1e-6)
 
         self.init_weights()

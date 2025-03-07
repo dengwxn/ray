@@ -1,7 +1,7 @@
 import csv
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 import numpy as np
 import torch
@@ -35,42 +35,6 @@ def millis_to_micros(ms: float) -> int:
     Converts milliseconds to microseconds.
     """
     return round(ms * 1e3)
-
-
-def get_metrics_aliases(tracing: bool) -> Tuple[List[str], List[Optional[str]]]:
-    if not tracing:
-        metrics = [
-            "total",
-            "actor.total",
-        ]
-        alias = [
-            "!total",
-            None,
-        ]
-    else:
-        metrics = [
-            "total",
-            "actor.total",
-            "fw.total",
-            "comp.loss.total",
-            "bw.total",
-            "bw.loss",
-            "bw.grad",
-            "bw.grad_others",
-            "bw.upd",
-        ]
-        alias = [
-            "!total",
-            None,  # "actor.total",
-            "!fw.total",
-            None,  # "comp.loss.total",
-            None,  # "bw.total",
-            "!bw.loss",
-            "!bw.grad",
-            "!bw.grad_others",
-            None,  # "bw.upd",
-        ]
-    return metrics, alias
 
 
 def log_elapses_to_csv(

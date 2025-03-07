@@ -1,13 +1,8 @@
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 import ray
-from ....core.common import (
-    get_end_time,
-    get_metrics_aliases,
-    get_start_time,
-    log_elapses_to_csv,
-)
+from ....core.common import get_end_time, get_start_time, log_elapses_to_csv
 from ....core.config import parse_args
 from ....core.linear.actor import LinearActor
 from ray.dag import InputNode, MultiOutputNode
@@ -43,6 +38,42 @@ def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
     ]
 
     return actors
+
+
+def get_metrics_aliases(tracing: bool) -> Tuple[List[str], List[Optional[str]]]:
+    if not tracing:
+        metrics = [
+            "total",
+            "actor.total",
+        ]
+        alias = [
+            "!total",
+            None,
+        ]
+    else:
+        metrics = [
+            "total",
+            "actor.total",
+            "fw.total",
+            "comp.loss.total",
+            "bw.total",
+            "bw.loss",
+            "bw.grad",
+            "bw.grad_others",
+            "bw.upd",
+        ]
+        alias = [
+            "!total",
+            None,  # "actor.total",
+            "!fw.total",
+            None,  # "comp.loss.total",
+            None,  # "bw.total",
+            "!bw.loss",
+            "!bw.grad",
+            "!bw.grad_others",
+            None,  # "bw.upd",
+        ]
+    return metrics, alias
 
 
 def train(

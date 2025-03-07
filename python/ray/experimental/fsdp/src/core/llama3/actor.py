@@ -20,6 +20,7 @@ class LlamaActor:
         num_actors: int,
         tracing: bool,
     ):
+        self.seed = 998244353
         self.device = torch.device("cuda:0")
 
         logger.info(f"model_args: {model_args}")
@@ -39,7 +40,7 @@ class LlamaActor:
         self.elapses: Dict[str, List] = defaultdict(list)
 
     def init_and_shard_model(self) -> List[List[Shard]]:
-        torch.manual_seed(998244353)
+        torch.manual_seed(2025)
         model = TransformerBP(self.model_args).to(self.device)
         bparams = model.bparams
         assert len(bparams) == self.num_partitions
@@ -56,7 +57,8 @@ class LlamaActor:
         self.shards = [shard.to(self.device) for shard in shards]
 
     def init_training(self) -> None:
-        # [TODO] Seed.
+        torch.manual_seed(self.seed)
+        self.seed += 1
         batch_size = 1
         seq_len = 1024
 
@@ -74,7 +76,8 @@ class LlamaActor:
             device=self.device,
         )
         self.intermediates = []
-        torch.cuda.synchronize()
+        self.freqs_cis = None
+        self.mask = None
 
         self.events: Dict[str, torch.cuda.Event] = {
             "start": [],
@@ -90,6 +93,8 @@ class LlamaActor:
             "bw.upd.starts": [],
             "bw.upd.ends": [],
         }
+
+        torch.cuda.synchronize()
 
     def update_tracing(self, key: str) -> None:
         event = torch.cuda.Event(enable_timing=True)
@@ -197,9 +202,9 @@ class LlamaActor:
         shard.set_flat_param(flat_param)
         if idx == 0:
             pred = shard.forward(input)
-            freqs_cis, mask = shard.post_hook(input, pred)
+            self.freqs_cis, self.mask = shard.post_hook(input, pred)
         elif idx < len(self.shards) - 1:
-            pred = shard.forward_transformer(input, 0, freqs_cis, mask)
+            pred = shard.forward_transformer(input, 0, self.freqs_cis, self.mask)
         else:
             pred = shard.forward(shard.pre_hook(input))
 
@@ -320,58 +325,6 @@ class LlamaActor:
         raise NotImplementedError
         for i in reversed(range(len(self.bparams))):
             self.update_origin(_, False, i)
-
-
-class _Actor_V6:
-    def __init__(self, model_args):
-        logger.info(f"model_args: {model_args}")
-        self.model_args = model_args
-        self.model = TransformerBP(model_args).to("cuda")
-        self.bparams = self.model.bparams
-        self.criterion = torch.nn.CrossEntropyLoss()
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
-
-    def init_training(self) -> None:
-        batch_size = 1
-        seq_len = 1024
-        self.input_ids = torch.randint(
-            0,
-            self.model_args.vocab_size,
-            (batch_size, seq_len),
-        ).to("cuda")
-        self.target_ids = torch.randn(
-            batch_size,
-            seq_len,
-            self.model_args.vocab_size,
-            requires_grad=True,
-        ).to("cuda")
-
-    def forward(self, _) -> torch.Tensor:
-        self.intermediates = []
-        tokens = self.input_ids
-        input, freqs_cis, mask = None, None, None
-        for i, bp in enumerate(self.bparams):
-            if i == 0:
-                pred = bp.forward(tokens)
-                freqs_cis, mask = bp.post_hook(tokens, pred)
-            elif i < len(self.bparams) - 1:
-                pred = bp.forward_transformer(input, 0, freqs_cis, mask)
-            else:
-                pred = bp.forward(bp.pre_hook(input))
-            input = pred
-            self.intermediates.append((pred, input))
-        return pred
-
-    def backward(self, _) -> None:
-        loss = self.criterion(
-            self.intermediates[-1][0],
-            self.target_ids,
-        )
-        loss.backward()
-
-    def update(self, _) -> None:
-        self.optimizer.step()
-        self.optimizer.zero_grad()
 
 
 class _Actor_V5:

@@ -1,11 +1,11 @@
 import logging
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
 import ray
-from ....core.common import get_metrics_aliases, log_elapses_to_csv
+from ....core.common import log_elapses_to_csv
 from ....core.config import parse_args
 from ....core.llama3.actor import LlamaActor
 from ....core.llama3.model import LLAMA_DEBUG as LLAMA
@@ -39,6 +39,42 @@ def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
     ]
 
     return actors
+
+
+def get_metrics_aliases(tracing: bool) -> Tuple[List[str], List[Optional[str]]]:
+    if not tracing:
+        metrics = [
+            "total",
+            "actor.total",
+        ]
+        alias = [
+            "!total",
+            None,
+        ]
+    else:
+        metrics = [
+            "total",
+            "actor.total",
+            "fw.total",
+            "comp.loss.total",
+            "bw.total",
+            "bw.loss",
+            "bw.grad",
+            "bw.grad_others",
+            "bw.upd",
+        ]
+        alias = [
+            "!total",
+            None,  # "actor.total",
+            "!fw.total",
+            None,  # "comp.loss.total",
+            None,  # "bw.total",
+            "!bw.loss",
+            "!bw.grad",
+            "!bw.grad_others",
+            None,  # "bw.upd",
+        ]
+    return metrics, alias
 
 
 def train(
