@@ -3,7 +3,7 @@ import logging
 import torch
 
 from .....core.common import get_end_time, get_start_time
-from .....core.llama3.actor import _Actor_V4 as Actor
+from .....core.llama3.actor import _Actor_V6 as Actor
 from .....core.llama3.model import LLAMA_DEBUG as LLAMA
 
 logging.basicConfig(
@@ -34,31 +34,18 @@ def main():
             logger.info(f"forward: {round((fw_end - fw_start) * 1e3)} ms")
 
         bw_start = get_start_time()
-        for j in reversed(range(len(actor.bparams))):
-            bw_j_start = get_start_time()
-            actor.backward(None, j)
-            bw_j_end = get_end_time()
-            if i >= n_warmup_iters:
-                logger.info(
-                    f"backward partition {j}: {round((bw_j_end - bw_j_start) * 1e3)} ms"
-                )
+        actor.backward(None)
         bw_end = get_end_time()
         if i >= n_warmup_iters:
             logger.info(f"backward: {round((bw_end - bw_start) * 1e3)} ms")
 
-        copy_start = get_start_time()
-        actor.copy_aio(None)
-        copy_end = get_end_time()
+        upd_start = get_start_time()
+        actor.update(None)
+        upd_end = get_end_time()
         if i >= n_warmup_iters:
-            logger.info(f"copy: {round((copy_end - copy_start) * 1e3)} ms")
-
-        step_start = get_start_time()
-        actor.step_aio(None)
-        step_end = get_end_time()
-        if i >= n_warmup_iters:
-            logger.info(f"step: {round((step_end - step_start) * 1e3)} ms")
-            logger.info(f"backward and update: {round((step_end - bw_start) * 1e3)} ms")
-            logger.info(f"iter {i}: {round((step_end - fw_start) * 1e3)} ms")
+            logger.info(f"update: {round((upd_end - upd_start) * 1e3)} ms")
+            logger.info(f"backward and update: {round((upd_end - bw_start) * 1e3)} ms")
+            logger.info(f"iter {i}: {round((upd_end - fw_start) * 1e3)} ms")
             logger.info("")
 
 
