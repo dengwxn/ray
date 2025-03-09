@@ -65,6 +65,4 @@ for i in "${!layer_size_values[@]}"; do
 		--tracing \
 		>$log_file 2>&1
 	status=$?
-
-	sleep 10
 done
