@@ -136,7 +136,7 @@ class LinearActor:
             assert len(self.events["comp.loss.starts"]) == 1
             assert len(self.events["comp.loss.ends"]) == 1
             log(
-                "comp.loss.total",
+                "loss.total",
                 self.events["comp.loss.starts"][0].elapsed_time(
                     self.events["comp.loss.ends"][0]
                 ),

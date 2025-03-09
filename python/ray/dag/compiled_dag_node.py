@@ -262,7 +262,9 @@ def do_exec_tasks(
             avg_us = round(elapse / count)
             percent = round(elapse / total_us * 100, 1)
             method_to_percent[method] = percent
-            logger.warning(f"dag.{method} sum: {elapse} us, avg: {avg_us} us, percent: {percent}%")
+            logger.warning(
+                f"op.{method} sum: {elapse} us, avg: {avg_us} us, percent: {percent}%"
+            )
 
         method_to_elapse["comp.backward"] = (
             method_to_elapse["compute_loss"]
@@ -277,13 +279,13 @@ def do_exec_tasks(
         )
 
         method_to_elapse["comp.others"] = (
-            + method_to_elapse["update"]
+            method_to_elapse["update"]
             + method_to_elapse["get_input"]
             + method_to_elapse["get_shard"]
             + method_to_elapse["get_target"]
         )
         method_to_percent["comp.others"] = round(
-            + method_to_percent["update"]
+            method_to_percent["update"]
             + method_to_percent["get_input"]
             + method_to_percent["get_shard"]
             + method_to_percent["get_target"],
@@ -299,22 +301,22 @@ def do_exec_tasks(
 
         logger.warning("")
         logger.warning(
-            f"dag.comp.forward sum {method_to_elapse['forward']} us, percent: {method_to_percent['forward']}%"
+            f"op.comp.forward sum {method_to_elapse['forward']} us, percent: {method_to_percent['forward']}%"
         )
         logger.warning(
-            f"dag.comp.backward sum {method_to_elapse['comp.backward']} us, percent: {method_to_percent['comp.backward']}%"
+            f"op.comp.backward sum {method_to_elapse['comp.backward']} us, percent: {method_to_percent['comp.backward']}%"
         )
         logger.warning(
-            f"dag.comp.others sum {method_to_elapse['comp.others']} us, percent: {method_to_percent['comp.others']}%"
+            f"op.comp.others sum {method_to_elapse['comp.others']} us, percent: {method_to_percent['comp.others']}%"
         )
         logger.warning(
-            f"dag.comm.allgather sum {method_to_elapse['allgather']} us, percent: {method_to_percent['allgather']}%"
+            f"op.comm.allgather sum {method_to_elapse['allgather']} us, percent: {method_to_percent['allgather']}%"
         )
         logger.warning(
-            f"dag.comm.reducescatter sum {method_to_elapse['reducescatter']} us, percent: {method_to_percent['reducescatter']}%"
+            f"op.comm.reducescatter sum {method_to_elapse['reducescatter']} us, percent: {method_to_percent['reducescatter']}%"
         )
         logger.warning(
-            f"dag.comm sum {method_to_elapse['comm']} us, percent: {method_to_percent['comm']}%"
+            f"op.comm sum {method_to_elapse['comm']} us, percent: {method_to_percent['comm']}%"
         )
 
         logger.warning("")
@@ -1010,13 +1012,13 @@ class CompiledDAG:
         ] = {}
 
         # Set of actors involved in P2P communication using an unresolved communicator.
-        self._p2p_actors_with_unresolved_communicators: Set[
-            "ray.actor.ActorHandle"
-        ] = set()
+        self._p2p_actors_with_unresolved_communicators: Set["ray.actor.ActorHandle"] = (
+            set()
+        )
         # Set of DAG nodes involved in P2P communication using an unresolved communicator.
-        self._p2p_dag_nodes_with_unresolved_communicators: Set[
-            "ray.dag.DAGNode"
-        ] = set()
+        self._p2p_dag_nodes_with_unresolved_communicators: Set["ray.dag.DAGNode"] = (
+            set()
+        )
         # Set of collective operations using an unresolved communicator.
         self._collective_ops_with_unresolved_communicators: Set[
             "ray.dag.collective_node._CollectiveOperation"
@@ -1072,9 +1074,9 @@ class CompiledDAG:
         self.worker_task_refs: Dict["ray.actor.ActorHandle", "ray.ObjectRef"] = {}
         # Set of actors present in the DAG.
         self.actor_refs = set()
-        self.actor_to_tasks: Dict[
-            "ray.actor.ActorHandle", List["CompiledTask"]
-        ] = defaultdict(list)
+        self.actor_to_tasks: Dict["ray.actor.ActorHandle", List["CompiledTask"]] = (
+            defaultdict(list)
+        )
         # Mapping from actor handle to its GPU IDs.
         # This is used for type hint resolution for with_tensor_transport("auto").
         self.actor_to_gpu_ids: Dict["ray.actor.ActorHandle", List[str]] = {}

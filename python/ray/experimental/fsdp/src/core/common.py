@@ -30,11 +30,11 @@ def secs_to_micros(secs: float) -> int:
     return round(secs * 1e6)
 
 
-def millis_to_micros(ms: float) -> int:
+def millis_to_micros(millis: float) -> int:
     """
     Converts milliseconds to microseconds.
     """
-    return round(ms * 1e3)
+    return round(millis * 1e3)
 
 
 def log_elapses_to_csv(
