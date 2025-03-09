@@ -17,7 +17,7 @@ def get_end_time(sync: bool = True) -> float:
     return time.perf_counter()
 
 
-def get_timing_event() -> torch.cuda.Event:
+def get_timing_event_torch() -> torch.cuda.Event:
     event = torch.cuda.Event(enable_timing=True)
     event.record()
     return event

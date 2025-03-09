@@ -241,6 +241,7 @@ def do_exec_tasks(
         if RAY_CGRAPH_ENABLE_NVTX_PROFILING:
             nvtx_profile.disable()
 
+        import cupy as cp
         import torch
 
         torch.cuda.synchronize()
@@ -249,7 +250,7 @@ def do_exec_tasks(
         method_to_elapse: Dict[str, float] = defaultdict(float)
         for task, start, end in events:
             if start is not None and end is not None:
-                elapse_us = start.elapsed_time(end) * 1e3
+                elapse_us = cp.cuda.get_elapsed_time(start, end) * 1e3
                 method_to_count[task.method_name] += 1
                 method_to_elapse[task.method_name] += elapse_us
         for method in method_to_elapse:
@@ -772,10 +773,17 @@ class ExecutableTask:
         Returns:
             True if the next operation should not be executed; otherwise, False.
         """
-        import torch
+        # import torch
 
-        def get_timing_event() -> torch.cuda.Event:
-            ev = torch.cuda.Event(enable_timing=True)
+        # def get_timing_event_torch() -> torch.cuda.Event:
+        #     ev = torch.cuda.Event(enable_timing=True)
+        #     ev.record()
+        #     return ev
+
+        import cupy as cp
+
+        def get_timing_event_cp() -> cp.cuda.Event:
+            ev = cp.cuda.Event()
             ev.record()
             return ev
 
@@ -816,9 +824,9 @@ class ExecutableTask:
         if input_exc is not None:
             try:
                 assert self.output_writer is not None
-                start = get_timing_event()
+                start = get_timing_event_cp()
                 self.output_writer.write(input_exc)
-                end = get_timing_event()
+                end = get_timing_event_cp()
                 return False, start, end
             except RayChannelError:
                 return True
@@ -830,9 +838,9 @@ class ExecutableTask:
             method = getattr(class_handle, self.method_name)
 
         try:
-            start = get_timing_event()
+            start = get_timing_event_cp()
             output_val = method(*input_values, **self.resolved_kwargs)
-            end = get_timing_event()
+            end = get_timing_event_cp()
         except RayChannelError:
             return True
         except Exception as exc:

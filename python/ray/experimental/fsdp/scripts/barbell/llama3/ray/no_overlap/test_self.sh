@@ -36,6 +36,9 @@ latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
+# nsys profile -t nvtx,cuda -o profile \
+# python -m ray.experimental.fsdp.src.main.llama3.ray.fsdp \
+
 python -m ray.experimental.fsdp.src.main.llama3.ray.no_overlap \
 	--num-partitions $num_partitions \
 	--num-actors $num_actors \

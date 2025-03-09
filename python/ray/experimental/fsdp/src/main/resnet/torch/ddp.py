@@ -8,7 +8,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from ....core.common import get_timing_event, log_elapses_to_csv, millis_to_micros
+from ....core.common import get_timing_event_torch, log_elapses_to_csv, millis_to_micros
 from ....core.config import parse_args
 from ....core.resnet.model import resnet152_mp
 
@@ -113,30 +113,30 @@ def spwan_torch_fsdp(
 
             torch.cuda.synchronize()
             dist.barrier()
-            start = get_timing_event()
+            start = get_timing_event_torch()
 
-            forward_start = get_timing_event()
+            forward_start = get_timing_event_torch()
             pred = fsdp_model(x)
-            forward_end = get_timing_event()
+            forward_end = get_timing_event_torch()
 
-            loss_compute_start = get_timing_event()
+            loss_compute_start = get_timing_event_torch()
             loss = criterion(pred, y)
-            loss_compute_end = get_timing_event()
+            loss_compute_end = get_timing_event_torch()
 
-            backward_start = get_timing_event()
+            backward_start = get_timing_event_torch()
             loss.backward()
-            backward_end = get_timing_event()
+            backward_end = get_timing_event_torch()
 
-            update_start = get_timing_event()
+            update_start = get_timing_event_torch()
             optimizer.step()
             optimizer.zero_grad()
-            update_end = get_timing_event()
+            update_end = get_timing_event_torch()
 
             torch.cuda.synchronize()
-            barrier_start = get_timing_event()
+            barrier_start = get_timing_event_torch()
 
             dist.barrier()
-            end = get_timing_event()
+            end = get_timing_event_torch()
 
             torch.cuda.synchronize()
 

@@ -42,7 +42,7 @@ num_layers_values=(
 
 num_partitions=10
 num_actors=2
-num_iters=20
+num_iters=30
 
 for i in "${!layer_size_values[@]}"; do
 	layer_size="${layer_size_values[$i]}"
@@ -65,4 +65,6 @@ for i in "${!layer_size_values[@]}"; do
 		--tracing \
 		>$log_file 2>&1
 	status=$?
+
+	sleep 10
 done
