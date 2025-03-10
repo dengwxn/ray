@@ -42,7 +42,7 @@ def log_elapses_to_csv(
     output_path: str,
     latency_prefix: str,
     metrics: List[str],
-    alias: List[str],
+    aliases: List[str],
     warmup: float = 0.2,
 ) -> None:
     # Create output directory if it doesn't exist
@@ -66,7 +66,7 @@ def log_elapses_to_csv(
             writer = csv.writer(csvfile)
             writer.writerow(["name", "mean", "std", "cv", "percent"])
 
-            for metric, alias in zip(metrics, alias):
+            for metric, alias in zip(metrics, aliases):
                 if alias is None:
                     alias = metric
                 values = np.array(metric_values[metric])

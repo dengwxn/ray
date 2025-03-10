@@ -7,7 +7,6 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp.api import BackwardPrefetch
 
 from ....core.common import get_timing_event_torch, log_elapses_to_csv, millis_to_micros
 from ....core.config import parse_args
@@ -100,9 +99,9 @@ def spwan_torch_fsdp(
         fsdp_model = FSDP(
             model,
             device_id=device,
-            backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
-            forward_prefetch=True,
-            use_orig_params=False,
+            backward_prefetch=None,  # Disabled prefetching
+            forward_prefetch=False,  # Disabled forward prefetching
+            use_orig_params=True,  # Disable parameter flattening
         )
 
         elapses = defaultdict(list)
