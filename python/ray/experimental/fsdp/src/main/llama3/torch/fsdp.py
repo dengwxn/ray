@@ -6,16 +6,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp.api import BackwardPrefetch
 
-from ....core.common import (
-    get_end_time,
-    get_start_time,
-    log_elapses_to_csv,
-    millis_to_micros,
-)
+from ....core.common import get_timing_event_torch, log_elapses_to_csv, millis_to_micros
 from ....core.config import parse_args
-from ....core.llama3.model import LLAMA_1B, TransformerBP
+from ....core.llama3.model import LLAMA_DEBUG as LLAMA
+from ....core.llama3.model import TransformerBP
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(filename)s:%(lineno)d -- %(message)s",
@@ -50,17 +47,28 @@ def run_torch_fsdp(
     latency_prefix = args["latency_prefix"]
     metrics = [
         "total",
+        "actor.total",
         "fw.total",
         "loss.compute",
-        "bw.bw_ar",
-        "bw.update",
+        "bw.total",
+        "bw.upd",
         "barrier",
+    ]
+    aliases = [
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
     ]
     log_elapses_to_csv(
         ranks_to_elapses_list,
         output_path,
         latency_prefix,
         metrics,
+        aliases,
     )
 
 
@@ -78,16 +86,23 @@ def spwan_torch_fsdp(
 
         dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
+        device = f"cuda:{rank}"
         torch.cuda.set_device(rank)
         torch.manual_seed(998244353)
 
-        model_args = LLAMA_1B
+        model_args = LLAMA
         logger.info(f"model_args: {model_args}")
         model = TransformerBP(model_args).to("cuda")
         size_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
         logger.warning(f"Model size: {size_bytes / 1024 / 1024} MiB")
 
-        fsdp_model = DDP(model, device_ids=[rank])
+        fsdp_model = FSDP(
+            model,
+            device_id=device,
+            backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
+            forward_prefetch=True,
+            use_orig_params=False,
+        )
 
         batch_size = 1
         seq_len = 1024
@@ -100,45 +115,47 @@ def spwan_torch_fsdp(
                 0,
                 model_args.vocab_size,
                 (batch_size, seq_len),
-            ).to("cuda")
+                device=device,
+            )
             target_ids = torch.randn(
                 batch_size,
                 seq_len,
                 model_args.vocab_size,
                 requires_grad=True,
-            ).to("cuda")
+                device=device,
+            )
 
             if rank == 0:
                 logger.info(f"iter: {iter}")
-                logger.info(f"input_ids: {input_ids}")
-                logger.info(f"target_ids: {target_ids}")
 
             torch.cuda.synchronize()
             dist.barrier()
-            start = get_start_time()
+            start = get_timing_event_torch()
 
-            forward_start = get_start_time()
+            fw_start = get_timing_event_torch()
             pred = fsdp_model(input_ids)
-            forward_end = get_end_time()
+            fw_end = get_timing_event_torch()
 
-            loss_compute_start = get_start_time()
+            loss_start = get_timing_event_torch()
             loss = criterion(pred, target_ids)
-            loss_compute_end = get_end_time()
+            loss_end = get_timing_event_torch()
 
-            backward_start = get_start_time()
+            bw_start = get_timing_event_torch()
             loss.backward()
-            backward_end = get_end_time()
+            bw_end = get_timing_event_torch()
 
-            update_start = get_start_time()
+            bw_upd_start = get_timing_event_torch()
             optimizer.step()
             optimizer.zero_grad()
-            update_end = get_end_time()
+            bw_upd_end = get_timing_event_torch()
 
-            barrier_start = get_start_time()
+            torch.cuda.synchronize()
+            barrier_start = get_timing_event_torch()
             dist.barrier()
-            end = get_end_time()
+            end = get_timing_event_torch()
+            torch.cuda.synchronize()
 
-            total_ms = (end - start) * 1e3
+            total_ms = start.elapsed_time(end)
 
             def log(key: str, elapse_ms: float):
                 elapse_us = millis_to_micros(elapse_ms)
@@ -147,12 +164,15 @@ def spwan_torch_fsdp(
                     f"rank: {rank}, {key} elapse: {elapse_us} us, percent: {round(elapse_ms / total_ms * 100, 1)}%"
                 )
 
-            log("total", total_ms)
-            log("fw.total", (forward_end - forward_start) * 1e3)
-            log("loss.compute", (loss_compute_end - loss_compute_start) * 1e3)
-            log("bw.bw_ar", (backward_end - backward_start) * 1e3)
-            log("bw.update", (update_end - update_start) * 1e3)
-            log("barrier", (end - barrier_start) * 1e3)
+            if iter > 0:
+                log("total", total_ms)
+                log("actor.total", total_ms)
+                log("fw.total", fw_start.elapsed_time(fw_end))
+                log("loss.compute", loss_start.elapsed_time(loss_end))
+                log("bw.total", bw_start.elapsed_time(bw_end))
+                log("bw.upd", bw_upd_start.elapsed_time(bw_upd_end))
+                log("barrier", barrier_start.elapsed_time(end))
+                logger.warning("")
     finally:
         dist.destroy_process_group()
 

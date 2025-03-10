@@ -28,10 +28,11 @@ export RAY_DEDUP_LOGS=0
 
 output_path=results/barbell/llama3/torch/fsdp
 mkdir -p $output_path
-# rm -f ${output_path}/*.csv
+rm -f ${output_path}/*.csv
+rm -f ${output_path}/*.log
 
 num_actors=2
-num_iters=10
+num_iters=20
 latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log

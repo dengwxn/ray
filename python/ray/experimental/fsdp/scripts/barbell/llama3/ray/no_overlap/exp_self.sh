@@ -28,6 +28,8 @@ export RAY_DEDUP_LOGS=0
 
 output_path=results/barbell/llama3/ray/no_overlap/exp_self
 mkdir -p $output_path
+rm -f ${output_path}/*.csv
+rm -f ${output_path}/*.log
 
 num_partitions=18
 num_actors=2

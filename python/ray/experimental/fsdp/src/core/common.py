@@ -59,7 +59,9 @@ def log_elapses_to_csv(
             ]
 
         # Calculate statistics for each metric
-        total_mean = np.mean(metric_values["total"]) if metric_values["total"] else 0
+        total_mean = (
+            np.mean(metric_values["actor.total"]) if metric_values["actor.total"] else 0
+        )
 
         # Write statistics to CSV file
         with open(output_file, "w", newline="") as csvfile:
