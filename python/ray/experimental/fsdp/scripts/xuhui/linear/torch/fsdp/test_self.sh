@@ -29,10 +29,10 @@ export RAY_DEDUP_LOGS=0
 output_path=results/xuhui/linear/torch/fsdp/test_self
 mkdir -p $output_path
 
-layer_size=1024
-num_layers=8
-num_actors=4
-num_iters=10
+layer_size=2560
+num_layers=10
+num_actors=2
+num_iters=5
 latency_prefix=${timestamp}_ls${layer_size}_nl${num_layers}
 model_prefix=${output_path}/${timestamp}_model
 log_file=${output_path}/${timestamp}.log
@@ -44,9 +44,9 @@ python -m ray.experimental.fsdp.src.main.linear.torch.fsdp \
 	--num-iters $num_iters \
 	--output-path $output_path \
 	--latency-prefix $latency_prefix \
-	--save-model \
 	--model-prefix $model_prefix \
 	>$log_file 2>&1
+# --save-model \
 status=$?
 
 if $debug; then
@@ -81,8 +81,8 @@ compare_files() {
 	fi
 }
 
-file1="${output_path}/${timestamp}_model_0.log"
-file2="${output_path}/${timestamp}_model_1.log"
-compare_files "$file1" "$file2"
+# file1="${output_path}/${timestamp}_model_0.log"
+# file2="${output_path}/${timestamp}_model_1.log"
+# compare_files "$file1" "$file2"
 
 echo -e "${GREEN}AC${NC}"

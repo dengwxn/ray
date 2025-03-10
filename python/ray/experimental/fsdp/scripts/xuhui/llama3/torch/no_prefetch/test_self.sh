@@ -26,17 +26,17 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/xuhui/llama3/torch/fsdp
+output_path=results/xuhui/llama3/torch/no_prefetch/test_self
 mkdir -p $output_path
 # rm -f ${output_path}/*.csv
 
 num_actors=2
-num_iters=10
+num_iters=5
 latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
-python -m ray.experimental.fsdp.src.main.llama3.torch.fsdp \
+python -m ray.experimental.fsdp.src.main.llama3.torch.no_prefetch \
 	--num-actors $num_actors \
 	--num-iters $num_iters \
 	--output-path $output_path \

@@ -26,32 +26,31 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/xuhui/llama3/ray/fsdp/exp_self
+output_path=results/xuhui/linear/torch/no_prefetch/test_self
 mkdir -p $output_path
-rm -f ${output_path}/*.csv
-rm -f ${output_path}/*.log
 
-num_partitions=18
-num_actors=4
-num_iters=20
-latency_prefix=${timestamp}
-model_prefix=$output_path/${timestamp}_model
-log_file=$output_path/${timestamp}.log
+layer_size=2560
+num_layers=10
+num_actors=2
+num_iters=5
+latency_prefix=${timestamp}_ls${layer_size}_nl${num_layers}
+model_prefix=${output_path}/${timestamp}_model
+log_file=${output_path}/${timestamp}.log
 
-python -m ray.experimental.fsdp.src.main.llama3.ray.fsdp \
-	--num-partitions $num_partitions \
+python -m ray.experimental.fsdp.src.main.linear.torch.no_prefetch \
+	--layer-size $layer_size \
+	--num-layers $num_layers \
 	--num-actors $num_actors \
 	--num-iters $num_iters \
 	--output-path $output_path \
 	--latency-prefix $latency_prefix \
 	--model-prefix $model_prefix \
-	--tracing \
 	>$log_file 2>&1
 # --save-model \
 status=$?
 
 if $debug; then
-	code $output_path/${timestamp}.log
+	code ${output_path}/${timestamp}.log
 fi
 
 if [ $status -ne 0 ]; then

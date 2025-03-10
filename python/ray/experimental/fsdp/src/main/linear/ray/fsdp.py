@@ -65,7 +65,7 @@ def get_metrics_aliases(tracing: bool) -> Tuple[List[str], List[Optional[str]]]:
         alias = [
             "!total",
             None,  # "actor.total",
-            "!fw.total",
+            None,  # "fw.total",
             None,  # "loss.total",
             None,  # "bw.total",
             "!bw.loss",
