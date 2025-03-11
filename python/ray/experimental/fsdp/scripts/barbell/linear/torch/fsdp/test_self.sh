@@ -32,7 +32,7 @@ mkdir -p $output_path
 layer_size=2560
 num_layers=10
 num_actors=2
-num_iters=5
+num_iters=20
 latency_prefix=${timestamp}_ls${layer_size}_nl${num_layers}
 model_prefix=${output_path}/${timestamp}_model
 log_file=${output_path}/${timestamp}.log
@@ -86,3 +86,4 @@ compare_files() {
 # compare_files "$file1" "$file2"
 
 echo -e "${GREEN}AC${NC}"
+echo $log_file

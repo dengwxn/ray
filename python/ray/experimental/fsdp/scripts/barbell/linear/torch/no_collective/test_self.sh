@@ -26,38 +26,31 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/barbell/linear/ray/fsdp/test_self
+output_path=results/barbell/linear/torch/no_collective/test_self
 mkdir -p $output_path
 
 layer_size=2560
 num_layers=10
-num_partitions=10
 num_actors=2
 num_iters=20
 latency_prefix=${timestamp}_ls${layer_size}_nl${num_layers}
-model_prefix=$output_path/${timestamp}_model
-log_file=$output_path/${timestamp}.log
+model_prefix=${output_path}/${timestamp}_model
+log_file=${output_path}/${timestamp}.log
 
-# RAY_CGRAPH_ENABLE_NVTX_PROFILING=1 \
-# nsys profile -t nvtx,cuda -o profile \
-
-RAY_CGRAPH_VISUALIZE_SCHEDULE=1 \
-	python -m ray.experimental.fsdp.src.main.linear.ray.fsdp \
+python -m ray.experimental.fsdp.src.main.linear.torch.no_collective \
 	--layer-size $layer_size \
 	--num-layers $num_layers \
-	--num-partitions $num_partitions \
 	--num-actors $num_actors \
 	--num-iters $num_iters \
 	--output-path $output_path \
 	--latency-prefix $latency_prefix \
-	--save-model \
 	--model-prefix $model_prefix \
-	--tracing \
 	>$log_file 2>&1
+# --save-model \
 status=$?
 
 if $debug; then
-	code $output_path/${timestamp}.log
+	code ${output_path}/${timestamp}.log
 fi
 
 if [ $status -ne 0 ]; then

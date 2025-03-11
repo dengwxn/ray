@@ -256,6 +256,18 @@ def do_exec_tasks(
         for method in method_to_elapse:
             method_to_elapse[method] = round(method_to_elapse[method])
 
+        def log_op(
+            method: str, sum: float, percent: float, avg: Optional[float] = None
+        ):
+            if avg is None:
+                logger.warning(
+                    f"{method} sum: {round(1.25 * sum)} us, sum/20: {round(1.25 * sum / 20)} us, percent: {percent}%"
+                )
+            else:
+                logger.warning(
+                    f"{method} sum: {round(1.25 * sum)} us, sum/20: {round(1.25 * sum / 20)} us, avg: {avg} us, percent: {percent}%"
+                )
+
         method_to_percent: Dict[str, float] = {}
         total_us = sum(method_to_elapse.values())
         for method, elapse in method_to_elapse.items():
@@ -263,9 +275,7 @@ def do_exec_tasks(
             avg_us = round(elapse / count)
             percent = round(elapse / total_us * 100, 1)
             method_to_percent[method] = percent
-            logger.warning(
-                f"op.{method} sum: {elapse} us, avg: {avg_us} us, percent: {percent}%"
-            )
+            log_op(f"op.{method}", elapse, percent, avg_us)
 
         method_to_elapse["comp.backward"] = (
             method_to_elapse["compute_loss"]
@@ -301,24 +311,30 @@ def do_exec_tasks(
         )
 
         logger.warning("")
-        logger.warning(
-            f"op.comp.forward sum {method_to_elapse['forward']} us, percent: {method_to_percent['forward']}%"
+        log_op(
+            "op.comp.forward", method_to_elapse["forward"], method_to_percent["forward"]
         )
-        logger.warning(
-            f"op.comp.backward sum {method_to_elapse['comp.backward']} us, percent: {method_to_percent['comp.backward']}%"
+        log_op(
+            "op.comp.backward",
+            method_to_elapse["comp.backward"],
+            method_to_percent["comp.backward"],
         )
-        logger.warning(
-            f"op.comp.others sum {method_to_elapse['comp.others']} us, percent: {method_to_percent['comp.others']}%"
+        log_op(
+            "op.comp.others",
+            method_to_elapse["comp.others"],
+            method_to_percent["comp.others"],
         )
-        logger.warning(
-            f"op.comm.allgather sum {method_to_elapse['allgather']} us, percent: {method_to_percent['allgather']}%"
+        log_op(
+            "op.comm.allgather",
+            method_to_elapse["allgather"],
+            method_to_percent["allgather"],
         )
-        logger.warning(
-            f"op.comm.reducescatter sum {method_to_elapse['reducescatter']} us, percent: {method_to_percent['reducescatter']}%"
+        log_op(
+            "op.comm.reducescatter",
+            method_to_elapse["reducescatter"],
+            method_to_percent["reducescatter"],
         )
-        logger.warning(
-            f"op.comm sum {method_to_elapse['comm']} us, percent: {method_to_percent['comm']}%"
-        )
+        log_op("op.comm", method_to_elapse["comm"], method_to_percent["comm"])
 
         logger.warning("")
     except Exception:
