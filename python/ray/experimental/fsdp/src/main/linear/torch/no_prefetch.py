@@ -152,7 +152,6 @@ def spawn_torch_fsdp(
             device_id=device,
             backward_prefetch=None,  # Disabled prefetching
             forward_prefetch=False,  # Disabled forward prefetching
-            # use_orig_params=True,  # Disable parameter flattening
         )
         optimizer = torch.optim.SGD(fsdp_model.parameters(), lr=1e-3)
         if rank == 0:

@@ -8,6 +8,7 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp.api import BackwardPrefetch
 from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 
 from ....core.common import get_timing_event_torch, log_elapses_to_csv, millis_to_micros
@@ -120,8 +121,6 @@ def spawn_torch_fsdp(
 ) -> None:
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "8888"
-    os.environ["FSDP_USE_FAKE_ALL_GATHER"] = "1"
-    os.environ["FSDP_USE_FAKE_REDUCE"] = "1"
 
     try:
         logger = logging.getLogger(__name__)
@@ -152,8 +151,9 @@ def spawn_torch_fsdp(
                 lambda_fn=lambda p: isinstance(p, BucketParameter),
             ),
             device_id=device,
-            backward_prefetch=None,  # Disabled prefetching
-            forward_prefetch=False,  # Disabled forward prefetching
+            backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
+            forward_prefetch=True,
+            use_orig_params=True,  # Disable parameter flattening
         )
         optimizer = torch.optim.SGD(fsdp_model.parameters(), lr=1e-3)
         if rank == 0:
