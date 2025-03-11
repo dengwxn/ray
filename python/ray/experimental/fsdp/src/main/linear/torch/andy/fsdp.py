@@ -32,13 +32,15 @@ class LinearModel(torch.nn.Module):
         device: torch.device,
     ) -> None:
         super().__init__()
-        assert num_layers % num_units == 0
+
+        if num_layers % num_units != 0:
+            raise ValueError(f"{num_layers=} must be divisible by {num_units=}")
 
         self.layer_size = layer_size
         self.num_layers = num_layers
         self.num_units = num_units
         self.device = device
-        self.bparams = torch.nn.ModuleList(
+        self.buckets = torch.nn.ModuleList(
             [
                 BucketParameter(
                     layer_size,
@@ -54,13 +56,22 @@ class LinearModel(torch.nn.Module):
         self.criterion = torch.nn.MSELoss()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        for bparam in self.bparams:
-            x = bparam(x)
+        for bucket in self.buckets:
+            x = bucket(x)
         return x
 
     def init_weights(self) -> None:
-        for bparam in self.bparams:
-            bparam.init_weights()
+        torch.manual_seed(2025)
+        for bucket in self.buckets:
+            bucket: BucketParameter
+            bucket.init_weights()
+
+    def fetch_weights(self) -> List[torch.Tensor]:
+        weights = []
+        for bucket in self.buckets:
+            bucket: BucketParameter
+            weights.extend(bucket.fetch_weights())
+        return weights
 
 
 def run_torch_fsdp(
@@ -76,7 +87,7 @@ def run_torch_fsdp(
         ranks_to_elapses = manager.dict()
 
         mp.spawn(
-            spawn_torch_fsdp,
+            spwan_torch_fsdp,
             args=(world_size, ranks_to_elapses, args),
             nprocs=world_size,
             join=True,
@@ -113,7 +124,7 @@ def run_torch_fsdp(
     )
 
 
-def spawn_torch_fsdp(
+def spwan_torch_fsdp(
     rank: int,
     world_size: int,
     ranks_to_elapses: Dict[int, int],
@@ -130,8 +141,6 @@ def spawn_torch_fsdp(
         dist.init_process_group(
             "nccl", rank=rank, world_size=world_size, device_id=device
         )
-
-        device = f"cuda:{rank}"
         model = LinearModel(
             args["layer_size"],
             args["num_layers"],
@@ -141,14 +150,15 @@ def spawn_torch_fsdp(
         size_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
         logger.warning(f"Model size: {size_bytes / 1024 / 1024} MB")
 
-        torch.manual_seed(998244353)
+        # torch.manual_seed(998244353)
+        seed = 998244353
         model.init_weights()
         model = model.to(model.device)
         fsdp_model = FSDP(
             model,
             auto_wrap_policy=functools.partial(
                 lambda_auto_wrap_policy,
-                lambda_fn=lambda p: isinstance(p, BucketParameter),
+                lambda_fn=lambda m: isinstance(m, BucketParameter),
             ),
             device_id=device,
             backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
@@ -157,11 +167,13 @@ def spawn_torch_fsdp(
         )
         optimizer = torch.optim.SGD(fsdp_model.parameters(), lr=1e-3)
         if rank == 0:
-            logger.warning(f"FSDP model: {fsdp_model}")
+            logger.warning(f"fsdp_model: {fsdp_model}")
 
         elapses = defaultdict(list)
 
         for iter in range(args["num_iters"]):
+            torch.manual_seed(seed)
+            seed += 1
             model.x = torch.randn(
                 1,
                 model.layer_size,

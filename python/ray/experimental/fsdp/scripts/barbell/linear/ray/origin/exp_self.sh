@@ -66,3 +66,5 @@ for i in "${!layer_size_values[@]}"; do
 		>$log_file 2>&1
 	status=$?
 done
+
+echo $output_path
