@@ -31,9 +31,10 @@ mkdir -p $output_path
 
 layer_size=2560
 num_layers=10
+num_partitions=10
 num_actors=2
 num_iters=5
-latency_prefix=${timestamp}_ls${layer_size}_nl${num_layers}
+latency_prefix=${timestamp}_ls${layer_size}_nl${num_layers}_np${num_partitions}
 model_prefix=${output_path}/${timestamp}_model
 log_file=${output_path}/${timestamp}.log
 
@@ -42,6 +43,7 @@ python -m ray.experimental.fsdp.src.main.linear.torch.fsdp \
 	--num-layers $num_layers \
 	--num-actors $num_actors \
 	--num-iters $num_iters \
+	--num-partitions $num_partitions \
 	--output-path $output_path \
 	--latency-prefix $latency_prefix \
 	--model-prefix $model_prefix \

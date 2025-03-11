@@ -40,6 +40,7 @@ num_layers_values=(
 	10 40 160 250
 )
 
+num_partitions=10
 num_actors=2
 num_iters=20
 
@@ -47,7 +48,7 @@ for i in "${!layer_size_values[@]}"; do
 	layer_size="${layer_size_values[$i]}"
 	num_layers="${num_layers_values[$i]}"
 
-	latency_prefix=${timestamp}_ls${layer_size}_nl${num_layers}
+	latency_prefix=${timestamp}_ls${layer_size}_nl${num_layers}_np${num_partitions}
 	model_prefix=${output_path}/${latency_prefix}_model
 	log_file=${output_path}/${latency_prefix}.log
 
@@ -56,6 +57,7 @@ for i in "${!layer_size_values[@]}"; do
 		--layer-size $layer_size \
 		--num-layers $num_layers \
 		--num-actors $num_actors \
+		--num-partitions $num_partitions \
 		--num-iters $num_iters \
 		--output-path $output_path \
 		--latency-prefix $latency_prefix \
