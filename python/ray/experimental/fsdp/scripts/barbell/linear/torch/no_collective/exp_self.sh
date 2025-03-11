@@ -40,6 +40,7 @@ num_layers_values=(
 	10 40 160 250
 )
 
+num_partitions=10
 num_actors=2
 num_iters=20
 
@@ -55,6 +56,7 @@ for i in "${!layer_size_values[@]}"; do
 	python -m ray.experimental.fsdp.src.main.linear.torch.no_collective \
 		--layer-size $layer_size \
 		--num-layers $num_layers \
+		--num-partitions $num_partitions \
 		--num-actors $num_actors \
 		--num-iters $num_iters \
 		--output-path $output_path \

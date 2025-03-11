@@ -1,3 +1,4 @@
+import functools
 import logging
 import os
 from collections import defaultdict
@@ -7,6 +8,7 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 
 from ....core.common import get_timing_event_torch, log_elapses_to_csv, millis_to_micros
 from ....core.config import parse_args
@@ -18,6 +20,46 @@ logging.basicConfig(
     format="[%(levelname)s %(filename)s:%(lineno)d %(funcName)s] %(message)s",
 )
 logger.info("Welcome to Downton Abbey!")
+
+
+class LinearModel(torch.nn.Module):
+    def __init__(
+        self,
+        layer_size: int,
+        num_layers: int,
+        num_units: int,
+        device: torch.device,
+    ) -> None:
+        super().__init__()
+        assert num_layers % num_units == 0
+
+        self.layer_size = layer_size
+        self.num_layers = num_layers
+        self.num_units = num_units
+        self.device = device
+        self.bparams = torch.nn.ModuleList(
+            [
+                BucketParameter(
+                    layer_size,
+                    num_layers // num_units,
+                    device,
+                )
+                for _ in range(num_units)
+            ]
+        )
+
+        self.x = None
+        self.y = None
+        self.criterion = torch.nn.MSELoss()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        for bparam in self.bparams:
+            x = bparam(x)
+        return x
+
+    def init_weights(self) -> None:
+        for bparam in self.bparams:
+            bparam.init_weights()
 
 
 def run_torch_fsdp(
@@ -33,7 +75,7 @@ def run_torch_fsdp(
         ranks_to_elapses = manager.dict()
 
         mp.spawn(
-            spwan_torch_fsdp,
+            spawn_torch_fsdp,
             args=(world_size, ranks_to_elapses, args),
             nprocs=world_size,
             join=True,
@@ -70,7 +112,7 @@ def run_torch_fsdp(
     )
 
 
-def spwan_torch_fsdp(
+def spawn_torch_fsdp(
     rank: int,
     world_size: int,
     ranks_to_elapses: Dict[int, int],
@@ -82,12 +124,17 @@ def spwan_torch_fsdp(
     try:
         logger = logging.getLogger(__name__)
 
-        dist.init_process_group("nccl", rank=rank, world_size=world_size)
+        torch.cuda.set_device(rank)
+        device = torch.device(f"cuda:{rank}")
+        dist.init_process_group(
+            "nccl", rank=rank, world_size=world_size, device_id=device
+        )
 
         device = f"cuda:{rank}"
-        model = BucketParameter(
+        model = LinearModel(
             args["layer_size"],
             args["num_layers"],
+            args["num_partitions"],
             device,
         )
         size_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
@@ -98,11 +145,18 @@ def spwan_torch_fsdp(
         model = model.to(model.device)
         fsdp_model = FSDP(
             model,
+            auto_wrap_policy=functools.partial(
+                lambda_auto_wrap_policy,
+                lambda_fn=lambda p: isinstance(p, BucketParameter),
+            ),
             device_id=device,
             backward_prefetch=None,  # Disabled prefetching
             forward_prefetch=False,  # Disabled forward prefetching
-            use_orig_params=True,  # Disable parameter flattening
+            # use_orig_params=True,  # Disable parameter flattening
         )
+        optimizer = torch.optim.SGD(fsdp_model.parameters(), lr=1e-3)
+        if rank == 0:
+            logger.warning(f"FSDP model: {fsdp_model}")
 
         elapses = defaultdict(list)
 
@@ -141,8 +195,8 @@ def spwan_torch_fsdp(
             bw_end = get_timing_event_torch()
 
             bw_upd_start = get_timing_event_torch()
-            model.optimizer.step()
-            model.optimizer.zero_grad()
+            optimizer.step()
+            optimizer.zero_grad()
             bw_upd_end = get_timing_event_torch()
 
             torch.cuda.synchronize()
