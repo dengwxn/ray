@@ -233,6 +233,7 @@ class LinearActor:
             self.update_tracing("bw.loss.ends")
         return flat_grad
 
+    # [TODO] Get visibility of IO.
     def backward(self, idx: int, flat_param: torch.Tensor) -> torch.Tensor:
         if self.tracing:
             self.update_tracing("bw.grad.starts")

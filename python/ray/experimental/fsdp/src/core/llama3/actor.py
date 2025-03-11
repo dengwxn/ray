@@ -287,6 +287,7 @@ class LlamaActor:
         if idx == 0:
             self.update_tracing("end")
 
+    # [TODO] Get visibility of IO.
     def copy(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
         raise NotImplementedError
         if grads_passed:
