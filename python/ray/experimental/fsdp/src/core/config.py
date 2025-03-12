@@ -59,6 +59,10 @@ def parse_args() -> Dict[str, Any]:
         action="store_true",
     )
     parser.add_argument(
+        "--profile",
+        action="store_true",
+    )
+    parser.add_argument(
         "--mode",
         type=str,
     )

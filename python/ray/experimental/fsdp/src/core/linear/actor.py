@@ -87,6 +87,8 @@ class LinearActor:
             "bw.loss.starts": [],
             "bw.loss.ends": [],
             "bw.grad.starts": [],
+            "bw.grad.pre.ends": [],
+            "bw.grad.post.starts": [],
             "bw.grad.ends": [],
             "bw.upd.starts": [],
             "bw.upd.ends": [],
@@ -157,6 +159,22 @@ class LinearActor:
                     )
                 ]
             )
+            bw_grad_pre = sum(
+                [
+                    bw_grad_start.elapsed_time(bw_grad_pre_end)
+                    for bw_grad_start, bw_grad_pre_end in zip(
+                        self.events["bw.grad.starts"], self.events["bw.grad.pre.ends"]
+                    )
+                ]
+            )
+            bw_grad_post = sum(
+                [
+                    bw_grad_post_start.elapsed_time(bw_grad_end)
+                    for bw_grad_post_start, bw_grad_end in zip(
+                        self.events["bw.grad.post.starts"], self.events["bw.grad.ends"]
+                    )
+                ]
+            )
             bw_upd = sum(
                 [
                     bw_upd_start.elapsed_time(bw_upd_end)
@@ -169,6 +187,8 @@ class LinearActor:
             log("bw.total", bw_total)
             log("bw.loss", bw_loss)
             log("bw.grad", bw_grad, len(self.events["bw.grad.starts"]))
+            log("bw.grad_pre", bw_grad_pre, len(self.events["bw.grad.starts"]))
+            log("bw.grad_post", bw_grad_post, len(self.events["bw.grad.starts"]))
             log("bw.grad_others", bw_grad_others)
             log("bw.upd", bw_upd, len(self.events["bw.upd.starts"]))
         logger.warning("")
@@ -240,7 +260,11 @@ class LinearActor:
         shard.set_flat_param(flat_param)
         pred, pred_as_input = self.intermediates[idx]
         grad = pred_as_input.grad
+        if self.tracing:
+            self.update_tracing("bw.grad.pre.ends")
         pred.backward(grad)
+        if self.tracing:
+            self.update_tracing("bw.grad.post.starts")
         flat_grad = shard.get_flat_grad()
         shard.free_peer_shards()
         if self.tracing:

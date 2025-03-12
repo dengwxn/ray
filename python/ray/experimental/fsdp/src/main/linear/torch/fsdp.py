@@ -10,6 +10,8 @@ import torch.multiprocessing as mp
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.api import BackwardPrefetch
 from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
+from torch.profiler import profile, ProfilerActivity
+
 
 from ....core.common import get_timing_event_torch, log_elapses_to_csv, millis_to_micros
 from ....core.config import parse_args
@@ -138,7 +140,9 @@ def spwan_torch_fsdp(
 
         torch.cuda.set_device(rank)
         device = torch.device(f"cuda:{rank}")
-        dist.init_process_group("nccl", rank=rank, world_size=world_size, device_id=device)
+        dist.init_process_group(
+            "nccl", rank=rank, world_size=world_size, device_id=device
+        )
         model = LinearModel(
             args["layer_size"],
             args["num_layers"],
@@ -169,9 +173,8 @@ def spwan_torch_fsdp(
 
         elapses = defaultdict(list)
 
-        for iter in range(args["num_iters"]):
+        def exec_iter():
             torch.manual_seed(seed)
-            seed += 1
             model.x = torch.randn(
                 1,
                 model.layer_size,
@@ -234,6 +237,38 @@ def spwan_torch_fsdp(
                 log("bw.upd", bw_upd_start.elapsed_time(bw_upd_end))
                 log("barrier", barrier_start.elapsed_time(end))
                 logger.warning("")
+
+        if args["profile"]:
+            with profile(
+                activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                record_shapes=True,
+                profile_memory=True,
+                with_stack=True,
+            ) as prof:
+                for iter in range(args["num_iters"]):
+                    exec_iter()
+                    seed += 1
+                    prof.step()
+
+            num_layers = args["num_layers"]
+            layer_size = args["layer_size"]
+            num_partitions = args["num_partitions"]
+            num_iters = args["num_iters"]
+            prof.export_chrome_trace(
+                os.path.join(
+                    args["output_path"],
+                    f"rank{rank}_"
+                    f"{num_layers}layer_"
+                    f"{layer_size}size_"
+                    f"{num_partitions}unit_"
+                    f"{num_iters}it.json",
+                )
+            )
+        else:
+            for iter in range(args["num_iters"]):
+                exec_iter()
+                seed += 1
+
     finally:
         dist.destroy_process_group()
 
