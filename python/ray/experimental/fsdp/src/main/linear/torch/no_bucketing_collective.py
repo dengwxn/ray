@@ -152,6 +152,7 @@ def spawn_torch_fsdp(
                 lambda_fn=lambda p: isinstance(p, BucketParameter),
             ),
             device_id=device,
+            use_orig_params=True,  # Disable parameter flattening
         )
         optimizer = torch.optim.SGD(fsdp_model.parameters(), lr=1e-3)
         if rank == 0:

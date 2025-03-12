@@ -55,14 +55,20 @@ def get_metrics_aliases(tracing: bool) -> Tuple[List[str], List[Optional[str]]]:
             "total",
             "actor.total",
             "fw.total",
+            "loss.total",
             "bw.total",
             "bw.loss",
-            "bw.grad",
-            "bw.grad_others",
+            "bw.grad.pre",
+            "bw.grad.intra",
+            "bw.grad.post",
+            "bw.grad.wo.loss_upd",
             "bw.upd",
         ]
         alias = [
             "!total",
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -110,8 +116,17 @@ def train(
         for idx in reversed(range(num_units - 1)):
             shards = [actor.get_shard.bind(idx, inp) for actor in actors]
             params = allgather.bind(shards)
+            bw_pres = [
+                actor.backward_pre.bind(idx, param)
+                for actor, param in zip(actors, params)
+            ]
+            bw_intras = [
+                actor.backward_intra.bind(idx, param, pre)
+                for actor, param, pre in zip(actors, params, bw_pres)
+            ]
             grads = [
-                actor.backward.bind(idx, param) for actor, param in zip(actors, params)
+                actor.backward_post.bind(idx, param, intra)
+                for actor, param, intra in zip(actors, params, bw_intras)
             ]
             reduced_grads = reducescatter.bind(grads)
             updates.extend(

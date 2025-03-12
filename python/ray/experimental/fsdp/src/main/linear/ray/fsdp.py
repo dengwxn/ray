@@ -58,8 +58,10 @@ def get_metrics_aliases(tracing: bool) -> Tuple[List[str], List[Optional[str]]]:
             "loss.total",
             "bw.total",
             "bw.loss",
-            "bw.grad",
-            "bw.grad_others",
+            "bw.grad.pre",
+            "bw.grad.intra",
+            "bw.grad.post",
+            "bw.grad.wo.loss_upd",
             "bw.upd",
         ]
         alias = [
@@ -69,8 +71,10 @@ def get_metrics_aliases(tracing: bool) -> Tuple[List[str], List[Optional[str]]]:
             None,  # "loss.total",
             None,  # "bw.total",
             "!bw.loss",
-            "!bw.grad",
-            "!bw.grad_others",
+            "!bw.grad.pre",
+            "!bw.grad.intra",
+            "!bw.grad.post",
+            "!bw.grad.wo.loss_upd",
             None,  # "bw.upd",
         ]
     return metrics, alias
@@ -130,9 +134,17 @@ def train(
                 ]
             elif idx >= 0:
                 # Backward grads for unit (idx).
-                grads = [
-                    actor.backward.bind(idx, param)
+                bw_pres = [
+                    actor.backward_pre.bind(idx, param)
                     for actor, param in zip(actors, params)
+                ]
+                bw_intras = [
+                    actor.backward_intra.bind(idx, param, pre)
+                    for actor, param, pre in zip(actors, params, bw_pres)
+                ]
+                grads = [
+                    actor.backward_post.bind(idx, param, intra)
+                    for actor, param, intra in zip(actors, params, bw_intras)
                 ]
 
             if idx - 1 >= 0:

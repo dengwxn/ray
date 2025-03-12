@@ -277,37 +277,43 @@ def do_exec_tasks(
             method_to_percent[method] = percent
             log_op(f"op.{method}", elapse, percent, avg_us)
 
-        method_to_elapse["comp.backward"] = (
-            method_to_elapse["compute_loss"]
-            + method_to_elapse["backward_loss"]
-            + method_to_elapse["backward"]
-        )
-        method_to_percent["comp.backward"] = round(
-            method_to_percent["compute_loss"]
-            + method_to_percent["backward_loss"]
-            + method_to_percent["backward"],
-            1,
-        )
+        def accumulate(title: str, methods: List[str]):
+            method_to_elapse[title] = sum(
+                method_to_elapse[method] for method in methods
+            )
+            method_to_percent[title] = round(
+                sum(method_to_percent[method] for method in methods), 1
+            )
 
-        method_to_elapse["comp.others"] = (
-            method_to_elapse["update"]
-            + method_to_elapse["get_input"]
-            + method_to_elapse["get_shard"]
-            + method_to_elapse["get_target"]
+        accumulate(
+            "comp.backward",
+            [
+                "compute_loss",
+                "backward_loss",
+                "backward_pre",
+                "backward_intra",
+                "backward_post",
+            ],
         )
-        method_to_percent["comp.others"] = round(
-            method_to_percent["update"]
-            + method_to_percent["get_input"]
-            + method_to_percent["get_shard"]
-            + method_to_percent["get_target"],
-            1,
+        accumulate(
+            "comp.backward.loss",
+            ["compute_loss", "backward_loss"],
         )
-
-        method_to_elapse["comm"] = (
-            method_to_elapse["allgather"] + method_to_elapse["reducescatter"]
+        accumulate(
+            "comp.backward.grad",
+            ["backward_pre", "backward_intra", "backward_post"],
         )
-        method_to_percent["comm"] = round(
-            method_to_percent["allgather"] + method_to_percent["reducescatter"], 1
+        accumulate(
+            "comp.backward.grad.io",
+            ["backward_pre", "backward_post"],
+        )
+        accumulate(
+            "comp.others",
+            ["update", "get_input", "get_shard", "get_target"],
+        )
+        accumulate(
+            "comm",
+            ["allgather", "reducescatter"],
         )
 
         logger.warning("")
@@ -320,10 +326,31 @@ def do_exec_tasks(
             method_to_percent["comp.backward"],
         )
         log_op(
+            "op.comp.backward.loss",
+            method_to_elapse["comp.backward.loss"],
+            method_to_percent["comp.backward.loss"],
+        )
+        log_op(
+            "op.comp.backward.grad",
+            method_to_elapse["comp.backward.grad"],
+            method_to_percent["comp.backward.grad"],
+        )
+        log_op(
+            "op.comp.backward.grad.comp",
+            method_to_elapse["backward_intra"],
+            method_to_percent["backward_intra"],
+        )
+        log_op(
+            "op.comp.backward.grad.io",
+            method_to_elapse["comp.backward.grad.io"],
+            method_to_percent["comp.backward.grad.io"],
+        )
+        log_op(
             "op.comp.others",
             method_to_elapse["comp.others"],
             method_to_percent["comp.others"],
         )
+        log_op("op.comm", method_to_elapse["comm"], method_to_percent["comm"])
         log_op(
             "op.comm.allgather",
             method_to_elapse["allgather"],
@@ -334,7 +361,6 @@ def do_exec_tasks(
             method_to_elapse["reducescatter"],
             method_to_percent["reducescatter"],
         )
-        log_op("op.comm", method_to_elapse["comm"], method_to_percent["comm"])
 
         logger.warning("")
     except Exception:
