@@ -2,9 +2,9 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 import ray
-from ....core.common import get_end_time, get_start_time, log_elapses_to_csv
-from ....core.config import parse_args
-from ....core.linear.actor import LinearActor
+from .....core.common import get_end_time, get_start_time, log_elapses_to_csv
+from .....core.config import parse_args
+from .....core.linear.actor import LinearActor
 from ray.dag import InputNode, MultiOutputNode
 from ray.experimental.collective import allgather, reducescatter
 
@@ -66,16 +66,16 @@ def get_metrics_aliases(tracing: bool) -> Tuple[List[str], List[Optional[str]]]:
         ]
         alias = [
             "!total",
-            None,  # "actor.total",
-            None,  # "fw.total",
-            None,  # "loss.total",
-            None,  # "bw.total",
-            "!bw.loss",
-            "!bw.grad.pre",
-            "!bw.grad.intra",
-            "!bw.grad.post",
-            "!bw.grad.wo.loss_upd",
-            None,  # "bw.upd",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         ]
     return metrics, alias
 
@@ -164,7 +164,7 @@ def train(
 
         dag = MultiOutputNode(updates)
 
-    compiled_dag = dag.experimental_compile(_overlap_gpu_communication=True)
+    compiled_dag = dag.experimental_compile()
     actor_to_shards = ray.get(actors[0].init_and_shard_model.remote())
     for actor, shards in zip(actors, actor_to_shards):
         ray.get(actor.set_shards.remote(shards))
@@ -196,13 +196,13 @@ def train(
     actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
     for actor_elapses in actors_to_elapses:
         actor_elapses["total"] = total_elapses
-    metrics, aliases = get_metrics_aliases(tracing)
+    metrics, alias = get_metrics_aliases(tracing)
     log_elapses_to_csv(
         actors_to_elapses,
         output_path,
         latency_prefix,
         metrics,
-        aliases,
+        alias,
     )
 
     if save_model:

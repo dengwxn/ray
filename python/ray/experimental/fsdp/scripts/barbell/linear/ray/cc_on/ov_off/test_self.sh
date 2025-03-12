@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/barbell/linear/ray/no_overlap/test_self
+output_path=results/barbell/linear/ray/cc_on/ov_off/test_self
 mkdir -p $output_path
 
 layer_size=2560
@@ -42,7 +42,7 @@ log_file=$output_path/${timestamp}.log
 # nsys profile -t nvtx,cuda -o profile \
 
 RAY_CGRAPH_VISUALIZE_SCHEDULE=1 \
-	python -m ray.experimental.fsdp.src.main.linear.ray.no_overlap \
+	python -m ray.experimental.fsdp.src.main.linear.ray.cc_on.ov_off \
 	--layer-size $layer_size \
 	--num-layers $num_layers \
 	--num-partitions $num_partitions \

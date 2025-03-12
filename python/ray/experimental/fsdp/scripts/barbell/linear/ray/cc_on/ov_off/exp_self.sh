@@ -26,18 +26,18 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/barbell/linear/ray/fsdp/exp_self
+output_path=results/barbell/linear/ray/cc_on/ov_off/exp_self
 mkdir -p $output_path
 rm -f $output_path/*.csv
 rm -f $output_path/*.log
 
 layer_size_values=(
 	# 2560 1280 640 512 320 160 80
-	2560 1280 640 512
+	2560 1280 640 512 320
 )
 num_layers_values=(
 	# 10 40 160 250 640 2560 10240
-	10 40 160 250
+	10 40 160 250 640
 )
 
 num_partitions=10
@@ -53,7 +53,7 @@ for i in "${!layer_size_values[@]}"; do
 	log_file=${output_path}/${latency_prefix}.log
 
 	echo "Running layer_size $layer_size, num_layers $num_layers..."
-	python -m ray.experimental.fsdp.src.main.linear.ray.fsdp \
+	python -m ray.experimental.fsdp.src.main.linear.ray.cc_on.ov_off \
 		--layer-size $layer_size \
 		--num-layers $num_layers \
 		--num-partitions $num_partitions \

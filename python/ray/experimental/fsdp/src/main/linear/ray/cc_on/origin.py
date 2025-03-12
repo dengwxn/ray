@@ -2,9 +2,9 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 import ray
-from ....core.common import get_end_time, get_start_time, log_elapses_to_csv
-from ....core.config import parse_args
-from ....core.linear.actor import LinearActor
+from .....core.common import get_end_time, get_start_time, log_elapses_to_csv
+from .....core.config import parse_args
+from .....core.linear.actor import LinearActor
 from ray.dag import InputNode, MultiOutputNode
 from ray.experimental.collective import allgather, reducescatter
 
@@ -92,20 +92,13 @@ def train(
 ) -> None:
     with InputNode() as inp:
         inputs = [actor.get_input.bind(inp) for actor in actors]
-        shards = [actor.get_shard.bind(0, inp) for actor in actors]
-        params = allgather.bind(shards)
         for idx in range(num_units):
-            if idx < num_units - 1:
-                shards_pf = [actor.get_shard.bind(idx + 1, inp) for actor in actors]
-                params_pf = allgather.bind(shards_pf)
-
+            shards = [actor.get_shard.bind(idx, inp) for actor in actors]
+            params = allgather.bind(shards)
             inputs = [
                 actor.forward.bind(idx, param, input)
                 for actor, param, input in zip(actors, params, inputs)
             ]
-
-            if idx < num_units - 1:
-                params = params_pf
 
         targets = [actor.get_target.bind(inp) for actor in actors]
         losses = [
@@ -113,52 +106,33 @@ def train(
             for actor, output, target in zip(actors, inputs, targets)
         ]
 
-        unit_to_grads = []
-        for idx in reversed(range(-1, num_units)):
-            if idx + 1 < num_units:
-                # Reduce grads for unit (idx + 1).
-                reduced_grads = reducescatter.bind(grads)
-                unit_to_grads.append(reduced_grads)
+        grads = [actor.backward_loss.bind(loss) for actor, loss in zip(actors, losses)]
+        reduced_grads = reducescatter.bind(grads)
+        updates = [
+            actor.update.bind(num_units - 1, grad, True)
+            for actor, grad in zip(actors, reduced_grads)
+        ]
 
-            if idx - 1 >= 0:
-                # Prefetch params for unit (idx - 1).
-                shards_pf = [actor.get_shard.bind(idx - 1, inp) for actor in actors]
-                params_pf = allgather.bind(shards_pf)
-
-            # [TODO] Timing for backward is not accurate since it is a future.
-            if idx == num_units - 1:
-                # Backward grads for unit (num_units - 1).
-                grads = [
-                    actor.backward_loss.bind(loss)
-                    for actor, loss in zip(actors, losses)
-                ]
-            elif idx >= 0:
-                # Backward grads for unit (idx).
-                bw_pres = [
-                    actor.backward_pre.bind(idx, param)
-                    for actor, param in zip(actors, params)
-                ]
-                bw_intras = [
-                    actor.backward_intra.bind(idx, param, pre)
-                    for actor, param, pre in zip(actors, params, bw_pres)
-                ]
-                grads = [
-                    actor.backward_post.bind(idx, param, intra)
-                    for actor, param, intra in zip(actors, params, bw_intras)
-                ]
-
-            if idx - 1 >= 0:
-                # Set params for unit (idx - 1).
-                params = params_pf
-
-        unit_to_grads = unit_to_grads[::-1]
-        updates = []
-        for idx in reversed(range(num_units)):
-            grads = unit_to_grads[idx]
+        for idx in reversed(range(num_units - 1)):
+            shards = [actor.get_shard.bind(idx, inp) for actor in actors]
+            params = allgather.bind(shards)
+            bw_pres = [
+                actor.backward_pre.bind(idx, param)
+                for actor, param in zip(actors, params)
+            ]
+            bw_intras = [
+                actor.backward_intra.bind(idx, param, pre)
+                for actor, param, pre in zip(actors, params, bw_pres)
+            ]
+            grads = [
+                actor.backward_post.bind(idx, param, intra)
+                for actor, param, intra in zip(actors, params, bw_intras)
+            ]
+            reduced_grads = reducescatter.bind(grads)
             updates.extend(
                 [
                     actor.update.bind(idx, grad, True)
-                    for actor, grad in zip(actors, grads)
+                    for actor, grad in zip(actors, reduced_grads)
                 ]
             )
 
