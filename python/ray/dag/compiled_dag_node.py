@@ -278,12 +278,17 @@ def do_exec_tasks(
             log_op(f"op.{method}", elapse, percent, avg_us)
 
         def accumulate(title: str, methods: List[str]):
-            method_to_elapse[title] = sum(
-                method_to_elapse[method] for method in methods
-            )
-            method_to_percent[title] = round(
-                sum(method_to_percent[method] for method in methods), 1
-            )
+            methods = [method for method in methods if method in method_to_elapse]
+            if len(methods) == 0:
+                method_to_elapse[title] = 0
+                method_to_percent[title] = 0
+            else:
+                method_to_elapse[title] = sum(
+                    method_to_elapse[method] for method in methods
+                )
+                method_to_percent[title] = round(
+                    sum(method_to_percent[method] for method in methods), 1
+                )
 
         accumulate(
             "comp.backward",
