@@ -356,16 +356,18 @@ def do_exec_tasks(
             method_to_percent["comp.others"],
         )
         log_op("op.comm", method_to_elapse["comm"], method_to_percent["comm"])
-        log_op(
-            "op.comm.allgather",
-            method_to_elapse["allgather"],
-            method_to_percent["allgather"],
-        )
-        log_op(
-            "op.comm.reducescatter",
-            method_to_elapse["reducescatter"],
-            method_to_percent["reducescatter"],
-        )
+        if "allgather" in method_to_elapse:
+            log_op(
+                "op.comm.allgather",
+                method_to_elapse["allgather"],
+                method_to_percent["allgather"],
+            )
+        if "reducescatter" in method_to_elapse:
+            log_op(
+                "op.comm.reducescatter",
+                method_to_elapse["reducescatter"],
+                method_to_percent["reducescatter"],
+            )
 
         logger.warning("")
     except Exception:
