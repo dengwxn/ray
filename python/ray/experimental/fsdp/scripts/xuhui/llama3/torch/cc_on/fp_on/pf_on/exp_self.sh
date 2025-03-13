@@ -30,6 +30,7 @@ output_path=results/xuhui/llama3/torch/cc_on/fp_on/pf_on/exp_self
 mkdir -p $output_path
 rm -f ${output_path}/*.csv
 rm -f ${output_path}/*.log
+echo "Running $output_path..."
 
 num_actors=4
 num_iters=20
