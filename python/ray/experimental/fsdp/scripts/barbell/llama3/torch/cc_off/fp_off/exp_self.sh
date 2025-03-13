@@ -30,6 +30,7 @@ output_path=results/barbell/llama3/torch/cc_off/fp_off/exp_self
 mkdir -p $output_path
 rm -f ${output_path}/*.csv
 rm -f ${output_path}/*.log
+echo "Running $output_path..."
 
 num_actors=2
 num_iters=20

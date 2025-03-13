@@ -30,6 +30,7 @@ output_path=results/barbell/llama3/ray/cc_off/ov_off/exp_self
 mkdir -p $output_path
 rm -f ${output_path}/*.csv
 rm -f ${output_path}/*.log
+echo "Running $output_path..."
 
 num_partitions=18
 num_actors=1
