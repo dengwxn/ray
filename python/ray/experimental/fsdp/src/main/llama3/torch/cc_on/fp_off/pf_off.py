@@ -55,26 +55,17 @@ def run_torch_fsdp(
         "total",
         "actor.total",
         "fw.total",
-        "loss.compute",
         "bw.total",
-        "bw.upd",
+        "bw.loss.comp",
+        "bw.grad",
+        "others.upd",
         "barrier",
-    ]
-    aliases = [
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
     ]
     log_elapses_to_csv(
         ranks_to_elapses_list,
         output_path,
         latency_prefix,
         metrics,
-        aliases,
     )
 
 
@@ -148,18 +139,18 @@ def spawn_torch_fsdp(
             pred = fsdp_model(input_ids)
             fw_end = get_timing_event_torch()
 
-            loss_start = get_timing_event_torch()
+            bw_loss_comp_start = get_timing_event_torch()
             loss = criterion(pred, target_ids)
-            loss_end = get_timing_event_torch()
+            bw_loss_comp_end = get_timing_event_torch()
 
-            bw_start = get_timing_event_torch()
+            bw_grad_start = get_timing_event_torch()
             loss.backward()
-            bw_end = get_timing_event_torch()
+            bw_grad_end = get_timing_event_torch()
 
-            bw_upd_start = get_timing_event_torch()
+            others_upd_start = get_timing_event_torch()
             optimizer.step()
             optimizer.zero_grad()
-            bw_upd_end = get_timing_event_torch()
+            others_upd_end = get_timing_event_torch()
 
             torch.cuda.synchronize()
             barrier_start = get_timing_event_torch()
@@ -180,10 +171,10 @@ def spawn_torch_fsdp(
                 log("total", total_ms)
                 log("actor.total", total_ms)
                 log("fw.total", fw_start.elapsed_time(fw_end))
-                log("loss.compute", loss_start.elapsed_time(loss_end))
-                log("bw.total", bw_start.elapsed_time(bw_upd_end))
-                log("bw.grad", bw_start.elapsed_time(bw_end))
-                log("bw.upd", bw_upd_start.elapsed_time(bw_upd_end))
+                log("bw.total", bw_loss_comp_start.elapsed_time(bw_grad_end))
+                log("bw.loss.comp", bw_loss_comp_start.elapsed_time(bw_loss_comp_end))
+                log("bw.grad", bw_grad_start.elapsed_time(bw_grad_end))
+                log("others.upd", others_upd_start.elapsed_time(others_upd_end))
                 log("barrier", barrier_start.elapsed_time(end))
                 logger.warning("")
     finally:
