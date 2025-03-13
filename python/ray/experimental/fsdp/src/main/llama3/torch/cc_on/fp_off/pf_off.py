@@ -1,3 +1,4 @@
+import functools
 import logging
 import os
 from collections import defaultdict
@@ -8,11 +9,16 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.api import BackwardPrefetch
+from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 
-from ....core.common import get_timing_event_torch, log_elapses_to_csv, millis_to_micros
-from ....core.config import parse_args
-from ....core.llama3.model import LLAMA_DEBUG as LLAMA
-from ....core.llama3.model import TransformerBP
+from ......core.common import (
+    get_timing_event_torch,
+    log_elapses_to_csv,
+    millis_to_micros,
+)
+from ......core.config import parse_args
+from ......core.llama3.model import LLAMA_DEBUG as LLAMA
+from ......core.llama3.model import BucketParameterBase, TransformerWrapped
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(filename)s:%(lineno)d -- %(message)s",
@@ -92,22 +98,28 @@ def spwan_torch_fsdp(
 
         model_args = LLAMA
         logger.info(f"model_args: {model_args}")
-        model = TransformerBP(model_args).to("cuda")
+        model = TransformerWrapped(model_args).to("cuda")
         size_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
         logger.warning(f"Model size: {size_bytes / 1024 / 1024} MiB")
 
         fsdp_model = FSDP(
             model,
+            auto_wrap_policy=functools.partial(
+                lambda_auto_wrap_policy,
+                lambda_fn=lambda p: isinstance(p, BucketParameterBase),
+            ),
             device_id=device,
             backward_prefetch=None,  # Disabled prefetching
             forward_prefetch=False,  # Disabled forward prefetching
             use_orig_params=True,  # Disable parameter flattening
         )
+        if rank == 0:
+            logger.info(f"FSDP model: {fsdp_model}")
 
         batch_size = 1
         seq_len = 1024
         criterion = torch.nn.CrossEntropyLoss()
-        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-6)
+        optimizer = torch.optim.AdamW(fsdp_model.parameters(), lr=1e-6)
         elapses = defaultdict(list)
 
         for iter in range(args["num_iters"]):
