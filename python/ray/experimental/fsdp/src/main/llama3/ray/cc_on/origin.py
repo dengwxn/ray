@@ -37,46 +37,6 @@ def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
     return actors
 
 
-def get_metrics_aliases(tracing: bool) -> Tuple[List[str], List[Optional[str]]]:
-    if not tracing:
-        metrics = [
-            "total",
-            "actor.total",
-        ]
-        alias = [
-            "!total",
-            None,
-        ]
-    else:
-        metrics = [
-            "total",
-            "actor.total",
-            "fw.total",
-            "loss.total",
-            "bw.total",
-            "bw.loss",
-            "bw.grad.pre",
-            "bw.grad.intra",
-            "bw.grad.post",
-            "bw.grad.wo.loss_upd",
-            "bw.upd",
-        ]
-        alias = [
-            "!total",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ]
-    return metrics, alias
-
-
 def train(
     actors: List[LlamaActor],
     num_units: int,
@@ -166,13 +126,12 @@ def train(
     actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
     for actor_elapses in actors_to_elapses:
         actor_elapses["total"] = total_elapses
-    metrics, alias = get_metrics_aliases(tracing)
+    metrics = LlamaActor.get_metrics(tracing)
     log_elapses_to_csv(
         actors_to_elapses,
         output_path,
         latency_prefix,
         metrics,
-        alias,
     )
 
     if save_model:

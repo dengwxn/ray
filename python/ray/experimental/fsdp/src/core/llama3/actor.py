@@ -84,18 +84,18 @@ class LlamaActor:
             "end": [],
             "fw.starts": [],
             "fw.ends": [],
-            "comp.loss.starts": [],
-            "comp.loss.ends": [],
-            "bw.loss.starts": [],
-            "bw.loss.ends": [],
+            "bw.loss.comp.starts": [],
+            "bw.loss.comp.ends": [],
+            "bw.loss.grad.starts": [],
+            "bw.loss.grad.ends": [],
             "bw.grad.pre.starts": [],
             "bw.grad.pre.ends": [],
             "bw.grad.intra.starts": [],
             "bw.grad.intra.ends": [],
             "bw.grad.post.starts": [],
             "bw.grad.post.ends": [],
-            "bw.upd.starts": [],
-            "bw.upd.ends": [],
+            "others.upd.starts": [],
+            "others.upd.ends": [],
         }
 
         torch.cuda.synchronize()
@@ -136,26 +136,22 @@ class LlamaActor:
             total,
         )
         if self.tracing:
-            log(
-                "fw.total",
-                self.events["fw.starts"][0].elapsed_time(self.events["fw.ends"][-1]),
-                len(self.events["fw.starts"]),
+            assert len(self.events["bw.loss.comp.starts"]) == 1
+            assert len(self.events["bw.loss.comp.ends"]) == 1
+            assert len(self.events["bw.loss.grad.starts"]) == 1
+            assert len(self.events["bw.loss.grad.ends"]) == 1
+
+            fw_total = self.events["fw.starts"][0].elapsed_time(
+                self.events["fw.ends"][-1]
             )
-            assert len(self.events["comp.loss.starts"]) == 1
-            assert len(self.events["comp.loss.ends"]) == 1
-            log(
-                "loss.total",
-                self.events["comp.loss.starts"][0].elapsed_time(
-                    self.events["comp.loss.ends"][0]
-                ),
+            bw_total = self.events["bw.loss.comp.starts"][0].elapsed_time(
+                self.events["bw.grad.post.ends"][-1]
             )
-            bw_total = self.events["bw.loss.starts"][0].elapsed_time(
-                self.events["bw.upd.ends"][-1]
+            bw_loss = self.events["bw.loss.comp.starts"][0].elapsed_time(
+                self.events["bw.loss.grad.ends"][0]
             )
-            assert len(self.events["bw.loss.starts"]) == 1
-            assert len(self.events["bw.loss.ends"]) == 1
-            bw_loss = self.events["bw.loss.starts"][0].elapsed_time(
-                self.events["bw.loss.ends"][0]
+            bw_grad = self.events["bw.grad.pre.starts"][0].elapsed_time(
+                self.events["bw.grad.post.ends"][-1]
             )
             bw_grad_pre = sum(
                 [
@@ -184,25 +180,48 @@ class LlamaActor:
                     )
                 ]
             )
-            bw_upd = sum(
+            others_upd = sum(
                 [
                     bw_upd_start.elapsed_time(bw_upd_end)
                     for bw_upd_start, bw_upd_end in zip(
-                        self.events["bw.upd.starts"], self.events["bw.upd.ends"]
+                        self.events["others.upd.starts"],
+                        self.events["others.upd.ends"],
                     )
                 ]
             )
-            bw_grad_wo_loss_upd = bw_total - bw_loss - bw_upd
+
+            log("fw.total", fw_total, len(self.events["fw.starts"]))
             log("bw.total", bw_total)
             log("bw.loss", bw_loss)
+            log("bw.grad", bw_grad)
             log("bw.grad.pre", bw_grad_pre, len(self.events["bw.grad.pre.starts"]))
             log(
                 "bw.grad.intra", bw_grad_intra, len(self.events["bw.grad.intra.starts"])
             )
             log("bw.grad.post", bw_grad_post, len(self.events["bw.grad.post.starts"]))
-            log("bw.grad.wo.loss_upd", bw_grad_wo_loss_upd)
-            log("bw.upd", bw_upd, len(self.events["bw.upd.starts"]))
+            log("others.upd", others_upd, len(self.events["others.upd.starts"]))
         logger.warning("")
+
+    @classmethod
+    def get_metrics(cls, tracing: bool) -> List[str]:
+        if not tracing:
+            return [
+                "total",
+                "actor.total",
+            ]
+        else:
+            return [
+                "total",
+                "actor.total",
+                "fw.total",
+                "bw.total",
+                "bw.loss",
+                "bw.grad",
+                "bw.grad.pre",
+                "bw.grad.intra",
+                "bw.grad.post",
+                "others.upd",
+            ]
 
     def fetch_traces(self) -> Dict[str, List[float]]:
         return self.elapses
@@ -249,21 +268,21 @@ class LlamaActor:
 
     def compute_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         if self.tracing:
-            self.update_tracing("comp.loss.starts")
+            self.update_tracing("bw.loss.comp.starts")
         loss = self.criterion(pred, target)
         if self.tracing:
-            self.update_tracing("comp.loss.ends")
+            self.update_tracing("bw.loss.comp.ends")
         return loss
 
     def backward_loss(self, loss: torch.Tensor) -> None:
         if self.tracing:
-            self.update_tracing("bw.loss.starts")
+            self.update_tracing("bw.loss.grad.starts")
         loss.backward()
         shard = self.shards[-1]
         flat_grad = shard.get_flat_grad()
         shard.free_peer_shards()
         if self.tracing:
-            self.update_tracing("bw.loss.ends")
+            self.update_tracing("bw.loss.grad.ends")
         return flat_grad
 
     def backward_pre(self, idx: int, flat_param: torch.Tensor) -> None:
@@ -301,12 +320,12 @@ class LlamaActor:
 
     def update(self, idx: int, grad: torch.Tensor, grad_passed: bool) -> None:
         if self.tracing:
-            self.update_tracing("bw.upd.starts")
+            self.update_tracing("others.upd.starts")
         if grad_passed:
             grad /= self.num_actors
         self.shards[idx].update(grad, grad_passed)
         if self.tracing:
-            self.update_tracing("bw.upd.ends")
+            self.update_tracing("others.upd.ends")
         if idx == 0:
             self.update_tracing("end")
 
@@ -335,10 +354,8 @@ class LlamaActor:
         self, grads_cat: torch.Tensor, grads_passed: bool, idx: int
     ) -> None:
         raise NotImplementedError
-        self.update_tracing("bw.upd.starts")
         self.copy(grads_cat, grads_passed, idx)
         self.step(idx)
-        self.update_tracing("bw.upd.ends")
         if idx == 0:
             self.update_tracing("end")
 

@@ -322,31 +322,29 @@ def do_exec_tasks(
         )
 
         logger.warning("")
+        log_op("op.comp.fw", method_to_elapse["forward"], method_to_percent["forward"])
         log_op(
-            "op.comp.forward", method_to_elapse["forward"], method_to_percent["forward"]
-        )
-        log_op(
-            "op.comp.backward",
+            "op.comp.bw",
             method_to_elapse["comp.backward"],
             method_to_percent["comp.backward"],
         )
         log_op(
-            "op.comp.backward.loss",
+            "op.comp.bw.loss",
             method_to_elapse["comp.backward.loss"],
             method_to_percent["comp.backward.loss"],
         )
         log_op(
-            "op.comp.backward.grad",
+            "op.comp.bw.grad",
             method_to_elapse["comp.backward.grad"],
             method_to_percent["comp.backward.grad"],
         )
         log_op(
-            "op.comp.backward.grad.comp",
+            "op.comp.bw.grad.comp",
             method_to_elapse["backward_intra"],
             method_to_percent["backward_intra"],
         )
         log_op(
-            "op.comp.backward.grad.io",
+            "op.comp.bw.grad.io",
             method_to_elapse["comp.backward.grad.io"],
             method_to_percent["comp.backward.grad.io"],
         )
