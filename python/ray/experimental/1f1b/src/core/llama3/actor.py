@@ -43,7 +43,12 @@ class LlamaActor:
         self.events: Dict[str, Any] = {}
         self.elapses: Dict[str, List] = defaultdict(list)
 
+        torch.manual_seed(2025)
+        self.model = TransformerBP(self.model_args).to(self.device)
+        self.bparams = self.model.bparams
+
     def init_and_shard_model(self) -> List[List[Shard]]:
+        raise NotImplementedError
         torch.manual_seed(2025)
         model = TransformerBP(self.model_args).to(self.device)
         bparams = model.bparams
@@ -58,6 +63,7 @@ class LlamaActor:
         return actor_to_shards
 
     def set_shards(self, shards: List[Shard]) -> None:
+        raise NotImplementedError
         self.shards = [shard.to(self.device) for shard in shards]
 
     def init_training(self) -> None:
@@ -240,21 +246,20 @@ class LlamaActor:
         assert self.shards
         return self.shards[idx].sharded_param
 
-    def forward(self, idx: int, flat_param: torch.Tensor, input: torch.Tensor) -> None:
+    def forward(self, idx: int, input: torch.Tensor) -> None:
         if idx == 0:
             self.update_tracing("start")
         if self.tracing:
             self.update_tracing("fw.starts")
 
-        shard = self.shards[idx]
-        shard.set_flat_param(flat_param)
+        bp = self.bparams[idx]
         if idx == 0:
-            pred = shard.forward(input)
-            self.freqs_cis, self.mask = shard.post_hook(input, pred)
+            pred = bp.forward(input)
+            self.freqs_cis, self.mask = bp.post_hook(input, pred)
         elif idx < len(self.shards) - 1:
-            pred = shard.forward_transformer(input, 0, self.freqs_cis, self.mask)
+            pred = bp.forward_transformer(input, 0, self.freqs_cis, self.mask)
         else:
-            pred = shard.forward(shard.pre_hook(input))
+            pred = bp.forward(bp.pre_hook(input))
 
         if idx < len(self.shards) - 1:
             pred_as_input = pred.detach().requires_grad_(True)
@@ -262,11 +267,13 @@ class LlamaActor:
             pred_as_input = pred
         self.intermediates.append((pred, pred_as_input))
 
-        if idx < len(self.shards) - 1:
-            shard.free_peer_shards()
         if self.tracing:
             self.update_tracing("fw.ends")
         return pred_as_input
+
+    def forward_pp(self, _placeholder) -> None:
+        # [TODO] Forward the corresponding partition.
+        raise NotImplementedError
 
     def compute_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         if self.tracing:
@@ -287,18 +294,7 @@ class LlamaActor:
             self.update_tracing("bw.loss.grad.ends")
         return flat_grad
 
-    def backward_pre(self, idx: int, flat_param: torch.Tensor) -> None:
-        if self.tracing:
-            self.update_tracing("bw.grad.pre.starts")
-        shard = self.shards[idx]
-        shard.set_flat_param(flat_param)
-        if self.tracing:
-            self.update_tracing("bw.grad.pre.ends")
-        return None
-
-    def backward_intra(
-        self, idx: int, _flat_param: torch.Tensor, _backward_pre
-    ) -> torch.Tensor:
+    def backward_intra(self, idx: int, _backward_pre) -> torch.Tensor:
         if self.tracing:
             self.update_tracing("bw.grad.intra.starts")
         pred, pred_as_input = self.intermediates[idx]
@@ -308,17 +304,9 @@ class LlamaActor:
             self.update_tracing("bw.grad.intra.ends")
         return None
 
-    def backward_post(
-        self, idx: int, _flat_param: torch.Tensor, _backward_intra
-    ) -> torch.Tensor:
-        if self.tracing:
-            self.update_tracing("bw.grad.post.starts")
-        shard = self.shards[idx]
-        flat_grad = shard.get_flat_grad()
-        shard.free_peer_shards()
-        if self.tracing:
-            self.update_tracing("bw.grad.post.ends")
-        return flat_grad
+    def backward_pp(self, _placeholder) -> torch.Tensor:
+        # [TODO] Backward the corresponding partition.
+        raise NotImplementedError
 
     def update(self, idx: int, grad: torch.Tensor, grad_passed: bool) -> None:
         if self.tracing:
@@ -332,182 +320,3 @@ class LlamaActor:
             self.update_tracing("end")
 
     # [TODO] Get visibility of IO.
-    def copy(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
-        raise NotImplementedError
-        if grads_passed:
-            grads_cat /= self.num_actors
-        self.bparams[idx].copy(grads_cat, grads_passed)
-
-    def copy_aio(self, _) -> None:
-        raise NotImplementedError
-        for i in reversed(range(len(self.bparams))):
-            self.copy(_, False, i)
-
-    def step(self, idx: int) -> None:
-        raise NotImplementedError
-        self.bparams[idx].step()
-
-    def step_aio(self, _) -> None:
-        raise NotImplementedError
-        for i in reversed(range(len(self.bparams))):
-            self.step(i)
-
-    def update_origin(
-        self, grads_cat: torch.Tensor, grads_passed: bool, idx: int
-    ) -> None:
-        raise NotImplementedError
-        self.copy(grads_cat, grads_passed, idx)
-        self.step(idx)
-        if idx == 0:
-            self.update_tracing("end")
-
-    def update_aio(self, _) -> None:
-        raise NotImplementedError
-        for i in reversed(range(len(self.bparams))):
-            self.update_origin(_, False, i)
-
-
-class _Actor_V5:
-    def __init__(self, model_args):
-        logger.info(f"model_args: {model_args}")
-        self.model_args = model_args
-        self.model = TransformerBP(model_args).to("cuda")
-        self.bparams = self.model.bparams
-        self.criterion = torch.nn.CrossEntropyLoss()
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
-
-    def init_training(self) -> None:
-        batch_size = 1
-        seq_len = 1024
-        self.input_ids = torch.randint(
-            0,
-            self.model_args.vocab_size,
-            (batch_size, seq_len),
-        ).to("cuda")
-        self.target_ids = torch.randn(
-            batch_size,
-            seq_len,
-            self.model_args.vocab_size,
-            requires_grad=True,
-        ).to("cuda")
-
-    def forward(self, _) -> torch.Tensor:
-        self.intermediates = []
-        tokens = self.input_ids
-        input, freqs_cis, mask = None, None, None
-        for i, bp in enumerate(self.bparams):
-            if i == 0:
-                pred = bp.forward(tokens)
-                freqs_cis, mask = bp.post_hook(tokens, pred)
-            elif i < len(self.bparams) - 1:
-                pred = bp.forward_transformer(input, 0, freqs_cis, mask)
-            else:
-                pred = bp.forward(bp.pre_hook(input))
-            input = pred
-            self.intermediates.append((pred, input))
-        return pred
-
-    def backward(self, _) -> None:
-        loss = self.criterion(
-            self.intermediates[-1][0],
-            self.target_ids,
-        )
-        loss.backward()
-
-    def update(self, _) -> None:
-        self.optimizer.step()
-        self.optimizer.zero_grad()
-
-
-class _Actor_V4:
-    def __init__(self, model_args):
-        logger.info(f"model_args: {model_args}")
-        self.model_args = model_args
-        self.model = TransformerBP(model_args).to("cuda")
-        self.bparams = self.model.bparams
-        self.criterion = torch.nn.CrossEntropyLoss()
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
-
-    def init_training(self) -> None:
-        batch_size = 1
-        seq_len = 1024
-        self.input_ids = torch.randint(
-            0,
-            self.model_args.vocab_size,
-            (batch_size, seq_len),
-        ).to("cuda")
-        self.target_ids = torch.randn(
-            batch_size,
-            seq_len,
-            self.model_args.vocab_size,
-            requires_grad=True,
-        ).to("cuda")
-
-    def forward(self, _) -> torch.Tensor:
-        self.intermediates = []
-        tokens = self.input_ids
-        input, freqs_cis, mask = None, None, None
-        for i, bp in enumerate(self.bparams):
-            if i == 0:
-                pred = bp.forward(tokens)
-                freqs_cis, mask = bp.post_hook(tokens, pred)
-            elif i < len(self.bparams) - 1:
-                pred = bp.forward_transformer(input, 0, freqs_cis, mask)
-            else:
-                pred = bp.forward(bp.pre_hook(input))
-            if i < len(self.bparams) - 1:
-                input = pred.detach().requires_grad_(True)
-            else:
-                input = pred
-            self.intermediates.append((pred, input))
-        return pred
-
-    def backward(self, _, idx: int) -> torch.Tensor:
-        if idx == len(self.bparams) - 1:
-            loss = self.bparams[idx].criterion(
-                self.intermediates[idx][0],
-                self.target_ids,
-            )
-            pred = None
-            grad = None
-        else:
-            loss = None
-            pred, input = self.intermediates[idx]
-            grad = input.grad
-        grads = self.bparams[idx].backward(
-            loss=loss,
-            pred=pred,
-            grad=grad,
-        )
-        return grads
-
-    def backward_aio(self, _) -> torch.Tensor:
-        for i in reversed(range(len(self.bparams))):
-            self.backward(_, i)
-
-    def _copy(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
-        if grads_passed:
-            grads_cat /= self.num_actors
-        self.bparams[idx].copy(grads_cat, grads_passed)
-
-    def copy_aio(self, _) -> None:
-        for i in reversed(range(len(self.bparams))):
-            self._copy(_, False, i)
-
-    def _step(self, idx: int) -> None:
-        self.bparams[idx].step()
-
-    def step_aio(self, _) -> None:
-        # [NOTE] It is slower to use a single optimizer.
-        # self.optimizer.step()
-        # self.optimizer.zero_grad()
-        for i in reversed(range(len(self.bparams))):
-            self._step(i)
-
-    def update(self, grads_cat: torch.Tensor, grads_passed: bool, idx: int) -> None:
-        self._copy(grads_cat, grads_passed, idx)
-        self._step(idx)
-
-    def update_aio(self, _) -> None:
-        for i in reversed(range(len(self.bparams))):
-            self.update(_, False, i)

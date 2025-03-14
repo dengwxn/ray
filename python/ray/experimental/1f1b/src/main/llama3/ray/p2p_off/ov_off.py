@@ -2,7 +2,12 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 import ray
-from .....core.common import get_end_time, get_start_time, log_elapses_to_csv
+from .....core.common import (
+    generate_1f1b_dag,
+    get_end_time,
+    get_start_time,
+    log_elapses_to_csv,
+)
 from .....core.config import parse_args
 from .....core.llama3.actor import LlamaActor
 from .....core.llama3.model import LLAMA_DEBUG as LLAMA
@@ -42,7 +47,7 @@ def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
 
 def train(
     actors: List[LlamaActor],
-    num_units: int,
+    num_partitions: int,
     num_iters: int,
     output_path: str,
     latency_prefix: str,
@@ -50,84 +55,14 @@ def train(
     model_prefix: str,
     tracing: bool,
 ) -> None:
-    with InputNode() as inp:
-        inputs = [actor.get_input.bind(inp) for actor in actors]
-        shards = [actor.get_shard.bind(0, inp) for actor in actors]
-        params = shards
-        for idx in range(num_units):
-            if idx < num_units - 1:
-                shards_pf = [actor.get_shard.bind(idx + 1, inp) for actor in actors]
-                params_pf = shards_pf
+    compiled_dag = generate_1f1b_dag(actors, 2, 2)
+    compiled_dag.visualize(channel_details=True)
+    return
 
-            inputs = [
-                actor.forward.bind(idx, param, input)
-                for actor, param, input in zip(actors, params, inputs)
-            ]
-
-            if idx < num_units - 1:
-                params = params_pf
-
-        targets = [actor.get_target.bind(inp) for actor in actors]
-        losses = [
-            actor.compute_loss.bind(output, target)
-            for actor, output, target in zip(actors, inputs, targets)
-        ]
-
-        unit_to_grads = []
-        for idx in reversed(range(-1, num_units)):
-            if idx + 1 < num_units:
-                # Reduce grads for unit (idx + 1).
-                reduced_grads = grads
-                unit_to_grads.append(reduced_grads)
-
-            if idx - 1 >= 0:
-                # Prefetch params for unit (idx - 1).
-                shards_pf = [actor.get_shard.bind(idx - 1, inp) for actor in actors]
-                params_pf = shards_pf
-
-            # [TODO] Timing for backward is not accurate since it is a future.
-            if idx == num_units - 1:
-                # Backward grads for unit (num_units - 1).
-                grads = [
-                    actor.backward_loss.bind(loss)
-                    for actor, loss in zip(actors, losses)
-                ]
-            elif idx >= 0:
-                # Backward grads for unit (idx).
-                bw_pres = [
-                    actor.backward_pre.bind(idx, param)
-                    for actor, param in zip(actors, params)
-                ]
-                bw_intras = [
-                    actor.backward_intra.bind(idx, param, pre)
-                    for actor, param, pre in zip(actors, params, bw_pres)
-                ]
-                grads = [
-                    actor.backward_post.bind(idx, param, intra)
-                    for actor, param, intra in zip(actors, params, bw_intras)
-                ]
-
-            if idx - 1 >= 0:
-                # Set params for unit (idx - 1).
-                params = params_pf
-
-        unit_to_grads = unit_to_grads[::-1]
-        updates = []
-        for idx in reversed(range(num_units)):
-            grads = unit_to_grads[idx]
-            updates.extend(
-                [
-                    actor.update.bind(idx, grad, True)
-                    for actor, grad in zip(actors, grads)
-                ]
-            )
-
-        dag = MultiOutputNode(updates)
-
-    compiled_dag = dag.experimental_compile()
-    actor_to_shards = ray.get(actors[0].init_and_shard_model.remote())
-    for actor, shards in zip(actors, actor_to_shards):
-        ray.get(actor.set_shards.remote(shards))
+    # [TODO] Add init_and_partition_model.
+    # actor_to_shards = ray.get(actors[0].init_and_shard_model.remote())
+    # for actor, shards in zip(actors, actor_to_shards):
+    #     ray.get(actor.set_shards.remote(shards))
 
     total_elapses: List[int] = []
     for iter in range(num_iters):

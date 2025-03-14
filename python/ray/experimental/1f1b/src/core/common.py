@@ -6,6 +6,9 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import torch
 
+import ray
+from ray.dag.compiled_dag_node import CompiledDAG
+
 
 def get_start_time() -> float:
     return time.perf_counter()
@@ -89,3 +92,52 @@ def log_elapses_to_csv(
                         round(percent, 1),
                     ]
                 )
+
+
+def generate_1f1b_dag(
+    workers: List[Any],
+    num_microbatches: int,
+    num_lead_microbatches: int,
+) -> CompiledDAG:
+    num_workers = len(workers)
+    with ray.dag.InputNode() as inp:
+        fwd_queues = [[] for _ in range(num_workers)]
+        bwd_queues = [[] for _ in range(num_workers)]
+        # Once a worker's counter reaches 0, it cannot execute another fwd until it
+        # executes a bwd first.
+        fwd_counter = [num_lead_microbatches - i for i in range(num_workers)]
+        # All of the done batches.
+        done = []
+
+        # FWD on worker 0.
+        # input_data = workers[0].read_input.bind(inp)
+        # for i in range(num_microbatches):
+        #     fwd_queues[0].append(input_data)
+        for i in range(num_microbatches):
+            fwd_queues[0].append(inp)
+
+        while len(done) < num_microbatches:
+            for i, worker in enumerate(workers):
+                if fwd_counter[i] > 0 and fwd_queues[i]:
+                    b = fwd_queues[i].pop(0)
+                    b = worker.forward_pp.bind(b)
+                    if i < num_workers - 1:
+                        fwd_queues[i + 1].append(b)
+                        # Use NCCL channel for communication between workers.
+                        b.with_tensor_transport(transport="nccl")
+                    else:
+                        bwd_queues[i].append(b)
+                    fwd_counter[i] -= 1
+                elif bwd_queues[i]:
+                    b = bwd_queues[i].pop(0)
+                    b = worker.backward_pp.bind(b)
+                    if i > 0:
+                        bwd_queues[i - 1].append(b)
+                        # Use NCCL channel for communication between workers.
+                        b.with_tensor_transport(transport="nccl")
+                    else:
+                        done.append(b)
+                    fwd_counter[i] += 1
+        dag = ray.dag.MultiOutputNode(done)
+    compiled_dag = dag.experimental_compile()
+    return compiled_dag

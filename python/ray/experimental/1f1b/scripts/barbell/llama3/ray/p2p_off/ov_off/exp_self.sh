@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/barbell/llama3/ray/cc_off/ov_off/exp_self
+output_path=results/barbell/llama3/ray/p2p_off/ov_off/exp_self
 mkdir -p $output_path
 rm -f ${output_path}/*.csv
 rm -f ${output_path}/*.log
@@ -35,13 +35,14 @@ echo "Running $output_path..."
 batch_size=1
 seq_len=1024
 num_partitions=18
-num_actors=1
+num_actors=2
 num_iters=20
 latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
-python -m ray.experimental.fsdp.src.main.llama3.ray.cc_off.ov_off \
+RAY_CGRAPH_VISUALIZE_SCHEDULE=1 \
+	python -m ray.experimental.1f1b.src.main.llama3.ray.p2p_off.ov_off \
 	--batch-size $batch_size \
 	--seq-len $seq_len \
 	--num-partitions $num_partitions \
