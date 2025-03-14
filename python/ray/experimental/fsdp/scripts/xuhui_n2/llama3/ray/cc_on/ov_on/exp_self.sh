@@ -32,6 +32,8 @@ rm -f ${output_path}/*.csv
 rm -f ${output_path}/*.log
 echo "Running $output_path..."
 
+batch_size=1
+seq_len=1024
 num_partitions=18
 num_actors=2
 num_iters=20
@@ -40,6 +42,8 @@ model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
 python -m ray.experimental.fsdp.src.main.llama3.ray.cc_on.ov_on \
+	--batch-size $batch_size \
+	--seq-len $seq_len \
 	--num-partitions $num_partitions \
 	--num-actors $num_actors \
 	--num-iters $num_iters \

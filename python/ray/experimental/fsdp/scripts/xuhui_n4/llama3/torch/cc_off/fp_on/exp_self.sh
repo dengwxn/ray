@@ -32,6 +32,8 @@ rm -f ${output_path}/*.csv
 rm -f ${output_path}/*.log
 echo "Running $output_path..."
 
+batch_size=1
+seq_len=1024
 num_actors=1
 num_iters=20
 latency_prefix=${timestamp}
@@ -39,6 +41,8 @@ model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
 python -m ray.experimental.fsdp.src.main.llama3.torch.cc_off.fp_on \
+	--batch-size $batch_size \
+	--seq-len $seq_len \
 	--num-actors $num_actors \
 	--num-iters $num_iters \
 	--output-path $output_path \
