@@ -32,7 +32,7 @@ rm -f ${output_path}/*.csv
 rm -f ${output_path}/*.log
 echo "Running $output_path..."
 
-batch_size=1
+batch_size=2
 seq_len=2048
 num_actors=1
 num_iters=20
