@@ -107,8 +107,8 @@ def spawn_torch_fsdp(
         if rank == 0:
             logger.info(f"FSDP model: {fsdp_model}")
 
-        batch_size = 1
-        seq_len = 1024
+        batch_size = args["batch_size"]
+        seq_len = args["seq_len"]
         criterion = torch.nn.CrossEntropyLoss()
         optimizer = torch.optim.AdamW(fsdp_model.parameters(), lr=1e-6)
         elapses = defaultdict(list)

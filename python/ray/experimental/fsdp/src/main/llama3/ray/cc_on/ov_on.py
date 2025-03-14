@@ -19,6 +19,8 @@ logger.info("Welcome to Downton Abbey!")
 
 def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
     model_args = LLAMA
+    batch_size = args["batch_size"]
+    seq_len = args["seq_len"]
     num_partitions = args["num_partitions"]
     num_actors = args["num_actors"]
     tracing = args["tracing"]
@@ -27,6 +29,8 @@ def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
     actors = [
         actor_cls.remote(
             model_args,
+            batch_size=batch_size,
+            seq_len=seq_len,
             num_partitions=num_partitions,
             num_actors=num_actors,
             tracing=tracing,

@@ -39,6 +39,8 @@ model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
 python -m ray.experimental.fsdp.src.main.llama3.torch.cc_on.fp_on.pf_on \
+	--batch-size 1 \
+	--seq-len 1024 \
 	--num-actors $num_actors \
 	--num-iters $num_iters \
 	--output-path $output_path \

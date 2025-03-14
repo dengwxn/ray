@@ -8,14 +8,20 @@ import torch
 def parse_args() -> Dict[str, Any]:
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--batch-size",
+        type=int,
+    )
+    parser.add_argument(
+        "--seq-len",
+        type=int,
+    )
+    parser.add_argument(
         "--layer-size",
         type=int,
-        # required=True,
     )
     parser.add_argument(
         "--num-layers",
         type=int,
-        # required=True,
     )
     parser.add_argument(
         "--num-partitions",

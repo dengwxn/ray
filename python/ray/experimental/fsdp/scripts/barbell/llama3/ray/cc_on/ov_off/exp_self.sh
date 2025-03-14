@@ -40,6 +40,8 @@ model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
 python -m ray.experimental.fsdp.src.main.llama3.ray.cc_on.ov_off \
+	--batch-size 1 \
+	--seq-len 1024 \
 	--num-partitions $num_partitions \
 	--num-actors $num_actors \
 	--num-iters $num_iters \

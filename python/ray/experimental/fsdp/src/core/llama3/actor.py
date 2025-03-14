@@ -16,6 +16,8 @@ class LlamaActor:
     def __init__(
         self,
         model_args,
+        batch_size: int,
+        seq_len: int,
         num_partitions: int,
         num_actors: int,
         tracing: bool,
@@ -25,6 +27,8 @@ class LlamaActor:
 
         logger.info(f"model_args: {model_args}")
         self.model_args = model_args
+        self.batch_size = batch_size
+        self.seq_len = seq_len
         self.num_partitions = num_partitions
         self.num_actors = num_actors
         self.tracing = tracing
@@ -59,18 +63,16 @@ class LlamaActor:
     def init_training(self) -> None:
         torch.manual_seed(self.seed)
         self.seed += 1
-        batch_size = 1
-        seq_len = 1024
 
         self.input = torch.randint(
             0,
             self.model_args.vocab_size,
-            (batch_size, seq_len),
+            (self.batch_size, self.seq_len),
             device=self.device,
         )
         self.target = torch.randn(
-            batch_size,
-            seq_len,
+            self.batch_size,
+            self.seq_len,
             self.model_args.vocab_size,
             requires_grad=True,
             device=self.device,
