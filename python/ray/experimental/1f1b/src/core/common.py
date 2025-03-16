@@ -110,17 +110,15 @@ def generate_1f1b_dag(
         done = []
 
         # FWD on worker 0.
-        # input_data = workers[0].read_input.bind(inp)
-        # for i in range(num_microbatches):
-        #     fwd_queues[0].append(input_data)
         for i in range(num_microbatches):
-            fwd_queues[0].append(inp)
+            input_data = workers[0].get_input.bind(inp)
+            fwd_queues[0].append(input_data)
 
         while len(done) < num_microbatches:
             for i, worker in enumerate(workers):
                 if fwd_counter[i] > 0 and fwd_queues[i]:
                     b = fwd_queues[i].pop(0)
-                    b = worker.forward_pp.bind(b)
+                    b = worker.forward.bind(b)
                     if i < num_workers - 1:
                         fwd_queues[i + 1].append(b)
                         # Use NCCL channel for communication between workers.
@@ -130,7 +128,7 @@ def generate_1f1b_dag(
                     fwd_counter[i] -= 1
                 elif bwd_queues[i]:
                     b = bwd_queues[i].pop(0)
-                    b = worker.backward_pp.bind(b)
+                    b = worker.backward.bind(b)
                     if i > 0:
                         bwd_queues[i - 1].append(b)
                         # Use NCCL channel for communication between workers.

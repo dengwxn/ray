@@ -457,6 +457,7 @@ class BucketParameter(nn.Module):
         self.criterion = torch.nn.CrossEntropyLoss()
         params = [param for _, param in self.named_params]
         self.optimizer = torch.optim.AdamW(params, lr=1e-6)
+        self.freqs_cis = None
 
         self.init_weights()
 
@@ -466,6 +467,19 @@ class BucketParameter(nn.Module):
                 nn.init.xavier_uniform_(param)
             else:
                 nn.init.zeros_(param)
+
+    def post_embeddings(self, seqlen: int, device: torch.device, h: torch.Tensor):
+        start_pos = 0
+        self.freqs_cis = self.freqs_cis.to(h.device)
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=device)
+            mask = torch.triu(mask, diagonal=1)
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=device), mask]
+            ).type_as(h)
+        return freqs_cis, mask
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         for layer in self.layers:
@@ -722,6 +736,8 @@ class TransformerBP(nn.Module):
                 [self.output], pre_hook=self.pre_output, hook_layers=[self.norm]
             )
         )
+        for bparam in self.bparams:
+            bparam.freqs_cis = self.freqs_cis
 
     def post_embeddings(self, tokens: torch.Tensor, h: torch.Tensor):
         start_pos = 0

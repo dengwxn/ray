@@ -6,7 +6,7 @@ import torch
 
 import ray
 from ..common import millis_to_micros
-from .model import Shard, TransformerBP, shard_model
+from .model import Shard, TransformerBP
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,7 @@ class LlamaActor:
         model_args,
         batch_size: int,
         seq_len: int,
+        rank: int,
         num_partitions: int,
         num_actors: int,
         tracing: bool,
@@ -29,11 +30,11 @@ class LlamaActor:
         self.model_args = model_args
         self.batch_size = batch_size
         self.seq_len = seq_len
+        self.rank = rank
         self.num_partitions = num_partitions
         self.num_actors = num_actors
         self.tracing = tracing
 
-        self.shards: List[Shard] = []
         self.input: Optional[torch.Tensor] = None
         self.target: Optional[torch.Tensor] = None
         self.intermediates: List[Tuple[torch.Tensor, torch.Tensor]] = []
@@ -47,24 +48,12 @@ class LlamaActor:
         self.model = TransformerBP(self.model_args).to(self.device)
         self.bparams = self.model.bparams
 
-    def init_and_shard_model(self) -> List[List[Shard]]:
-        raise NotImplementedError
-        torch.manual_seed(2025)
-        model = TransformerBP(self.model_args).to(self.device)
-        bparams = model.bparams
-        assert len(bparams) == self.num_partitions
-        for bparam in bparams:
-            bparam.init_weights()
-        actor_to_shards = [[] for _ in range(self.num_actors)]
-        for bparam in bparams:
-            shards = shard_model(bparam, self.num_actors)
-            for rank, shard in enumerate(shards):
-                actor_to_shards[rank].append(shard)
-        return actor_to_shards
-
-    def set_shards(self, shards: List[Shard]) -> None:
-        raise NotImplementedError
-        self.shards = [shard.to(self.device) for shard in shards]
+    def init_and_partition_model(self) -> List[List[Shard]]:
+        assert self.rank < self.num_partitions
+        if self.rank == 0:
+            self.bparams_pp_range = (0, len(self.bparams) // 2)
+        else:
+            self.bparams_pp_range = (len(self.bparams) // 2, len(self.bparams))
 
     def init_training(self) -> None:
         torch.manual_seed(self.seed)
@@ -242,11 +231,7 @@ class LlamaActor:
         assert self.target is not None
         return self.target
 
-    def get_shard(self, idx: int, _) -> torch.Tensor:
-        assert self.shards
-        return self.shards[idx].sharded_param
-
-    def forward(self, idx: int, input: torch.Tensor) -> None:
+    def forward_bparam(self, idx: int, input: torch.Tensor) -> torch.Tensor:
         if idx == 0:
             self.update_tracing("start")
         if self.tracing:
@@ -256,26 +241,30 @@ class LlamaActor:
         if idx == 0:
             pred = bp.forward(input)
             self.freqs_cis, self.mask = bp.post_hook(input, pred)
-        elif idx < len(self.shards) - 1:
+        elif idx < len(self.bparams) - 1:
+            if self.freqs_cis is None:
+                self.freqs_cis, self.mask = bp.post_embeddings(
+                    self.seq_len, self.device, input
+                )
             pred = bp.forward_transformer(input, 0, self.freqs_cis, self.mask)
         else:
             pred = bp.forward(bp.pre_hook(input))
+            self.freqs_cis, self.mask = None, None
 
-        if idx < len(self.shards) - 1:
-            pred_as_input = pred.detach().requires_grad_(True)
-        else:
-            pred_as_input = pred
-        self.intermediates.append((pred, pred_as_input))
+        pred.requires_grad_(True)
+        self.intermediates.append((pred, None))
 
         if self.tracing:
             self.update_tracing("fw.ends")
-        return pred_as_input
+        return pred
 
-    def forward_pp(self, _placeholder) -> None:
-        # [TODO] Forward the corresponding partition.
-        raise NotImplementedError
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        self.intermediates.append((None, input))
+        for i in range(*self.bparams_pp_range):
+            input = self.forward_bparam(i, input)
+        return input
 
-    def compute_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def compute_loss(self, pred: torch.Tensor, target: torch.Tensor) -> Any:
         if self.tracing:
             self.update_tracing("bw.loss.comp.starts")
         loss = self.criterion(pred, target)
@@ -283,37 +272,48 @@ class LlamaActor:
             self.update_tracing("bw.loss.comp.ends")
         return loss
 
-    def backward_loss(self, loss: torch.Tensor) -> None:
+    def backward_loss(self, loss: Any) -> None:
         if self.tracing:
             self.update_tracing("bw.loss.grad.starts")
         loss.backward()
-        shard = self.shards[-1]
-        flat_grad = shard.get_flat_grad()
-        shard.free_peer_shards()
         if self.tracing:
             self.update_tracing("bw.loss.grad.ends")
-        return flat_grad
+        return None
 
-    def backward_intra(self, idx: int, _backward_pre) -> torch.Tensor:
+    def backward_intra(self, idx: int, grad: torch.Tensor) -> torch.Tensor:
         if self.tracing:
             self.update_tracing("bw.grad.intra.starts")
-        pred, pred_as_input = self.intermediates[idx]
-        grad = pred_as_input.grad
+        pred, _ = self.intermediates[idx]
+        assert isinstance(pred, torch.Tensor), pred
+        assert isinstance(grad, torch.Tensor), grad
         pred.backward(grad)
         if self.tracing:
             self.update_tracing("bw.grad.intra.ends")
         return None
 
-    def backward_pp(self, _placeholder) -> torch.Tensor:
-        # [TODO] Backward the corresponding partition.
-        raise NotImplementedError
+    def backward(self, tensor: torch.Tensor) -> Optional[torch.Tensor]:
+        if self.rank == 0:
+            self.backward_intra(-1, tensor)
+            return None
+        else:
+            target = self.get_target(None)
+            loss = self.compute_loss(tensor, target)
+            self.backward_loss(loss)
+            for pred, _ in self.intermediates[1:]:
+                logger.warning(f"pred.grad: {pred.grad}")
+                # [TODO] Why is everything none?
+            _, input = self.intermediates[0]
+            grad = input.grad
+            assert isinstance(grad, torch.Tensor), grad
+            # [TODO] Why does this assert fail?
+            return grad
 
     def update(self, idx: int, grad: torch.Tensor, grad_passed: bool) -> None:
         if self.tracing:
             self.update_tracing("others.upd.starts")
         if grad_passed:
             grad /= self.num_actors
-        self.shards[idx].update(grad, grad_passed)
+        self.bparams[idx].update(grad, grad_passed)
         if self.tracing:
             self.update_tracing("others.upd.ends")
         if idx == 0:

@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 import ray
 from .....core.common import (
@@ -11,7 +11,6 @@ from .....core.common import (
 from .....core.config import parse_args
 from .....core.llama3.actor import LlamaActor
 from .....core.llama3.model import LLAMA_DEBUG as LLAMA
-from ray.dag import InputNode, MultiOutputNode
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(filename)s:%(lineno)d -- %(message)s",
@@ -35,11 +34,12 @@ def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
             model_args,
             batch_size=batch_size,
             seq_len=seq_len,
+            rank=i,
             num_partitions=num_partitions,
             num_actors=num_actors,
             tracing=tracing,
         )
-        for _ in range(num_actors)
+        for i in range(num_actors)
     ]
 
     return actors
@@ -57,12 +57,9 @@ def train(
 ) -> None:
     compiled_dag = generate_1f1b_dag(actors, 2, 2)
     compiled_dag.visualize(channel_details=True)
-    return
 
-    # [TODO] Add init_and_partition_model.
-    # actor_to_shards = ray.get(actors[0].init_and_shard_model.remote())
-    # for actor, shards in zip(actors, actor_to_shards):
-    #     ray.get(actor.set_shards.remote(shards))
+    for actor in actors:
+        ray.get(actor.init_and_partition_model.remote())
 
     total_elapses: List[int] = []
     for iter in range(num_iters):
@@ -86,6 +83,8 @@ def train(
 
         for actor in actors:
             ray.get(actor.finish_tracing.remote())
+
+        break
 
     actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
     for actor_elapses in actors_to_elapses:
