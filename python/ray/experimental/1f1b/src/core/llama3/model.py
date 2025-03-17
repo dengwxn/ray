@@ -6,7 +6,7 @@ import math
 from collections import defaultdict
 from dataclasses import dataclass
 from itertools import chain
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -427,6 +427,113 @@ class Transformer(nn.Module):
         return output
 
 
+class TransformerPPV3(nn.Module):
+    def __init__(self, params: ModelArgs, rank: int):
+        super().__init__()
+        self.params = params
+        self.vocab_size = params.vocab_size
+        self.n_layers = params.n_layers
+
+        def log_size(layer, indent=0):
+            num_params = sum(p.numel() for p in layer.parameters())
+            size_mib = num_params * 4 / (1024 * 1024)
+            indent_str = "  " * indent
+            logger.info(
+                f"{indent_str}{layer.__class__.__name__}: {round(size_mib)} MiB"
+            )
+            if size_mib < 25:
+                return
+            for _, child in layer.named_children():
+                log_size(child, indent + 1)
+
+        self.tok_embeddings = torch.nn.Embedding(
+            params.vocab_size,
+            params.dim,
+        )
+        log_size(self.tok_embeddings)
+
+        self.layers = torch.nn.ModuleList()
+        for layer_id in range(params.n_layers):
+            self.layers.append(TransformerBlock(layer_id, params))
+        log_size(self.layers[0])
+
+        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        log_size(self.norm)
+        self.output = torch.nn.Linear(
+            params.dim,
+            params.vocab_size,
+            bias=False,
+        )
+        log_size(self.output)
+
+        self.freqs_cis = precompute_freqs_cis(
+            params.dim // params.n_heads,
+            params.max_seq_len * 2,
+            params.rope_theta,
+        )
+
+        self.pidx = 9
+        self.rank = rank
+
+    def forward(self, tokens: torch.Tensor, start_pos: int):
+        _bsz, seqlen = tokens.shape
+        h = self.tok_embeddings(tokens)
+        self.freqs_cis = self.freqs_cis.to(h.device)
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+            mask = torch.triu(mask, diagonal=1)
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+            ).type_as(h)
+
+        for layer in self.layers:
+            h = layer(h, start_pos, freqs_cis, mask)
+        h = self.norm(h)
+        output = self.output(h).float()
+        return output
+
+    def forward_first(self, tokens: torch.Tensor, start_pos: int):
+        _bsz, seqlen = tokens.shape
+        h = self.tok_embeddings(tokens)
+        self.freqs_cis = self.freqs_cis.to(h.device)
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+            mask = torch.triu(mask, diagonal=1)
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+            ).type_as(h)
+
+        for layer in self.layers[: self.pidx]:
+            h = layer(h, start_pos, freqs_cis, mask)
+        return h
+
+    def forward_second(self, tokens: torch.Tensor, start_pos: int, h: torch.Tensor):
+        _bsz, seqlen = tokens.shape
+        h0 = self.tok_embeddings(tokens)
+        self.freqs_cis = self.freqs_cis.to(h0.device)
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+            mask = torch.triu(mask, diagonal=1)
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+            ).type_as(h)
+
+        for layer in self.layers[self.pidx :]:
+            h = layer(h, start_pos, freqs_cis, mask)
+        h = self.norm(h)
+        output = self.output(h).float()
+        return output
+
+
 class BucketParameter(nn.Module):
     def __init__(
         self,
@@ -572,102 +679,6 @@ class BucketParameter(nn.Module):
         logger.info(f"version_to_count_grad: {version_to_count_grad}")
 
 
-class Shard(torch.nn.Module):
-    # Simulate FSDP sharding.
-
-    def __init__(
-        self,
-        model: BucketParameter,
-        sharded_param: torch.Tensor,
-        model_metadata: List[Tuple[torch.Size, int]],
-    ) -> None:
-        super().__init__()
-
-        self.model = model
-        self.pre_hook = model.pre_hook
-        self.post_hook = model.post_hook
-        self.sharded_param = torch.nn.Parameter(sharded_param, requires_grad=True)
-        self.model_metadata = model_metadata
-        self.optimizer = torch.optim.AdamW([self.sharded_param], lr=1e-6)
-
-    def set_flat_param(self, flat_param: torch.Tensor) -> None:
-        _set_flat_param(self.model, flat_param, self.model_metadata)
-
-    def get_flat_grad(self) -> torch.Tensor:
-        flat_grad = parameters_to_vector(
-            [param.grad for param in self.model.parameters()]
-        )
-        return flat_grad
-
-    def free_peer_shards(self) -> None:
-        _free_peer_shards(self.model)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.model.forward(x)
-
-    def forward_transformer(
-        self,
-        x: torch.Tensor,
-        start_pos: int,
-        freqs_cis: torch.Tensor,
-        mask: Optional[torch.Tensor],
-    ):
-        return self.model.forward_transformer(x, start_pos, freqs_cis, mask)
-
-    def update(self, grad: torch.Tensor, grad_passed: bool) -> None:
-        if grad_passed:
-            self.sharded_param.grad = grad
-        self.optimizer.step()
-        self.optimizer.zero_grad()
-
-
-def shard_model(model: torch.nn.Module, num_shards: int) -> List[Shard]:
-    param = parameters_to_vector(model.parameters())
-    padding = (num_shards - param.numel() % num_shards) % num_shards
-    if padding > 0:
-        param = torch.cat(
-            [param, torch.zeros(padding, dtype=param.dtype, device=param.device)]
-        )
-    sharded_param_size = param.numel() // num_shards
-    sharded_params = [
-        param[i : i + sharded_param_size].reshape(-1)
-        for i in range(0, param.numel(), sharded_param_size)
-    ]
-    model_metadata = [(param.shape, param.numel()) for param in model.parameters()]
-    _free_peer_shards(model)
-    shards = [
-        Shard(model, sharded_param, model_metadata) for sharded_param in sharded_params
-    ]
-    return shards
-
-
-def _set_flat_param(
-    model: torch.nn.Module,
-    flat_param: torch.Tensor,
-    model_metadata: List[Tuple[torch.Size, int]],
-) -> None:
-    offset = 0
-    for param, (shape, numel) in zip(model.parameters(), model_metadata):
-        param.data = flat_param[offset : offset + numel].reshape(shape)
-        offset += numel
-
-
-def _free_peer_shards(model: torch.nn.Module) -> None:
-    def get_first_param():
-        for param in model.parameters():
-            return param
-        raise ValueError("Expected parameters")
-
-    # Assume all parameters have the same dtype and device.
-    first_param = get_first_param()
-    dtype = first_param.dtype
-    device = first_param.device
-    empty_tensor = torch.empty(0, dtype=dtype, device=device)
-    for param in model.parameters():
-        param.data = empty_tensor
-        param.grad = None
-
-
 class TransformerBP(nn.Module):
     def __init__(self, params: ModelArgs):
         super().__init__()
@@ -771,6 +782,384 @@ class TransformerBP(nn.Module):
         output = bp.forward(h)
 
         return output
+
+
+class TransformerPPV1(nn.Module):
+    def __init__(self, params: ModelArgs, rank: int):
+        super().__init__()
+        self.params = params
+        self.rank = rank
+        self.pidx = 9
+        self.batch_size = 2
+        self.seq_len = 2048
+
+        self.vocab_size = params.vocab_size
+        self.n_layers = params.n_layers
+
+        # self.bparams: List[BucketParameter] = []
+
+        def log_size(layer, indent=0):
+            num_params = sum(p.numel() for p in layer.parameters())
+            size_mib = num_params * 4 / (1024 * 1024)
+            indent_str = "  " * indent
+            logger.info(
+                f"{indent_str}{layer.__class__.__name__}: {round(size_mib)} MiB"
+            )
+            if size_mib < 25:
+                return
+            for _, child in layer.named_children():
+                log_size(child, indent + 1)
+
+        self.tok_embeddings = torch.nn.Embedding(
+            params.vocab_size,
+            params.dim,
+        )
+        log_size(self.tok_embeddings)
+
+        self.layers = torch.nn.ModuleList()
+        for layer_id in range(params.n_layers):
+            self.layers.append(TransformerBlock(layer_id, params))
+        log_size(self.layers[0])
+
+        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        log_size(self.norm)
+        self.output = torch.nn.Linear(
+            params.dim,
+            params.vocab_size,
+            bias=False,
+            # init_method=lambda x: x,
+        )
+        log_size(self.output)
+
+        self.freqs_cis = precompute_freqs_cis(
+            params.dim // params.n_heads,
+            params.max_seq_len * 2,
+            params.rope_theta,
+        )
+
+        # self.bparams.append(
+        #     BucketParameter([self.tok_embeddings], post_hook=self.post_embeddings)
+        # )
+        # for layer in self.layers:
+        #     # [TODO] Separate attention and feedforward layers.
+        #     self.bparams.append(BucketParameter([layer]))
+        # self.bparams.append(
+        #     BucketParameter(
+        #         [self.output], pre_hook=self.pre_output, hook_layers=[self.norm]
+        #     )
+        # )
+
+    def post_embeddings(self, tokens: torch.Tensor, h: torch.Tensor):
+        start_pos = 0
+        self.freqs_cis = self.freqs_cis.to(h.device)
+        _bsz, seqlen = tokens.shape
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+            mask = torch.triu(mask, diagonal=1)
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+            ).type_as(h)
+        return freqs_cis, mask
+
+    def pre_output(self, h: torch.Tensor):
+        h = self.norm(h)
+        return h
+
+    def forward(
+        self, tokens: torch.Tensor, h: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        assert self.rank in [0, 1]
+        self.intermediates = []
+
+        if self.rank == 0:
+            h = self.tok_embeddings(tokens)
+            h.requires_grad_(True)
+            freqs_cis, mask = self.post_embeddings(tokens, h)
+
+            for bp in self.layers[1 : self.pidx]:
+                h = bp(h, 0, freqs_cis, mask)
+                h.requires_grad_(True)
+
+            output = h
+        elif self.rank == 1:
+            assert h is not None
+
+            h0 = self.tok_embeddings(tokens)
+            freqs_cis, mask = self.post_embeddings(tokens, h0)
+
+            self.intermediates.append(h)
+            for bp in self.layers[self.pidx :]:
+                h = bp(h, 0, freqs_cis, mask)
+                h.requires_grad_(True)
+                self.intermediates.append(h)
+
+            output = self.output(self.norm(h)).float()
+
+        output_as_input = output.detach().requires_grad_(True)
+        self.intermediates.append(output_as_input)
+
+        logger.warning(
+            f"rank: {self.rank}, len(intermediates): {len(self.intermediates)}"
+        )
+
+        return output_as_input
+
+        # bp = self.bparams[0]
+        # h = bp.forward(tokens)
+        # freqs_cis, mask = bp.post_hook(tokens, h)
+
+        # for bp in self.bparams[1:-1]:
+        #     h = bp.forward_transformer(h, 0, freqs_cis, mask)
+
+        # bp = self.bparams[-1]
+        # h = bp.pre_hook(h)
+        # output = bp.forward(h)
+
+        # return output
+
+
+class ActorV2:
+    def __init__(
+        self,
+        model_args,
+        batch_size: int,
+        seq_len: int,
+        rank: int,
+        num_partitions: int,
+        num_actors: int,
+        tracing: bool,
+    ):
+        self.seed = 998244353
+        self.device = torch.device("cuda:0")
+
+        logger.info(f"model_args: {model_args}")
+        self.model_args = model_args
+        self.batch_size = batch_size
+        self.seq_len = seq_len
+        self.rank = rank
+        self.num_partitions = num_partitions
+        self.num_actors = num_actors
+        self.tracing = tracing
+
+        self.input: Optional[torch.Tensor] = None
+        self.target: Optional[torch.Tensor] = None
+        self.criterion = torch.nn.CrossEntropyLoss()
+
+        self.it = 0
+        self.events: Dict[str, Any] = {}
+        self.elapses: Dict[str, List] = defaultdict(list)
+
+        torch.manual_seed(2025)
+        self.model = Transformer(self.model_args).to(self.device)
+
+    def init_training(self) -> None:
+        torch.manual_seed(self.seed)
+        self.seed += 1
+
+        self.input = torch.randint(
+            0,
+            self.model_args.vocab_size,
+            (self.batch_size, self.seq_len),
+            device=self.device,
+        )
+        self.target = torch.randn(
+            self.batch_size,
+            self.seq_len,
+            self.model_args.vocab_size,
+            requires_grad=True,
+            device=self.device,
+        )
+
+        torch.cuda.synchronize()
+
+    def get_input(self, _) -> torch.Tensor:
+        assert self.input is not None
+        return self.input
+
+    def get_target(self, _) -> torch.Tensor:
+        assert self.target is not None
+        return self.target
+
+    def forward(
+        self, tokens: torch.Tensor, h: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        return self.model.forward(tokens, h)
+
+    def compute_loss(self, pred: torch.Tensor, target: torch.Tensor) -> Any:
+        loss = self.criterion(pred, target)
+        return loss
+
+    def backward_loss(self, loss: Any) -> None:
+        loss.backward()
+        return None
+
+    def backward_intra(self, idx: int, grad: torch.Tensor) -> torch.Tensor:
+        pred = self.model.intermediates[idx]
+        assert isinstance(pred, torch.Tensor), pred
+        assert isinstance(grad, torch.Tensor), grad
+        pred.backward(grad)
+        return None
+
+    def backward(self, tensor: torch.Tensor) -> Optional[torch.Tensor]:
+        logger.warning(
+            f"rank: {self.rank}, len(intermediates): {len(self.model.intermediates)}"
+        )
+        if self.rank == 0:
+            assert len(self.model.intermediates) >= 1, self.model.intermediates
+            self.backward_intra(-1, tensor)
+            return None
+        else:
+            target = self.get_target(None)
+            loss = self.compute_loss(tensor, target)
+            n_grad = 0
+            n_require_grad = 0
+            for param in self.model.parameters():
+                if param.grad is not None:
+                    n_grad += 1
+                if param.requires_grad:
+                    n_require_grad += 1
+            logger.warning(
+                f"n_grad: {n_grad}, n_require_grad: {n_require_grad}, len(parameters): {len(list(self.model.parameters()))}"
+            )
+            self.backward_loss(loss)
+            assert len(self.model.intermediates) >= 2, self.model.intermediates
+            n_grad = 0
+            for param in self.model.parameters():
+                if param.grad is not None:
+                    n_grad += 1
+            logger.warning(
+                f"n_grad: {n_grad}, n_require_grad: {n_require_grad}, len(parameters): {len(list(self.model.parameters()))}"
+            )
+            # for i in self.model.intermediates:
+            #     logger.warning(f"intermediate.grad: {i.grad}")
+            input = self.model.intermediates[0]
+            grad = input.grad
+            assert isinstance(grad, torch.Tensor), grad
+            # [TODO] Why does this assert fail?
+            return grad
+
+
+class ActorV1:
+    def __init__(
+        self,
+        model_args,
+        batch_size: int,
+        seq_len: int,
+        rank: int,
+        num_partitions: int,
+        num_actors: int,
+        tracing: bool,
+    ):
+        self.seed = 998244353
+        self.device = torch.device("cuda:0")
+
+        logger.info(f"model_args: {model_args}")
+        self.model_args = model_args
+        self.batch_size = batch_size
+        self.seq_len = seq_len
+        self.rank = rank
+        self.num_partitions = num_partitions
+        self.num_actors = num_actors
+        self.tracing = tracing
+
+        self.input: Optional[torch.Tensor] = None
+        self.target: Optional[torch.Tensor] = None
+        self.criterion = torch.nn.CrossEntropyLoss()
+
+        self.it = 0
+        self.events: Dict[str, Any] = {}
+        self.elapses: Dict[str, List] = defaultdict(list)
+
+        torch.manual_seed(2025)
+        self.model = TransformerPPV1(self.model_args, self.rank).to(self.device)
+
+    def init_training(self) -> None:
+        torch.manual_seed(self.seed)
+        self.seed += 1
+
+        self.input = torch.randint(
+            0,
+            self.model_args.vocab_size,
+            (self.batch_size, self.seq_len),
+            device=self.device,
+        )
+        self.target = torch.randn(
+            self.batch_size,
+            self.seq_len,
+            self.model_args.vocab_size,
+            requires_grad=True,
+            device=self.device,
+        )
+
+        torch.cuda.synchronize()
+
+    def get_input(self, _) -> torch.Tensor:
+        assert self.input is not None
+        return self.input
+
+    def get_target(self, _) -> torch.Tensor:
+        assert self.target is not None
+        return self.target
+
+    def forward(
+        self, tokens: torch.Tensor, h: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        return self.model.forward(tokens, h)
+
+    def compute_loss(self, pred: torch.Tensor, target: torch.Tensor) -> Any:
+        loss = self.criterion(pred, target)
+        return loss
+
+    def backward_loss(self, loss: Any) -> None:
+        loss.backward()
+        return None
+
+    def backward_intra(self, idx: int, grad: torch.Tensor) -> torch.Tensor:
+        pred = self.model.intermediates[idx]
+        assert isinstance(pred, torch.Tensor), pred
+        assert isinstance(grad, torch.Tensor), grad
+        pred.backward(grad)
+        return None
+
+    def backward(self, tensor: torch.Tensor) -> Optional[torch.Tensor]:
+        logger.warning(
+            f"rank: {self.rank}, len(intermediates): {len(self.model.intermediates)}"
+        )
+        if self.rank == 0:
+            assert len(self.model.intermediates) >= 1, self.model.intermediates
+            self.backward_intra(-1, tensor)
+            return None
+        else:
+            target = self.get_target(None)
+            loss = self.compute_loss(tensor, target)
+            n_grad = 0
+            n_require_grad = 0
+            for param in self.model.parameters():
+                if param.grad is not None:
+                    n_grad += 1
+                if param.requires_grad:
+                    n_require_grad += 1
+            logger.warning(
+                f"n_grad: {n_grad}, n_require_grad: {n_require_grad}, len(parameters): {len(list(self.model.parameters()))}"
+            )
+            self.backward_loss(loss)
+            assert len(self.model.intermediates) >= 2, self.model.intermediates
+            n_grad = 0
+            for param in self.model.parameters():
+                if param.grad is not None:
+                    n_grad += 1
+            logger.warning(
+                f"n_grad: {n_grad}, n_require_grad: {n_require_grad}, len(parameters): {len(list(self.model.parameters()))}"
+            )
+            # for i in self.model.intermediates:
+            #     logger.warning(f"intermediate.grad: {i.grad}")
+            input = self.model.intermediates[0]
+            grad = input.grad
+            assert isinstance(grad, torch.Tensor), grad
+            # [TODO] Why does this assert fail?
+            return grad
 
 
 def log_size(layer, indent=0):
