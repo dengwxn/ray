@@ -1130,11 +1130,19 @@ class ActorV6:
         self.logits_as_output.backward(grad)
         return None
 
+    def display(self):
+        n_grad_not_none = 0
+        for p in self.model.parameters():
+            if p.grad is not None:
+                n_grad_not_none += 1
+        logger.info(f"rank: {self.rank}, n_grad_not_none: {n_grad_not_none}")
+
     def backward(self, data: torch.Tensor) -> Optional[torch.Tensor]:
         if self.rank == 0:
-            return self.backward_intra(data)
+            output = self.backward_intra(data)
         else:
-            return self.backward_loss(data)
+            output = self.backward_loss(data)
+        return output
 
     def update(self, _) -> None:
         self.optimizer.step()
