@@ -1032,6 +1032,130 @@ class TransformerBP(nn.Module):
         return output
 
 
+class ActorV7:
+    def __init__(
+        self,
+        model_args,
+        batch_size: int,
+        seq_len: int,
+        rank: int,
+        num_partitions: int,
+        num_actors: int,
+        tracing: bool,
+    ):
+        self.seed = 998244353
+        self.device = torch.device(f"cuda:{rank}")  # [TODO]
+
+        logger.info(f"model_args: {model_args}")
+        self.model_args = model_args
+        self.batch_size = batch_size
+        self.seq_len = seq_len
+        self.rank = rank
+        self.num_partitions = num_partitions
+        self.num_actors = num_actors
+        self.tracing = tracing
+
+        self.input: Optional[torch.Tensor] = None
+        self.target: Optional[torch.Tensor] = None
+
+        torch.manual_seed(2025)
+        self.model = TransformerPPV4(model_args, rank).to(self.device)
+        self.criterion = torch.nn.CrossEntropyLoss()
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
+
+        self.it = 0
+        self.events: Dict[str, Any] = {}
+        self.elapses: Dict[str, List] = defaultdict(list)
+
+    def init_training(self) -> None:
+        torch.manual_seed(self.seed)
+        self.seed += 1
+
+        self.input = torch.randint(
+            0,
+            self.model_args.vocab_size,
+            (self.batch_size, self.seq_len),
+            device=self.device,
+        )
+        self.target = torch.randn(
+            self.batch_size,
+            self.seq_len,
+            self.model_args.vocab_size,
+            requires_grad=True,
+            device=self.device,
+        )
+
+        self.idx_to_logits_as_input = defaultdict()
+        self.idx_to_logits_as_output = defaultdict()
+
+        torch.cuda.synchronize()
+
+    def get_input(self, _) -> torch.Tensor:
+        assert self.input is not None
+        return self.input
+
+    def get_target(self, _) -> torch.Tensor:
+        assert self.target is not None
+        return self.target
+
+    def forward(
+        self, idx: int, logits_as_input: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        tokens = self.input
+        if self.rank == 0:
+            logits_as_output = self.model.forward_first(tokens, 0)
+            self.idx_to_logits_as_output[idx] = logits_as_output
+            logits_as_input = logits_as_output.detach()
+            return logits_as_input
+        else:
+            assert logits_as_input is not None
+            logits_as_input = logits_as_input.to(self.device).requires_grad_(True)
+            self.idx_to_logits_as_input[idx] = logits_as_input
+            logits_2 = self.model.forward_second(tokens, 0, logits_as_input)
+            return logits_2
+
+    def compute_loss(self, logits: torch.Tensor, target: torch.Tensor) -> Any:
+        loss = self.criterion(logits, target)
+        return loss
+
+    def backward_loss(self, idx: int, logits: torch.Tensor) -> torch.Tensor:
+        target = self.target
+        loss = self.compute_loss(logits, target)
+        loss.backward()
+        assert idx in self.idx_to_logits_as_input
+        logits_as_input = self.idx_to_logits_as_input[idx]
+        grad = logits_as_input.grad
+        assert grad is not None
+        return grad
+
+    def backward_intra(self, idx: int, grad: torch.Tensor) -> None:
+        assert grad is not None
+        grad = grad.to(self.device)
+        assert idx in self.idx_to_logits_as_output
+        logits_as_output = self.idx_to_logits_as_output[idx]
+        logits_as_output.backward(grad)
+        return None
+
+    def backward(self, idx: int, data: torch.Tensor) -> Optional[torch.Tensor]:
+        if self.rank == 0:
+            output = self.backward_intra(idx, data)
+        else:
+            output = self.backward_loss(idx, data)
+        return output
+
+    def display(self):
+        n_grad_not_none = 0
+        for p in self.model.parameters():
+            if p.grad is not None:
+                n_grad_not_none += 1
+        logger.info(f"rank: {self.rank}, n_grad_not_none: {n_grad_not_none}")
+
+    def update(self, _) -> None:
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+        return None
+
+
 class ActorV6:
     def __init__(
         self,
