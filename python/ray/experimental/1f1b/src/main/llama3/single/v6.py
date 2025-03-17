@@ -3,7 +3,7 @@ from typing import Any, Dict, List
 
 from ....core.config import parse_args
 from ....core.llama3.model import LLAMA_DEBUG as LLAMA
-from ....core.llama3.model import ActorV4 as Actor
+from ....core.llama3.model import ActorV6 as Actor
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(filename)s:%(lineno)d -- %(message)s",
