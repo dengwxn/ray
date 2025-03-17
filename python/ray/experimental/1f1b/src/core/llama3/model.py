@@ -646,6 +646,142 @@ class TransformerPPV3(nn.Module):
         return output
 
 
+class TransformerPPV1(nn.Module):
+    def __init__(self, params: ModelArgs, rank: int):
+        super().__init__()
+        self.params = params
+        self.rank = rank
+        self.pidx = 9
+        self.batch_size = 2
+        self.seq_len = 2048
+
+        self.vocab_size = params.vocab_size
+        self.n_layers = params.n_layers
+
+        # self.bparams: List[BucketParameter] = []
+
+        def log_size(layer, indent=0):
+            num_params = sum(p.numel() for p in layer.parameters())
+            size_mib = num_params * 4 / (1024 * 1024)
+            indent_str = "  " * indent
+            logger.info(
+                f"{indent_str}{layer.__class__.__name__}: {round(size_mib)} MiB"
+            )
+            if size_mib < 25:
+                return
+            for _, child in layer.named_children():
+                log_size(child, indent + 1)
+
+        self.tok_embeddings = torch.nn.Embedding(
+            params.vocab_size,
+            params.dim,
+        )
+        log_size(self.tok_embeddings)
+
+        self.layers = torch.nn.ModuleList()
+        for layer_id in range(params.n_layers):
+            self.layers.append(TransformerBlock(layer_id, params))
+        log_size(self.layers[0])
+
+        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        log_size(self.norm)
+        self.output = torch.nn.Linear(
+            params.dim,
+            params.vocab_size,
+            bias=False,
+            # init_method=lambda x: x,
+        )
+        log_size(self.output)
+
+        self.freqs_cis = precompute_freqs_cis(
+            params.dim // params.n_heads,
+            params.max_seq_len * 2,
+            params.rope_theta,
+        )
+
+        # self.bparams.append(
+        #     BucketParameter([self.tok_embeddings], post_hook=self.post_embeddings)
+        # )
+        # for layer in self.layers:
+        #     # [TODO] Separate attention and feedforward layers.
+        #     self.bparams.append(BucketParameter([layer]))
+        # self.bparams.append(
+        #     BucketParameter(
+        #         [self.output], pre_hook=self.pre_output, hook_layers=[self.norm]
+        #     )
+        # )
+
+    def post_embeddings(self, tokens: torch.Tensor, h: torch.Tensor):
+        start_pos = 0
+        self.freqs_cis = self.freqs_cis.to(h.device)
+        _bsz, seqlen = tokens.shape
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+            mask = torch.triu(mask, diagonal=1)
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+            ).type_as(h)
+        return freqs_cis, mask
+
+    def pre_output(self, h: torch.Tensor):
+        h = self.norm(h)
+        return h
+
+    def forward(
+        self, tokens: torch.Tensor, h: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        assert self.rank in [0, 1]
+        self.intermediates = []
+
+        if self.rank == 0:
+            h = self.tok_embeddings(tokens)
+            h.requires_grad_(True)
+            freqs_cis, mask = self.post_embeddings(tokens, h)
+
+            for bp in self.layers[1 : self.pidx]:
+                h = bp(h, 0, freqs_cis, mask)
+                h.requires_grad_(True)
+
+            output = h
+        elif self.rank == 1:
+            assert h is not None
+
+            h0 = self.tok_embeddings(tokens)
+            freqs_cis, mask = self.post_embeddings(tokens, h0)
+
+            self.intermediates.append(h)
+            for bp in self.layers[self.pidx :]:
+                h = bp(h, 0, freqs_cis, mask)
+                h.requires_grad_(True)
+                self.intermediates.append(h)
+
+            output = self.output(self.norm(h)).float()
+
+        output_as_input = output.detach().requires_grad_(True)
+        self.intermediates.append(output_as_input)
+
+        logger.warning(
+            f"rank: {self.rank}, len(intermediates): {len(self.intermediates)}"
+        )
+
+        return output_as_input
+
+        # bp = self.bparams[0]
+        # h = bp.forward(tokens)
+        # freqs_cis, mask = bp.post_hook(tokens, h)
+
+        # for bp in self.bparams[1:-1]:
+        #     h = bp.forward_transformer(h, 0, freqs_cis, mask)
+
+        # bp = self.bparams[-1]
+        # h = bp.pre_hook(h)
+        # output = bp.forward(h)
+
+        # return output
+
+
 class BucketParameter(nn.Module):
     def __init__(
         self,
@@ -896,140 +1032,112 @@ class TransformerBP(nn.Module):
         return output
 
 
-class TransformerPPV1(nn.Module):
-    def __init__(self, params: ModelArgs, rank: int):
-        super().__init__()
-        self.params = params
+class ActorV4:
+    def __init__(
+        self,
+        model_args,
+        batch_size: int,
+        seq_len: int,
+        rank: int,
+        num_partitions: int,
+        num_actors: int,
+        tracing: bool,
+    ):
+        self.seed = 998244353
+        self.device = torch.device(f"cuda:{rank}")  # [TODO]
+
+        logger.info(f"model_args: {model_args}")
+        self.model_args = model_args
+        self.batch_size = batch_size
+        self.seq_len = seq_len
         self.rank = rank
-        self.pidx = 9
-        self.batch_size = 2
-        self.seq_len = 2048
+        self.num_partitions = num_partitions
+        self.num_actors = num_actors
+        self.tracing = tracing
 
-        self.vocab_size = params.vocab_size
-        self.n_layers = params.n_layers
+        self.input: Optional[torch.Tensor] = None
+        self.target: Optional[torch.Tensor] = None
 
-        # self.bparams: List[BucketParameter] = []
+        torch.manual_seed(2025)
+        self.model = TransformerPPV4(model_args, rank).to(self.device)
+        self.criterion = torch.nn.CrossEntropyLoss()
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
 
-        def log_size(layer, indent=0):
-            num_params = sum(p.numel() for p in layer.parameters())
-            size_mib = num_params * 4 / (1024 * 1024)
-            indent_str = "  " * indent
-            logger.info(
-                f"{indent_str}{layer.__class__.__name__}: {round(size_mib)} MiB"
-            )
-            if size_mib < 25:
-                return
-            for _, child in layer.named_children():
-                log_size(child, indent + 1)
+        self.it = 0
+        self.events: Dict[str, Any] = {}
+        self.elapses: Dict[str, List] = defaultdict(list)
 
-        self.tok_embeddings = torch.nn.Embedding(
-            params.vocab_size,
-            params.dim,
+    def init_training(self) -> None:
+        torch.manual_seed(self.seed)
+        self.seed += 1
+
+        self.input = torch.randint(
+            0,
+            self.model_args.vocab_size,
+            (self.batch_size, self.seq_len),
+            device=self.device,
         )
-        log_size(self.tok_embeddings)
-
-        self.layers = torch.nn.ModuleList()
-        for layer_id in range(params.n_layers):
-            self.layers.append(TransformerBlock(layer_id, params))
-        log_size(self.layers[0])
-
-        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
-        log_size(self.norm)
-        self.output = torch.nn.Linear(
-            params.dim,
-            params.vocab_size,
-            bias=False,
-            # init_method=lambda x: x,
-        )
-        log_size(self.output)
-
-        self.freqs_cis = precompute_freqs_cis(
-            params.dim // params.n_heads,
-            params.max_seq_len * 2,
-            params.rope_theta,
+        self.target = torch.randn(
+            self.batch_size,
+            self.seq_len,
+            self.model_args.vocab_size,
+            requires_grad=True,
+            device=self.device,
         )
 
-        # self.bparams.append(
-        #     BucketParameter([self.tok_embeddings], post_hook=self.post_embeddings)
-        # )
-        # for layer in self.layers:
-        #     # [TODO] Separate attention and feedforward layers.
-        #     self.bparams.append(BucketParameter([layer]))
-        # self.bparams.append(
-        #     BucketParameter(
-        #         [self.output], pre_hook=self.pre_output, hook_layers=[self.norm]
-        #     )
-        # )
+        # self.intermediates = []
 
-    def post_embeddings(self, tokens: torch.Tensor, h: torch.Tensor):
-        start_pos = 0
-        self.freqs_cis = self.freqs_cis.to(h.device)
-        _bsz, seqlen = tokens.shape
-        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
-        mask = None
-        if seqlen > 1:
-            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
-            mask = torch.triu(mask, diagonal=1)
-            mask = torch.hstack(
-                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
-            ).type_as(h)
-        return freqs_cis, mask
+        torch.cuda.synchronize()
 
-    def pre_output(self, h: torch.Tensor):
-        h = self.norm(h)
-        return h
+    def get_input(self, _) -> torch.Tensor:
+        assert self.input is not None
+        return self.input
+
+    def get_target(self, _) -> torch.Tensor:
+        assert self.target is not None
+        return self.target
 
     def forward(
-        self, tokens: torch.Tensor, h: Optional[torch.Tensor] = None
+        self, tokens: torch.Tensor, logits_as_input: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
-        assert self.rank in [0, 1]
-        self.intermediates = []
-
         if self.rank == 0:
-            h = self.tok_embeddings(tokens)
-            h.requires_grad_(True)
-            freqs_cis, mask = self.post_embeddings(tokens, h)
+            self.logits_1 = self.model.forward_first(tokens, 0)
+            logits_as_input = self.logits_1.detach()
+            return logits_as_input
+        else:
+            assert logits_as_input is not None
+            self.logits_as_input = logits_as_input.to(self.device).requires_grad_(True)
+            logits_2 = self.model.forward_second(tokens, 0, self.logits_as_input)
+            return logits_2
 
-            for bp in self.layers[1 : self.pidx]:
-                h = bp(h, 0, freqs_cis, mask)
-                h.requires_grad_(True)
+    def compute_loss(self, logits: torch.Tensor, target: torch.Tensor) -> Any:
+        loss = self.criterion(logits, target)
+        return loss
 
-            output = h
-        elif self.rank == 1:
-            assert h is not None
+    def backward_loss(self, loss: Any) -> torch.Tensor:
+        loss.backward()
+        grad = self.logits_as_input.grad
+        assert grad is not None
+        return grad
 
-            h0 = self.tok_embeddings(tokens)
-            freqs_cis, mask = self.post_embeddings(tokens, h0)
+    def backward_intra(self, grad: torch.Tensor) -> None:
+        assert grad is not None
+        grad = grad.to(self.device)
+        self.logits_1.backward(grad)
+        return None
 
-            self.intermediates.append(h)
-            for bp in self.layers[self.pidx :]:
-                h = bp(h, 0, freqs_cis, mask)
-                h.requires_grad_(True)
-                self.intermediates.append(h)
+    def backward(self, data: torch.Tensor) -> Optional[torch.Tensor]:
+        if self.rank == 0:
+            return self.backward_intra(data)
+        else:
+            return self.backward_loss(data)
 
-            output = self.output(self.norm(h)).float()
+    def update(self, _) -> None:
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+        return None
 
-        output_as_input = output.detach().requires_grad_(True)
-        self.intermediates.append(output_as_input)
-
-        logger.warning(
-            f"rank: {self.rank}, len(intermediates): {len(self.intermediates)}"
-        )
-
-        return output_as_input
-
-        # bp = self.bparams[0]
-        # h = bp.forward(tokens)
-        # freqs_cis, mask = bp.post_hook(tokens, h)
-
-        # for bp in self.bparams[1:-1]:
-        #     h = bp.forward_transformer(h, 0, freqs_cis, mask)
-
-        # bp = self.bparams[-1]
-        # h = bp.pre_hook(h)
-        # output = bp.forward(h)
-
-        # return output
+    # [TODO] update.
 
 
 class ActorV2:
