@@ -52,13 +52,9 @@ def train(
         for actor in actors:
             actor.init_training()
 
-        input = actors[0].get_input(None)
-        b1_fw1 = actors[0].forward(input)
-        input = actors[1].get_input(None)
-        b1_fw2 = actors[1].forward(input, b1_fw1)
-        target = actors[1].get_target(None)
-        loss = actors[1].compute_loss(b1_fw2, target)
-        b1_bw1 = actors[1].backward(loss)
+        b1_fw1 = actors[0].forward(None)
+        b1_fw2 = actors[1].forward(b1_fw1)
+        b1_bw1 = actors[1].backward(b1_fw2)
         b1_bw2 = actors[0].backward(b1_bw1)
         upd1 = actors[1].update(b1_bw1)
         upd2 = actors[0].update(b1_bw2)

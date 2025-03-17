@@ -1098,9 +1098,8 @@ class ActorV6:
         assert self.target is not None
         return self.target
 
-    def forward(
-        self, tokens: torch.Tensor, logits_as_input: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
+    def forward(self, logits_as_input: Optional[torch.Tensor] = None) -> torch.Tensor:
+        tokens = self.input
         if self.rank == 0:
             self.logits_as_output = self.model.forward_first(tokens, 0)
             logits_as_input = self.logits_as_output.detach()
@@ -1115,10 +1114,11 @@ class ActorV6:
         loss = self.criterion(logits, target)
         return loss
 
-    def backward_loss(self, loss: Any) -> torch.Tensor:
-        assert loss is not None
-        assert self.logits_as_input is not None
+    def backward_loss(self, logits: torch.Tensor) -> torch.Tensor:
+        target = self.target
+        loss = self.compute_loss(logits, target)
         loss.backward()
+        assert self.logits_as_input is not None
         grad = self.logits_as_input.grad
         assert grad is not None
         return grad
