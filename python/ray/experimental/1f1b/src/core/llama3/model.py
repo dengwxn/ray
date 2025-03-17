@@ -1085,7 +1085,8 @@ class ActorV4:
             device=self.device,
         )
 
-        # self.intermediates = []
+        self.logits_as_input = None
+        self.logits_as_output = None
 
         torch.cuda.synchronize()
 
@@ -1101,8 +1102,8 @@ class ActorV4:
         self, tokens: torch.Tensor, logits_as_input: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         if self.rank == 0:
-            self.logits_1 = self.model.forward_first(tokens, 0)
-            logits_as_input = self.logits_1.detach()
+            self.logits_as_output = self.model.forward_first(tokens, 0)
+            logits_as_input = self.logits_as_output.detach()
             return logits_as_input
         else:
             assert logits_as_input is not None
@@ -1115,6 +1116,8 @@ class ActorV4:
         return loss
 
     def backward_loss(self, loss: Any) -> torch.Tensor:
+        assert loss is not None
+        assert self.logits_as_input is not None
         loss.backward()
         grad = self.logits_as_input.grad
         assert grad is not None
@@ -1122,8 +1125,9 @@ class ActorV4:
 
     def backward_intra(self, grad: torch.Tensor) -> None:
         assert grad is not None
+        assert self.logits_as_output is not None
         grad = grad.to(self.device)
-        self.logits_1.backward(grad)
+        self.logits_as_output.backward(grad)
         return None
 
     def backward(self, data: torch.Tensor) -> Optional[torch.Tensor]:
