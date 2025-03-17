@@ -59,14 +59,16 @@ def train(
         upd1 = actors[1].update(b1_bw1)
         upd2 = actors[0].update(b1_bw2)
         outputs = [upd1, upd2]
-        logger.warning(f"iter: {iter}, outputs: {outputs}")
+        logger.warning(f"iter: {iter}, idx: 0, outputs: {outputs}")
 
-        # b2_fw1 = actors[0].forward(input)
-        # b2_fw2 = actors[1].forward(input, b2_fw1)
-        # b2_bw1 = actors[1].backward(b2_fw2)
-        # b2_bw2 = actors[0].backward(b2_bw1)
-
-        # outputs = [b1_bw2, b2_bw2]
+        b1_fw1 = actors[0].forward(1, None)
+        b1_fw2 = actors[1].forward(1, b1_fw1)
+        b1_bw1 = actors[1].backward(1, b1_fw2)
+        b1_bw2 = actors[0].backward(1, b1_bw1)
+        upd1 = actors[1].update(b1_bw1)
+        upd2 = actors[0].update(b1_bw2)
+        outputs = [upd1, upd2]
+        logger.warning(f"iter: {iter}, idx: 1, outputs: {outputs}")
 
 
 def main(args: Dict[str, Any]) -> None:
