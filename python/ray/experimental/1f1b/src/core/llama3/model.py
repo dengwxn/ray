@@ -427,6 +427,118 @@ class Transformer(nn.Module):
         return output
 
 
+class TransformerPPV4(nn.Module):
+    def __init__(self, params: ModelArgs, rank: int):
+        super().__init__()
+        self.params = params
+        self.vocab_size = params.vocab_size
+        self.n_layers = params.n_layers
+
+        def log_size(layer, indent=0):
+            num_params = sum(p.numel() for p in layer.parameters())
+            size_mib = num_params * 4 / (1024 * 1024)
+            indent_str = "  " * indent
+            logger.info(
+                f"{indent_str}{layer.__class__.__name__}: {round(size_mib)} MiB"
+            )
+            if size_mib < 25:
+                return
+            for _, child in layer.named_children():
+                log_size(child, indent + 1)
+
+        self.tok_embeddings = torch.nn.Embedding(
+            params.vocab_size,
+            params.dim,
+        )
+        log_size(self.tok_embeddings)
+
+        self.layers = torch.nn.ModuleList()
+        for layer_id in range(params.n_layers):
+            self.layers.append(TransformerBlock(layer_id, params))
+        log_size(self.layers[0])
+
+        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        log_size(self.norm)
+        self.output = torch.nn.Linear(
+            params.dim,
+            params.vocab_size,
+            bias=False,
+        )
+        log_size(self.output)
+
+        self.freqs_cis = precompute_freqs_cis(
+            params.dim // params.n_heads,
+            params.max_seq_len * 2,
+            params.rope_theta,
+        )
+
+        self.pidx = 9
+        self.rank = rank
+
+    def forward(self, tokens: torch.Tensor, start_pos: int):
+        raise NotImplementedError
+        # _bsz, seqlen = tokens.shape
+        # h = self.tok_embeddings(tokens)
+        # self.freqs_cis = self.freqs_cis.to(h.device)
+        # freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+
+        # mask = None
+        # if seqlen > 1:
+        #     mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+        #     mask = torch.triu(mask, diagonal=1)
+        #     mask = torch.hstack(
+        #         [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+        #     ).type_as(h)
+
+        # for layer in self.layers:
+        #     h = layer(h, start_pos, freqs_cis, mask)
+        # h = self.norm(h)
+        # output = self.output(h).float()
+        # return output
+
+    def forward_first(self, tokens: torch.Tensor, start_pos: int):
+        assert self.rank == 0
+
+        _bsz, seqlen = tokens.shape
+        h = self.tok_embeddings(tokens)
+        self.freqs_cis = self.freqs_cis.to(h.device)
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+            mask = torch.triu(mask, diagonal=1)
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+            ).type_as(h)
+
+        for layer in self.layers[: self.pidx]:
+            h = layer(h, start_pos, freqs_cis, mask)
+        return h
+
+    def forward_second(self, tokens: torch.Tensor, start_pos: int, h: torch.Tensor):
+        assert self.rank == 1
+
+        _bsz, seqlen = tokens.shape
+        h0 = self.tok_embeddings(tokens)
+        self.freqs_cis = self.freqs_cis.to(h0.device)
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+            mask = torch.triu(mask, diagonal=1)
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+            ).type_as(h)
+
+        for layer in self.layers[self.pidx :]:
+            h = layer(h, start_pos, freqs_cis, mask)
+        h = self.norm(h)
+        output = self.output(h).float()
+        return output
+
+
 class TransformerPPV3(nn.Module):
     def __init__(self, params: ModelArgs, rank: int):
         super().__init__()
