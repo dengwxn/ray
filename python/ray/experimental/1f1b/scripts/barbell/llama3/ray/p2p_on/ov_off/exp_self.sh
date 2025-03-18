@@ -34,6 +34,7 @@ echo "Running $output_path..."
 
 batch_size=1
 seq_len=1024
+num_batches=2
 num_partitions=18
 num_actors=2
 num_iters=20
@@ -41,9 +42,11 @@ latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
+# RAY_CGRAPH_VISUALIZE_SCHEDULE=1 \
 python -m ray.experimental.1f1b.src.main.llama3.ray.p2p_on.ov_off \
 	--batch-size $batch_size \
 	--seq-len $seq_len \
+	--num-batches $num_batches \
 	--num-partitions $num_partitions \
 	--num-actors $num_actors \
 	--num-iters $num_iters \
