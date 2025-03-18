@@ -5,7 +5,7 @@ import torch
 
 from ..core.config import parse_args
 from ..core.model import LLAMA_DEBUG as LLAMA
-from ..core.model import Transformer
+from ..core.model import TransformerTP as Transformer
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(filename)s:%(lineno)d -- %(message)s",

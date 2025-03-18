@@ -53,7 +53,6 @@ LLAMA_DEBUG = ModelArgs(
     max_seq_len=2048,
 )
 
-
 LLAMA_1B = ModelArgs(
     dim=2048,
     n_layers=16,
@@ -67,7 +66,6 @@ LLAMA_1B = ModelArgs(
     max_batch_size=32,
     max_seq_len=2048,
 )
-
 
 LLAMA_3B = ModelArgs(
     dim=3072,
@@ -90,6 +88,20 @@ LLAMA_8B = ModelArgs(
     n_kv_heads=8,
     vocab_size=128256,
     multiple_of=1024,
+    ffn_dim_multiplier=1.3,
+    norm_eps=1e-5,
+    rope_theta=500000,
+    max_batch_size=32,
+    max_seq_len=2048,
+)
+
+LLAMA_70B = ModelArgs(
+    dim=8192,
+    n_layers=80,
+    n_heads=64,
+    n_kv_heads=8,
+    vocab_size=128256,
+    multiple_of=4096,
     ffn_dim_multiplier=1.3,
     norm_eps=1e-5,
     rope_theta=500000,
@@ -153,8 +165,272 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     )
 
 
+class AttentionTP(nn.Module):
+    def __init__(self, args: ModelArgs):
+        super().__init__()
+        self.n_kv_heads = args.n_heads if args.n_kv_heads is None else args.n_kv_heads
+        # model_parallel_size = fs_init.get_model_parallel_world_size()
+        model_parallel_size = 1
+        self.n_local_heads = args.n_heads // model_parallel_size
+        self.n_local_kv_heads = self.n_kv_heads // model_parallel_size
+        self.n_rep = self.n_local_heads // self.n_local_kv_heads
+        self.head_dim = args.dim // args.n_heads
+
+        # self.wq = ColumnParallelLinear(
+        self.wq = torch.nn.Linear(
+            args.dim,
+            args.n_heads * self.head_dim,
+            bias=False,
+            # gather_output=False,
+            # init_method=lambda x: x,
+        )
+        # self.wk = ColumnParallelLinear(
+        self.wk = torch.nn.Linear(
+            args.dim,
+            self.n_kv_heads * self.head_dim,
+            bias=False,
+            # gather_output=False,
+            # init_method=lambda x: x,
+        )
+        # self.wv = ColumnParallelLinear(
+        self.wv = torch.nn.Linear(
+            args.dim,
+            self.n_kv_heads * self.head_dim,
+            bias=False,
+            # gather_output=False,
+            # init_method=lambda x: x,
+        )
+        # self.wo = RowParallelLinear(
+        self.wo = torch.nn.Linear(
+            args.n_heads * self.head_dim,
+            args.dim,
+            bias=False,
+            # input_is_parallel=True,
+            # init_method=lambda x: x,
+        )
+
+        # [NOTE] Disable KV cache during training.
+        # self.cache_k = torch.zeros(
+        #     (
+        #         args.max_batch_size,
+        #         args.max_seq_len,
+        #         self.n_local_kv_heads,
+        #         self.head_dim,
+        #     )
+        # ).cuda()
+        # self.cache_v = torch.zeros(
+        #     (
+        #         args.max_batch_size,
+        #         args.max_seq_len,
+        #         self.n_local_kv_heads,
+        #         self.head_dim,
+        #     )
+        # ).cuda()
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        start_pos: int,
+        freqs_cis: torch.Tensor,
+        mask: Optional[torch.Tensor],
+    ):
+        bsz, seqlen, _ = x.shape
+        xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
+
+        xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)
+        xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
+        xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
+
+        xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
+
+        # [NOTE] Disable KV cache during training.
+
+        # self.cache_k = self.cache_k.to(xq)
+        # self.cache_v = self.cache_v.to(xq)
+
+        # self.cache_k[:bsz, start_pos : start_pos + seqlen] = xk
+        # self.cache_v[:bsz, start_pos : start_pos + seqlen] = xv
+
+        # keys = self.cache_k[:bsz, : start_pos + seqlen]
+        # values = self.cache_v[:bsz, : start_pos + seqlen]
+
+        keys = xk
+        values = xv
+
+        # repeat k/v heads if n_kv_heads < n_heads
+        keys = repeat_kv(
+            keys, self.n_rep
+        )  # (bs, cache_len + seqlen, n_local_heads, head_dim)
+        values = repeat_kv(
+            values, self.n_rep
+        )  # (bs, cache_len + seqlen, n_local_heads, head_dim)
+
+        xq = xq.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
+        keys = keys.transpose(1, 2)  # (bs, n_local_heads, cache_len + seqlen, head_dim)
+        values = values.transpose(
+            1, 2
+        )  # (bs, n_local_heads, cache_len + seqlen, head_dim)
+        scores = torch.matmul(xq, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
+        if mask is not None:
+            scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
+        scores = F.softmax(scores.float(), dim=-1).type_as(xq)
+        output = torch.matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
+        output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
+        return self.wo(output)
+
+
+class FeedForwardTP(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        hidden_dim: int,
+        multiple_of: int,
+        ffn_dim_multiplier: Optional[float],
+    ):
+        super().__init__()
+        hidden_dim = int(2 * hidden_dim / 3)
+        # custom dim factor multiplier
+        if ffn_dim_multiplier is not None:
+            hidden_dim = int(ffn_dim_multiplier * hidden_dim)
+        hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
+
+        # self.w1 = ColumnParallelLinear(
+        self.w1 = torch.nn.Linear(
+            dim,
+            hidden_dim,
+            bias=False,
+            # gather_output=False,
+            # init_method=lambda x: x,
+        )
+        # self.w2 = RowParallelLinear(
+        self.w2 = torch.nn.Linear(
+            hidden_dim,
+            dim,
+            bias=False,
+            # input_is_parallel=True,
+            # init_method=lambda x: x,
+        )
+        # self.w3 = ColumnParallelLinear(
+        self.w3 = torch.nn.Linear(
+            dim,
+            hidden_dim,
+            bias=False,
+            # gather_output=False,
+            # init_method=lambda x: x,
+        )
+
+    def forward(self, x):
+        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+
+
+class TransformerBlockTP(nn.Module):
+    def __init__(self, layer_id: int, args: ModelArgs):
+        super().__init__()
+        self.n_heads = args.n_heads
+        self.dim = args.dim
+        self.head_dim = args.dim // args.n_heads
+        self.attention = AttentionTP(args)
+        self.feed_forward = FeedForwardTP(
+            dim=args.dim,
+            hidden_dim=4 * args.dim,
+            multiple_of=args.multiple_of,
+            ffn_dim_multiplier=args.ffn_dim_multiplier,
+        )
+        self.layer_id = layer_id
+        self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)
+        self.ffn_norm = RMSNorm(args.dim, eps=args.norm_eps)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        start_pos: int,
+        freqs_cis: torch.Tensor,
+        mask: Optional[torch.Tensor],
+    ):
+        h = x + self.attention(self.attention_norm(x), start_pos, freqs_cis, mask)
+        out = h + self.feed_forward(self.ffn_norm(h))
+        return out
+
+
+class TransformerTP(nn.Module):
+    def __init__(self, params: ModelArgs):
+        super().__init__()
+        self.params = params
+        self.vocab_size = params.vocab_size
+        self.n_layers = params.n_layers
+
+        def log_size(layer, indent=0):
+            num_params = sum(p.numel() for p in layer.parameters())
+            size_mib = num_params * 4 / (1024 * 1024)
+            indent_str = "  " * indent
+            logger.info(
+                f"{indent_str}{layer.__class__.__name__}: {round(size_mib)} MiB"
+            )
+            if size_mib < 25:
+                return
+            for _, child in layer.named_children():
+                log_size(child, indent + 1)
+
+        # self.tok_embeddings = VocabParallelEmbedding(
+        self.tok_embeddings = torch.nn.Embedding(
+            params.vocab_size,
+            params.dim,
+            # init_method=lambda x: x,
+        )
+        log_size(self.tok_embeddings)
+
+        self.layers = torch.nn.ModuleList()
+        for layer_id in range(params.n_layers):
+            self.layers.append(TransformerBlockTP(layer_id, params))
+        log_size(self.layers[0])
+
+        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        log_size(self.norm)
+        # self.output = ColumnParallelLinear(
+        self.output = torch.nn.Linear(
+            params.dim,
+            params.vocab_size,
+            bias=False,
+            # init_method=lambda x: x,
+        )
+        log_size(self.output)
+
+        self.freqs_cis = precompute_freqs_cis(
+            params.dim // params.n_heads,
+            params.max_seq_len * 2,
+            params.rope_theta,
+        )
+
+    def forward(self, tokens: torch.Tensor, start_pos: int):
+        _bsz, seqlen = tokens.shape
+        h = self.tok_embeddings(tokens)
+        self.freqs_cis = self.freqs_cis.to(h.device)
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+
+            mask = torch.triu(mask, diagonal=1)
+
+            # When performing key-value caching, we compute the attention scores
+            # only for the new sequence. Thus, the matrix of scores is of size
+            # (seqlen, cache_len + seqlen), and the only masked entries are (i, j) for
+            # j > cache_len + i, since row i corresponds to token cache_len + i.
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+            ).type_as(h)
+
+        for layer in self.layers:
+            h = layer(h, start_pos, freqs_cis, mask)
+        h = self.norm(h)
+        output = self.output(h).float()
+        return output
+
+
 class Attention(nn.Module):
     def __init__(self, args: ModelArgs):
+        raise NotImplementedError("TP")
         super().__init__()
         self.n_kv_heads = args.n_heads if args.n_kv_heads is None else args.n_kv_heads
         # model_parallel_size = fs_init.get_model_parallel_world_size()
@@ -275,6 +551,7 @@ class FeedForward(nn.Module):
         multiple_of: int,
         ffn_dim_multiplier: Optional[float],
     ):
+        raise NotImplementedError("TP")
         super().__init__()
         hidden_dim = int(2 * hidden_dim / 3)
         # custom dim factor multiplier
@@ -313,6 +590,7 @@ class FeedForward(nn.Module):
 
 class TransformerBlock(nn.Module):
     def __init__(self, layer_id: int, args: ModelArgs):
+        raise NotImplementedError("TP")
         super().__init__()
         self.n_heads = args.n_heads
         self.dim = args.dim
@@ -342,20 +620,11 @@ class TransformerBlock(nn.Module):
 
 class Transformer(nn.Module):
     def __init__(self, params: ModelArgs):
+        raise NotImplementedError("TP")
         super().__init__()
         self.params = params
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
-
-        # buckets = [
-        #     "VocabParallelEmbedding",
-        #     [
-        #         "Attention",
-        #         "FeedForward",
-        #         "RMSNorm * 2",
-        #     ],
-        #     "ColumnParallelLinear",
-        # ]
 
         def log_size(layer, indent=0):
             num_params = sum(p.numel() for p in layer.parameters())
