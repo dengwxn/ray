@@ -1060,6 +1060,7 @@ class ActorV7:
         self.batch_size = batch_size
         self.seq_len = seq_len
         self.rank = rank
+        self.num_batches = num_batches
         self.num_partitions = num_partitions
         self.num_actors = num_actors
         self.tracing = tracing
@@ -1104,22 +1105,14 @@ class ActorV7:
 
         torch.cuda.synchronize()
 
-    def get_input(self, _) -> torch.Tensor:
-        assert self.input is not None
-        return self.input
-
-    def get_target(self, _) -> torch.Tensor:
-        assert self.target is not None
-        return self.target
-
     def forward(
         self, idx: int, logits_as_input: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         assert idx < len(self.bparams)
         bparam = self.bparams[idx]
-        tokens = self.input
+
         if self.rank == 0:
-            logits_as_output = bparam.model.forward_first(tokens, 0)
+            logits_as_output = bparam.model.forward_first(self.input, 0)
             bparam.logits_as_output = logits_as_output
             logits_as_input = logits_as_output.detach()
             return logits_as_input
@@ -1127,17 +1120,19 @@ class ActorV7:
             assert logits_as_input is not None
             logits_as_input = logits_as_input.to(self.device).requires_grad_(True)
             bparam.logits_as_input = logits_as_input
-            logits_2 = bparam.model.forward_second(tokens, 0, logits_as_input)
-            return logits_2
+            logits_as_output = bparam.model.forward_second(
+                self.input, 0, logits_as_input
+            )
+            return logits_as_output
 
     def backward_loss(self, idx: int, logits: torch.Tensor) -> torch.Tensor:
         assert idx < len(self.bparams)
         bparam = self.bparams[idx]
-        target = self.target
-        loss = bparam.criterion(logits, target)
+
+        loss = bparam.criterion(logits, self.target)
         loss.backward()
-        logits_as_input = bparam.logits_as_input
-        grad = logits_as_input.grad
+        grad = bparam.logits_as_input.grad
+
         assert grad is not None
         return grad
 
@@ -1146,8 +1141,9 @@ class ActorV7:
         bparam = self.bparams[idx]
         assert grad is not None
         grad = grad.to(self.device)
-        logits_as_output = bparam.logits_as_output
-        logits_as_output.backward(grad)
+
+        bparam.logits_as_output.backward(grad)
+
         return None
 
     def backward(self, idx: int, data: torch.Tensor) -> Optional[torch.Tensor]:
@@ -1160,8 +1156,10 @@ class ActorV7:
     def update(self, idx: int, _backward) -> None:
         assert idx < len(self.bparams)
         bparam = self.bparams[idx]
+
         bparam.optimizer.step()
         bparam.optimizer.zero_grad()
+
         return None
 
 
