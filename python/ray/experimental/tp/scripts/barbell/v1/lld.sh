@@ -42,7 +42,11 @@ latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
-python -m ray.experimental.tp.src.main.v1 \
+RANK=0 \
+	WORLD_SIZE=1 \
+	MASTER_ADDR=localhost \
+	MASTER_PORT=12345 \
+	python -m ray.experimental.tp.src.main.v1 \
 	--batch-size $batch_size \
 	--seq-len $seq_len \
 	--num-batches $num_batches \

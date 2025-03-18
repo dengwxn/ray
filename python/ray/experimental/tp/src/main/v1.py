@@ -1,6 +1,7 @@
 import logging
 from typing import Any, Dict
 
+import fairscale.nn.model_parallel.initialize as fs_init
 import torch
 
 from ..core.config import parse_args
@@ -13,6 +14,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 logger.info("Welcome to Downton Abbey!")
+
+
+def init() -> None:
+    torch.distributed.init_process_group(backend="nccl")
+
+    model_parallel_size = 1
+    fs_init.initialize_model_parallel(model_parallel_size)
+
+    model_parallel_rank = fs_init.get_model_parallel_rank()
+    model_parallel_group = fs_init.get_model_parallel_group()
 
 
 def main(args: Dict[str, Any]) -> None:
@@ -57,4 +68,5 @@ def main(args: Dict[str, Any]) -> None:
 
 if __name__ == "__main__":
     args = parse_args()
+    init()
     main(args)

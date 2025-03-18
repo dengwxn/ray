@@ -176,37 +176,37 @@ class AttentionTP(nn.Module):
         self.n_rep = self.n_local_heads // self.n_local_kv_heads
         self.head_dim = args.dim // args.n_heads
 
-        # self.wq = ColumnParallelLinear(
-        self.wq = torch.nn.Linear(
+        self.wq = ColumnParallelLinear(
+            # self.wq = torch.nn.Linear(
             args.dim,
             args.n_heads * self.head_dim,
             bias=False,
-            # gather_output=False,
-            # init_method=lambda x: x,
+            gather_output=False,
+            init_method=lambda x: x,
         )
-        # self.wk = ColumnParallelLinear(
-        self.wk = torch.nn.Linear(
+        self.wk = ColumnParallelLinear(
+            # self.wk = torch.nn.Linear(
             args.dim,
             self.n_kv_heads * self.head_dim,
             bias=False,
-            # gather_output=False,
-            # init_method=lambda x: x,
+            gather_output=False,
+            init_method=lambda x: x,
         )
-        # self.wv = ColumnParallelLinear(
-        self.wv = torch.nn.Linear(
+        self.wv = ColumnParallelLinear(
+            # self.wv = torch.nn.Linear(
             args.dim,
             self.n_kv_heads * self.head_dim,
             bias=False,
-            # gather_output=False,
-            # init_method=lambda x: x,
+            gather_output=False,
+            init_method=lambda x: x,
         )
-        # self.wo = RowParallelLinear(
-        self.wo = torch.nn.Linear(
+        self.wo = RowParallelLinear(
+            # self.wo = torch.nn.Linear(
             args.n_heads * self.head_dim,
             args.dim,
             bias=False,
-            # input_is_parallel=True,
-            # init_method=lambda x: x,
+            input_is_parallel=True,
+            init_method=lambda x: x,
         )
 
         # [NOTE] Disable KV cache during training.
@@ -294,29 +294,29 @@ class FeedForwardTP(nn.Module):
             hidden_dim = int(ffn_dim_multiplier * hidden_dim)
         hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
 
-        # self.w1 = ColumnParallelLinear(
-        self.w1 = torch.nn.Linear(
+        self.w1 = ColumnParallelLinear(
+            # self.w1 = torch.nn.Linear(
             dim,
             hidden_dim,
             bias=False,
-            # gather_output=False,
-            # init_method=lambda x: x,
+            gather_output=False,
+            init_method=lambda x: x,
         )
-        # self.w2 = RowParallelLinear(
-        self.w2 = torch.nn.Linear(
+        self.w2 = RowParallelLinear(
+            # self.w2 = torch.nn.Linear(
             hidden_dim,
             dim,
             bias=False,
-            # input_is_parallel=True,
-            # init_method=lambda x: x,
+            input_is_parallel=True,
+            init_method=lambda x: x,
         )
-        # self.w3 = ColumnParallelLinear(
-        self.w3 = torch.nn.Linear(
+        self.w3 = ColumnParallelLinear(
+            # self.w3 = torch.nn.Linear(
             dim,
             hidden_dim,
             bias=False,
-            # gather_output=False,
-            # init_method=lambda x: x,
+            gather_output=False,
+            init_method=lambda x: x,
         )
 
     def forward(self, x):
@@ -371,11 +371,11 @@ class TransformerTP(nn.Module):
             for _, child in layer.named_children():
                 log_size(child, indent + 1)
 
-        # self.tok_embeddings = VocabParallelEmbedding(
-        self.tok_embeddings = torch.nn.Embedding(
+        self.tok_embeddings = VocabParallelEmbedding(
+            # self.tok_embeddings = torch.nn.Embedding(
             params.vocab_size,
             params.dim,
-            # init_method=lambda x: x,
+            init_method=lambda x: x,
         )
         log_size(self.tok_embeddings)
 
@@ -386,12 +386,12 @@ class TransformerTP(nn.Module):
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
         log_size(self.norm)
-        # self.output = ColumnParallelLinear(
-        self.output = torch.nn.Linear(
+        self.output = ColumnParallelLinear(
+            # self.output = torch.nn.Linear(
             params.dim,
             params.vocab_size,
             bias=False,
-            # init_method=lambda x: x,
+            init_method=lambda x: x,
         )
         log_size(self.output)
 
