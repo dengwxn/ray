@@ -1033,12 +1033,21 @@ class TransformerBP(nn.Module):
 
 
 class ActorV7:
+    @dataclass
+    class BatchParameter:
+        model: TransformerPPV4
+        criterion: torch.nn.CrossEntropyLoss
+        optimizer: torch.optim.AdamW
+        logits_as_input: Optional[torch.Tensor] = None
+        logits_as_output: Optional[torch.Tensor] = None
+
     def __init__(
         self,
         model_args,
         batch_size: int,
         seq_len: int,
         rank: int,
+        num_batches: int,
         num_partitions: int,
         num_actors: int,
         tracing: bool,
@@ -1058,10 +1067,14 @@ class ActorV7:
         self.input: Optional[torch.Tensor] = None
         self.target: Optional[torch.Tensor] = None
 
-        torch.manual_seed(2025)
-        self.model = TransformerPPV4(model_args, rank).to(self.device)
-        self.criterion = torch.nn.CrossEntropyLoss()
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
+        self.bparams: List[ActorV7.BatchParameter] = []
+        for i in range(num_batches):
+            torch.manual_seed(2025 + i)
+            model = TransformerPPV4(model_args, rank).to(self.device)
+            criterion = torch.nn.CrossEntropyLoss()
+            optimizer = torch.optim.AdamW(model.parameters(), lr=1e-6)
+            bparam = self.BatchParameter(model, criterion, optimizer)
+            self.bparams.append(bparam)
 
         self.it = 0
         self.events: Dict[str, Any] = {}
@@ -1085,8 +1098,9 @@ class ActorV7:
             device=self.device,
         )
 
-        self.idx_to_logits_as_input = defaultdict()
-        self.idx_to_logits_as_output = defaultdict()
+        for bparam in self.bparams:
+            bparam.logits_as_input = None
+            bparam.logits_as_output = None
 
         torch.cuda.synchronize()
 
@@ -1101,38 +1115,38 @@ class ActorV7:
     def forward(
         self, idx: int, logits_as_input: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
+        assert idx < len(self.bparams)
+        bparam = self.bparams[idx]
         tokens = self.input
         if self.rank == 0:
-            logits_as_output = self.model.forward_first(tokens, 0)
-            self.idx_to_logits_as_output[idx] = logits_as_output
+            logits_as_output = bparam.model.forward_first(tokens, 0)
+            bparam.logits_as_output = logits_as_output
             logits_as_input = logits_as_output.detach()
             return logits_as_input
         else:
             assert logits_as_input is not None
             logits_as_input = logits_as_input.to(self.device).requires_grad_(True)
-            self.idx_to_logits_as_input[idx] = logits_as_input
-            logits_2 = self.model.forward_second(tokens, 0, logits_as_input)
+            bparam.logits_as_input = logits_as_input
+            logits_2 = bparam.model.forward_second(tokens, 0, logits_as_input)
             return logits_2
 
-    def compute_loss(self, logits: torch.Tensor, target: torch.Tensor) -> Any:
-        loss = self.criterion(logits, target)
-        return loss
-
     def backward_loss(self, idx: int, logits: torch.Tensor) -> torch.Tensor:
+        assert idx < len(self.bparams)
+        bparam = self.bparams[idx]
         target = self.target
-        loss = self.compute_loss(logits, target)
+        loss = bparam.criterion(logits, target)
         loss.backward()
-        assert idx in self.idx_to_logits_as_input
-        logits_as_input = self.idx_to_logits_as_input[idx]
+        logits_as_input = bparam.logits_as_input
         grad = logits_as_input.grad
         assert grad is not None
         return grad
 
     def backward_intra(self, idx: int, grad: torch.Tensor) -> None:
+        assert idx < len(self.bparams)
+        bparam = self.bparams[idx]
         assert grad is not None
         grad = grad.to(self.device)
-        assert idx in self.idx_to_logits_as_output
-        logits_as_output = self.idx_to_logits_as_output[idx]
+        logits_as_output = bparam.logits_as_output
         logits_as_output.backward(grad)
         return None
 
@@ -1143,16 +1157,11 @@ class ActorV7:
             output = self.backward_loss(idx, data)
         return output
 
-    def display(self):
-        n_grad_not_none = 0
-        for p in self.model.parameters():
-            if p.grad is not None:
-                n_grad_not_none += 1
-        logger.info(f"rank: {self.rank}, n_grad_not_none: {n_grad_not_none}")
-
-    def update(self, _) -> None:
-        self.optimizer.step()
-        self.optimizer.zero_grad()
+    def update(self, idx: int, _backward) -> None:
+        assert idx < len(self.bparams)
+        bparam = self.bparams[idx]
+        bparam.optimizer.step()
+        bparam.optimizer.zero_grad()
         return None
 
 

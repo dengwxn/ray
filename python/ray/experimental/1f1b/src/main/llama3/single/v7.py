@@ -17,6 +17,7 @@ def init_actors(args: Dict[str, Any]) -> List[Actor]:
     model_args = LLAMA
     batch_size = args["batch_size"]
     seq_len = args["seq_len"]
+    num_batches = args["num_batches"]
     num_partitions = args["num_partitions"]
     num_actors = args["num_actors"]
     tracing = args["tracing"]
@@ -27,6 +28,7 @@ def init_actors(args: Dict[str, Any]) -> List[Actor]:
             batch_size=batch_size,
             seq_len=seq_len,
             rank=i,
+            num_batches=num_batches,
             num_partitions=num_partitions,
             num_actors=num_actors,
             tracing=tracing,
@@ -53,21 +55,27 @@ def train(
             actor.init_training()
 
         b1_fw1 = actors[0].forward(0, None)
+
+        b2_fw1 = actors[0].forward(1, None)
         b1_fw2 = actors[1].forward(0, b1_fw1)
+
         b1_bw1 = actors[1].backward(0, b1_fw2)
+        b1_upd1 = actors[1].update(0, b1_bw1)  # update
+
         b1_bw2 = actors[0].backward(0, b1_bw1)
-        upd1 = actors[1].update(b1_bw1)
-        upd2 = actors[0].update(b1_bw2)
-        outputs = [upd1, upd2]
+        b1_upd2 = actors[0].update(0, b1_bw2)  # update
+        b2_fw2 = actors[1].forward(1, b2_fw1)
+
+        outputs = [b1_upd1, b1_upd2]
         logger.warning(f"iter: {iter}, idx: 0, outputs: {outputs}")
 
-        b1_fw1 = actors[0].forward(1, None)
-        b1_fw2 = actors[1].forward(1, b1_fw1)
-        b1_bw1 = actors[1].backward(1, b1_fw2)
-        b1_bw2 = actors[0].backward(1, b1_bw1)
-        upd1 = actors[1].update(b1_bw1)
-        upd2 = actors[0].update(b1_bw2)
-        outputs = [upd1, upd2]
+        b2_bw1 = actors[1].backward(1, b2_fw2)
+        b2_upd1 = actors[1].update(1, b2_bw1)  # update
+
+        b2_bw2 = actors[0].backward(1, b2_bw1)
+        b2_upd2 = actors[0].update(1, b2_bw2)  # update
+
+        outputs = [b2_upd1, b2_upd2]
         logger.warning(f"iter: {iter}, idx: 1, outputs: {outputs}")
 
 

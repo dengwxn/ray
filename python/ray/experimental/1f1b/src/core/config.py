@@ -21,6 +21,10 @@ def parse_args() -> Dict[str, Any]:
         type=int,
     )
     parser.add_argument(
+        "--num-batches",
+        type=int,
+    )
+    parser.add_argument(
         "--num-partitions",
         type=int,
     )
