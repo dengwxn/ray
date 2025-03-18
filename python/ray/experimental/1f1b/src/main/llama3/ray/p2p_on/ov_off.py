@@ -89,7 +89,7 @@ def train(
         dag = MultiOutputNode(updates)
 
     compiled_dag = dag.experimental_compile()
-    compiled_dag.visualize(channel_details=True)
+    # compiled_dag.visualize(channel_details=True)
 
     total_elapses: List[int] = []
     for iter in range(num_iters):
@@ -105,19 +105,19 @@ def train(
             logger.warning(f"iter: {iter}, elapse: {elapse_us} us")
             total_elapses.append(elapse_us)
 
-        # for actor in actors:
-        #     ray.get(actor.finish_tracing.remote())
+        for actor in actors:
+            ray.get(actor.finish_tracing.remote())
 
-    # actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
-    # for actor_elapses in actors_to_elapses:
-    #     actor_elapses["total"] = total_elapses
-    # metrics = LlamaActor.get_metrics(tracing)
-    # log_elapses_to_csv(
-    #     actors_to_elapses,
-    #     output_path,
-    #     latency_prefix,
-    #     metrics,
-    # )
+    actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
+    for actor_elapses in actors_to_elapses:
+        actor_elapses["total"] = total_elapses
+    metrics = LlamaActor.get_metrics(tracing)
+    log_elapses_to_csv(
+        actors_to_elapses,
+        output_path,
+        latency_prefix,
+        metrics,
+    )
 
 
 def main(args: Dict[str, Any]) -> None:

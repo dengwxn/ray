@@ -471,6 +471,7 @@ class TransformerPP(nn.Module):
             params.max_seq_len * 2,
             params.rope_theta,
         )
+        self.freqs_cis = self.freqs_cis.to(torch.device("cuda:0"))
 
         self.pidx = 9
         self.rank = rank
@@ -480,7 +481,6 @@ class TransformerPP(nn.Module):
 
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
-        self.freqs_cis = self.freqs_cis.to(h.device)
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
         mask = None
@@ -499,8 +499,6 @@ class TransformerPP(nn.Module):
         assert self.rank == 1
 
         _bsz, seqlen = tokens.shape
-        h0 = self.tok_embeddings(tokens)
-        self.freqs_cis = self.freqs_cis.to(h0.device)
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
         mask = None

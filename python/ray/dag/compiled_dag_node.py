@@ -241,9 +241,6 @@ def do_exec_tasks(
         if RAY_CGRAPH_ENABLE_NVTX_PROFILING:
             nvtx_profile.disable()
 
-        # [TODO]
-        return
-
         if len(events) <= 1:
             return
 
@@ -296,82 +293,27 @@ def do_exec_tasks(
                     sum(method_to_percent[method] for method in methods), 1
                 )
 
-        accumulate(
-            "comp.backward",
-            [
-                "compute_loss",
-                "backward_loss",
-                "backward_pre",
-                "backward_intra",
-                "backward_post",
-            ],
-        )
-        accumulate(
-            "comp.backward.loss",
-            ["compute_loss", "backward_loss"],
-        )
-        accumulate(
-            "comp.backward.grad",
-            ["backward_pre", "backward_intra", "backward_post"],
-        )
-        accumulate(
-            "comp.backward.grad.io",
-            ["backward_pre", "backward_post"],
-        )
-        accumulate(
-            "comp.others",
-            ["update", "get_input", "get_shard", "get_target"],
-        )
-        accumulate(
-            "comm",
-            ["allgather", "reducescatter"],
-        )
+        # accumulate(
+        #     "comm",
+        #     # [TODO] P2P.
+        # )
 
         logger.warning("")
-        log_op("op.comp.fw", method_to_elapse["forward"], method_to_percent["forward"])
+        log_op(
+            "op.comp.fw",
+            method_to_elapse["forward"],
+            method_to_percent["forward"],
+        )
         log_op(
             "op.comp.bw",
-            method_to_elapse["comp.backward"],
-            method_to_percent["comp.backward"],
+            method_to_elapse["backward"],
+            method_to_percent["backward"],
         )
         log_op(
-            "op.comp.bw.loss",
-            method_to_elapse["comp.backward.loss"],
-            method_to_percent["comp.backward.loss"],
+            "op.comp.upd",
+            method_to_elapse["update"],
+            method_to_percent["update"],
         )
-        log_op(
-            "op.comp.bw.grad",
-            method_to_elapse["comp.backward.grad"],
-            method_to_percent["comp.backward.grad"],
-        )
-        log_op(
-            "op.comp.bw.grad.comp",
-            method_to_elapse["backward_intra"],
-            method_to_percent["backward_intra"],
-        )
-        log_op(
-            "op.comp.bw.grad.io",
-            method_to_elapse["comp.backward.grad.io"],
-            method_to_percent["comp.backward.grad.io"],
-        )
-        log_op(
-            "op.comp.others",
-            method_to_elapse["comp.others"],
-            method_to_percent["comp.others"],
-        )
-        log_op("op.comm", method_to_elapse["comm"], method_to_percent["comm"])
-        if "allgather" in method_to_elapse:
-            log_op(
-                "op.comm.allgather",
-                method_to_elapse["allgather"],
-                method_to_percent["allgather"],
-            )
-        if "reducescatter" in method_to_elapse:
-            log_op(
-                "op.comm.reducescatter",
-                method_to_elapse["reducescatter"],
-                method_to_percent["reducescatter"],
-            )
 
         logger.warning("")
     except Exception:
