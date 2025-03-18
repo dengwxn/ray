@@ -1,7 +1,6 @@
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
-import ray
 from .....core.common import (
     generate_1f1b_dag,
     get_end_time,
@@ -9,9 +8,8 @@ from .....core.common import (
     log_elapses_to_csv,
 )
 from .....core.config import parse_args
-from .....core.llama3.actor import LlamaActor
+from .....core.llama3.actor import LlamaActorOff as LlamaActor
 from .....core.llama3.model import LLAMA_DEBUG as LLAMA
-from ray.dag import InputNode, MultiOutputNode
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(filename)s:%(lineno)d -- %(message)s",
@@ -25,21 +23,23 @@ def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
     model_args = LLAMA
     batch_size = args["batch_size"]
     seq_len = args["seq_len"]
+    num_batches = args["num_batches"]
     num_partitions = args["num_partitions"]
     num_actors = args["num_actors"]
     tracing = args["tracing"]
 
-    actor_cls = LlamaActor.options(num_gpus=1)
     actors = [
-        actor_cls.remote(
+        LlamaActor(
             model_args,
             batch_size=batch_size,
             seq_len=seq_len,
+            rank=i,
+            num_batches=num_batches,
             num_partitions=num_partitions,
             num_actors=num_actors,
             tracing=tracing,
         )
-        for _ in range(num_actors)
+        for i in range(num_actors)
     ]
 
     return actors
@@ -55,39 +55,49 @@ def train(
     model_prefix: str,
     tracing: bool,
 ) -> None:
-    compiled_dag = generate_1f1b_dag(actors, 2, 2)
-    compiled_dag.visualize(channel_details=True)
-    return
+    assert len(actors) == 2
 
-    # [TODO] Add init_and_partition_model.
-    # actor_to_shards = ray.get(actors[0].init_and_shard_model.remote())
-    # for actor, shards in zip(actors, actor_to_shards):
-    #     ray.get(actor.set_shards.remote(shards))
+    def execute():
+        b1_fw1 = actors[0].forward(0, None)
+
+        # PP
+        b2_fw1 = actors[0].forward(1, None)
+        b1_fw2 = actors[1].forward(0, b1_fw1)
+
+        b1_bw1 = actors[1].backward(0, b1_fw2)
+        b1_upd1 = actors[1].update(0, None)
+
+        # PP
+        b1_bw2 = actors[0].backward(0, b1_bw1)
+        b1_upd2 = actors[0].update(0, b1_bw2)
+        b2_fw2 = actors[1].forward(1, b2_fw1)
+
+        b2_bw1 = actors[1].backward(1, b2_fw2)
+        b2_upd1 = actors[1].update(1, None)
+
+        b2_bw2 = actors[0].backward(1, b2_bw1)
+        b2_upd2 = actors[0].update(1, b2_bw2)
+
+        _updates = [b1_upd1, b1_upd2, b2_upd1, b2_upd2]
 
     total_elapses: List[int] = []
     for iter in range(num_iters):
         for actor in actors:
-            ray.get(actor.init_training.remote())
+            actor.init_training()
 
         start = get_start_time()
-        compiled_dag.execute(None)
+        execute()
         end = get_end_time()
         elapse_us = round((end - start) * 1e6)
-
-        if save_model:
-            for i, actor in enumerate(actors):
-                weights = ray.get(actor.fetch_weights.remote())
-                for idx, weight in enumerate(weights):
-                    logger.info(f"actor: {i}, layer: {idx}, shard: {weight}")
 
         if iter > 0:
             logger.warning(f"iter: {iter}, elapse: {elapse_us} us")
             total_elapses.append(elapse_us)
 
         for actor in actors:
-            ray.get(actor.finish_tracing.remote())
+            actor.finish_tracing()
 
-    actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
+    actors_to_elapses = [actor.fetch_traces() for actor in actors]
     for actor_elapses in actors_to_elapses:
         actor_elapses["total"] = total_elapses
     metrics = LlamaActor.get_metrics(tracing)
@@ -98,22 +108,8 @@ def train(
         metrics,
     )
 
-    if save_model:
-        model_file = f"{model_prefix}.log"
-        with open(model_file, "w") as f:
-            for weight in weights:
-                f.write(f"{weight}\n")
-        for i, actor in enumerate(actors):
-            weights = ray.get(actor.fetch_weights.remote())
-            model_file = f"{model_prefix}_{i}.log"
-            with open(model_file, "w") as f:
-                for weight in weights:
-                    f.write(f"{weight}\n")
-
 
 def main(args: Dict[str, Any]) -> None:
-    ray.init()
-
     actors = init_actors(args)
 
     train(
@@ -126,10 +122,6 @@ def main(args: Dict[str, Any]) -> None:
         args["model_prefix"],
         args["tracing"],
     )
-
-    for actor in actors:
-        ray.kill(actor)
-    ray.shutdown()
 
 
 if __name__ == "__main__":
