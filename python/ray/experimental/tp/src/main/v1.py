@@ -18,7 +18,7 @@ logger.info("Welcome to Downton Abbey!")
 
 def init() -> None:
     torch.distributed.init_process_group(backend="nccl")
-    model_parallel_size = 2
+    model_parallel_size = 1
     fs_init.initialize_model_parallel(model_parallel_size)
     model_parallel_rank = fs_init.get_model_parallel_rank()
     model_parallel_group = fs_init.get_model_parallel_group()
@@ -29,7 +29,8 @@ def main(args: Dict[str, Any]) -> None:
     batch_size = 1
     seq_len = 1024
 
-    model = Transformer(model_args)
+    device = torch.device("cuda:0")
+    model = Transformer(model_args).to(device)
 
     torch.manual_seed(998244353)
 
@@ -43,12 +44,14 @@ def main(args: Dict[str, Any]) -> None:
             0,
             model_args.vocab_size,
             (batch_size, seq_len),
+            device=device,
         )
         target = torch.randn(
             batch_size,
             seq_len,
             model_args.vocab_size,
             requires_grad=True,
+            device=device,
         )
 
         logits = model.forward(input, 0)
