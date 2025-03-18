@@ -11,6 +11,7 @@ from .....core.common import (
 from .....core.config import parse_args
 from .....core.llama3.actor import LlamaActor
 from .....core.llama3.model import LLAMA_DEBUG as LLAMA
+from ray.dag import InputNode, MultiOutputNode
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(filename)s:%(lineno)d -- %(message)s",
@@ -24,6 +25,7 @@ def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
     model_args = LLAMA
     batch_size = args["batch_size"]
     seq_len = args["seq_len"]
+    num_batches = args["num_batches"]
     num_partitions = args["num_partitions"]
     num_actors = args["num_actors"]
     tracing = args["tracing"]
@@ -35,6 +37,7 @@ def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
             batch_size=batch_size,
             seq_len=seq_len,
             rank=i,
+            num_batches=num_batches,
             num_partitions=num_partitions,
             num_actors=num_actors,
             tracing=tracing,
@@ -55,11 +58,38 @@ def train(
     model_prefix: str,
     tracing: bool,
 ) -> None:
-    compiled_dag = generate_1f1b_dag(actors, 2, 2)
-    compiled_dag.visualize(channel_details=True)
+    assert len(actors) == 2
 
-    for actor in actors:
-        ray.get(actor.init_and_partition_model.remote())
+    with InputNode() as inp:
+        b1_fw1 = actors[0].forward.bind(0, inp).with_tensor_transport(transport="nccl")
+
+        # PP
+        b2_fw1 = actors[0].forward.bind(1, inp).with_tensor_transport(transport="nccl")
+        b1_fw2 = actors[1].forward.bind(0, b1_fw1)
+
+        b1_bw1 = (
+            actors[1].backward.bind(0, b1_fw2).with_tensor_transport(transport="nccl")
+        )
+        b1_upd1 = actors[1].update.bind(0, inp)
+
+        # PP
+        b1_bw2 = actors[0].backward.bind(0, b1_bw1)
+        b1_upd2 = actors[0].update.bind(0, b1_bw2)
+        b2_fw2 = actors[1].forward.bind(1, b2_fw1)
+
+        b2_bw1 = (
+            actors[1].backward.bind(1, b2_fw2).with_tensor_transport(transport="nccl")
+        )
+        b2_upd1 = actors[1].update.bind(1, inp)
+
+        b2_bw2 = actors[0].backward.bind(1, b2_bw1)
+        b2_upd2 = actors[0].update.bind(1, b2_bw2)
+
+        updates = [b1_upd1, b1_upd2, b2_upd1, b2_upd2]
+        dag = MultiOutputNode(updates)
+
+    compiled_dag = dag.experimental_compile()
+    compiled_dag.visualize(channel_details=True)
 
     total_elapses: List[int] = []
     for iter in range(num_iters):
@@ -71,43 +101,23 @@ def train(
         end = get_end_time()
         elapse_us = round((end - start) * 1e6)
 
-        if save_model:
-            for i, actor in enumerate(actors):
-                weights = ray.get(actor.fetch_weights.remote())
-                for idx, weight in enumerate(weights):
-                    logger.info(f"actor: {i}, layer: {idx}, shard: {weight}")
-
         if iter > 0:
             logger.warning(f"iter: {iter}, elapse: {elapse_us} us")
             total_elapses.append(elapse_us)
 
-        for actor in actors:
-            ray.get(actor.finish_tracing.remote())
+        # for actor in actors:
+        #     ray.get(actor.finish_tracing.remote())
 
-        break
-
-    actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
-    for actor_elapses in actors_to_elapses:
-        actor_elapses["total"] = total_elapses
-    metrics = LlamaActor.get_metrics(tracing)
-    log_elapses_to_csv(
-        actors_to_elapses,
-        output_path,
-        latency_prefix,
-        metrics,
-    )
-
-    if save_model:
-        model_file = f"{model_prefix}.log"
-        with open(model_file, "w") as f:
-            for weight in weights:
-                f.write(f"{weight}\n")
-        for i, actor in enumerate(actors):
-            weights = ray.get(actor.fetch_weights.remote())
-            model_file = f"{model_prefix}_{i}.log"
-            with open(model_file, "w") as f:
-                for weight in weights:
-                    f.write(f"{weight}\n")
+    # actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
+    # for actor_elapses in actors_to_elapses:
+    #     actor_elapses["total"] = total_elapses
+    # metrics = LlamaActor.get_metrics(tracing)
+    # log_elapses_to_csv(
+    #     actors_to_elapses,
+    #     output_path,
+    #     latency_prefix,
+    #     metrics,
+    # )
 
 
 def main(args: Dict[str, Any]) -> None:

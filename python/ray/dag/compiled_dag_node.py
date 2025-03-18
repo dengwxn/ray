@@ -241,6 +241,9 @@ def do_exec_tasks(
         if RAY_CGRAPH_ENABLE_NVTX_PROFILING:
             nvtx_profile.disable()
 
+        # [TODO]
+        return
+
         if len(events) <= 1:
             return
 
