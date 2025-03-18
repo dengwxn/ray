@@ -62,6 +62,8 @@ def main(args: Dict[str, Any]) -> None:
         optimizer.step()
         optimizer.zero_grad()
 
+    torch.distributed.destroy_process_group()
+
 
 if __name__ == "__main__":
     args = parse_args()
