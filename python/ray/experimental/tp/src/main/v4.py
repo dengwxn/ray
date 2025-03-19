@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import fairscale.nn.model_parallel.initialize as fs_init
 import torch
@@ -36,50 +36,48 @@ class Actor:
         model_parallel_size = 2
         fs_init.initialize_model_parallel(model_parallel_size)
 
-    def train(self, args: Dict[str, Any]) -> None:
-        model_args = LLAMA
-        batch_size = 1
-        seq_len = 1024
+        self.model_args = LLAMA
+        self.batch_size = 1
+        self.seq_len = 1024
 
-        model = Transformer(model_args).to(self.device)
+        self.model = Transformer(self.model_args).to(self.device)
+        self.criterion = torch.nn.CrossEntropyLoss()
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-6)
 
+    def init_training(self):
         torch.manual_seed(998244353)
-
-        criterion = torch.nn.CrossEntropyLoss()
-        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-6)
-
+        self.input = torch.randint(
+            0,
+            self.model_args.vocab_size,
+            (self.batch_size, self.seq_len),
+            device=self.device,
+        )
+        self.target = torch.randn(
+            self.batch_size,
+            self.seq_len,
+            self.model_args.vocab_size,
+            requires_grad=True,
+            device=self.device,
+        )
         torch.cuda.synchronize()
 
-        for _ in range(2):
-            input = torch.randint(
-                0,
-                model_args.vocab_size,
-                (batch_size, seq_len),
-                device=self.device,
-            )
-            target = torch.randn(
-                batch_size,
-                seq_len,
-                model_args.vocab_size,
-                requires_grad=True,
-                device=self.device,
-            )
+    def forward(self):
+        return self.model.forward(self.input, 0)
 
-            logits = model.forward(input, 0)
+    def backward(self, logits):
+        loss = self.criterion(logits, self.target)
+        loss.backward()
 
-            loss = criterion(logits, target)
-            loss.backward()
-
-            optimizer.step()
-            optimizer.zero_grad()
+    def update(self):
+        self.optimizer.step()
+        self.optimizer.zero_grad()
 
     def clean(self):
         dist.destroy_process_group()
 
 
-def online(args) -> None:
+def init() -> List[Actor]:
     ray.init()
-
     actor_cls = Actor.options(num_gpus=1)
     world_size = 2
     master_addr = "127.0.0.1"
@@ -93,9 +91,24 @@ def online(args) -> None:
         )
         for i in range(world_size)
     ]
-    ray.get([actor.train.remote(LLAMA) for actor in actors])
+    return actors
+
+
+def main(args, actors) -> None:
+    for _ in range(2):
+        ray.get([actor.init_training.remote() for actor in actors])
+        actor_to_logits = ray.get([actor.forward.remote() for actor in actors])
+        ray.get(
+            [
+                actor.backward.remote(logits)
+                for actor, logits in zip(actors, actor_to_logits)
+            ]
+        )
+        ray.get([actor.update.remote() for actor in actors])
     ray.get([actor.clean.remote() for actor in actors])
 
+
+def clean(actors):
     for actor in actors:
         ray.kill(actor)
     ray.shutdown()
@@ -103,4 +116,6 @@ def online(args) -> None:
 
 if __name__ == "__main__":
     args = parse_args()
-    online(args)
+    actors = init()
+    main(args, actors)
+    clean(actors)
