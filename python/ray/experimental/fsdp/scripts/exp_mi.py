@@ -135,6 +135,12 @@ def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--folder",
+        type=str,
+        required=True,
+        help="Folder for experiments",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=1,
@@ -205,9 +211,7 @@ def main():
                     components.append(f"{key}_{value}")
 
             # Construct paths
-            output_path = (
-                f"results/barbell_n2/llama3/{framework}/{'/'.join(components)}/exp_self"
-            )
+            output_path = f"results/{args.folder}/llama3/{framework}/{'/'.join(components)}/exp_self"
             module_path = f"ray.experimental.fsdp.src.main.llama3.{framework}.{'.'.join(components)}"
 
             # Create experiment config
