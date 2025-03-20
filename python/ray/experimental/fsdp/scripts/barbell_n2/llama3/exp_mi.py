@@ -58,8 +58,11 @@ def main():
 
     # Scripts to run sequentially
     scripts = [
-        "scripts/barbell_n2/llama3/ray/exp_mi.sh",
-        "scripts/barbell_n2/llama3/torch/exp_mi.sh",
+        "scripts/barbell_n2/llama3/ray/cc_off/ov_off/exp_self.sh",
+        "scripts/barbell_n2/llama3/ray/cc_on/ov_off/exp_self.sh",
+        "scripts/barbell_n2/llama3/ray/cc_on/ov_on/exp_self.sh",
+        "scripts/barbell_n2/llama3/torch/cc_off/fp_on/exp_self.sh",
+        "scripts/barbell_n2/llama3/torch/cc_on/fp_on/pf_on/exp_self.sh",
     ]
 
     # Verify scripts exist
