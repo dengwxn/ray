@@ -7,10 +7,12 @@ def parse_args() -> Dict[str, Any]:
     parser.add_argument(
         "--batch-size",
         type=int,
+        required=True,
     )
     parser.add_argument(
         "--seq-len",
         type=int,
+        required=True,
     )
     parser.add_argument(
         "--layer-size",
@@ -23,6 +25,7 @@ def parse_args() -> Dict[str, Any]:
     parser.add_argument(
         "--num-batches",
         type=int,
+        required=True,
     )
     parser.add_argument(
         "--num-partitions",
