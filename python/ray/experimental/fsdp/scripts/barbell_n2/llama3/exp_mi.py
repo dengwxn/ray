@@ -46,7 +46,7 @@ def run_command(command, env=None):
 
         return exit_code, stdout, stderr
     except Exception as e:
-        logger.error(f"Error executing command: {str(e)}")
+        logger.error(f"Exception: {str(e)}")
         return -1, "", str(e)
 
 
@@ -78,16 +78,15 @@ def run_experiment(config):
         if file.endswith(".csv") or file.endswith(".log"):
             os.remove(os.path.join(output_path, file))
 
-    logger.info(f"Running experiment for {output_path}...")
+    logger.info(f"Running {output_path}...")
 
     # Set up experiment parameters
-    batch_size = config.get("batch_size", 1)
-    seq_len = config.get("seq_len", 1024)
-    num_partitions = config.get("num_partitions", 18)
-    num_actors = config.get("num_actors", 2)
-    num_iters = config.get("num_iters", 20)
-    latency_prefix = config.get("latency_prefix", timestamp)
-    model_prefix = os.path.join(output_path, f"{timestamp}_model")
+    batch_size = config["batch_size"]
+    seq_len = config["seq_len"]
+    num_partitions = config["num_partitions"]
+    num_actors = config["num_actors"]
+    num_iters = config["num_iters"]
+    latency_prefix = timestamp
     log_file = os.path.join(output_path, f"{timestamp}.log")
 
     # Build command
@@ -110,8 +109,6 @@ def run_experiment(config):
         output_path,
         "--latency-prefix",
         latency_prefix,
-        "--model-prefix",
-        model_prefix,
         "--tracing",
     ]
 
@@ -127,18 +124,16 @@ def run_experiment(config):
     status = process.returncode
 
     if status != 0:
-        logger.error(f"Experiment failed with status {status} and log {log_file}")
+        logger.error(f"WA, status: {status}, log: {log_file}")
         return False, output_path, log_file
 
-    logger.info(f"Experiment succeeded with log {log_file}")
+    logger.info(f"AC, log: {log_file}")
     return True, output_path, log_file
 
 
 def main():
     # Parse command line arguments
-    parser = argparse.ArgumentParser(
-        description="Run experiments with customizable parameters"
-    )
+    parser = argparse.ArgumentParser()
     parser.add_argument(
         "--batch-size",
         type=int,
@@ -175,49 +170,58 @@ def main():
     current_dir = os.getcwd()
     logger.info(f"Current working directory: {current_dir}")
 
-    # Experiment configurations
-    experiments = [
+    # Define template variations
+    variations = [
+        # Ray configurations
         {
-            "output_path": "results/barbell_n2/llama3/ray/cc_off/ov_off/exp_self",
-            "module_path": "ray.experimental.fsdp.src.main.llama3.ray.cc_off.ov_off",
-            "batch_size": args.batch_size,
-            "seq_len": args.seq_len,
-            "num_actors": 1,
-            "num_iters": args.num_iters,
+            "framework": "ray",
+            "settings": [
+                {"cc": "off", "ov": "off", "num_actors": 1},
+                {"cc": "on", "ov": "off", "num_actors": args.num_actors},
+                {"cc": "on", "ov": "on", "num_actors": args.num_actors},
+            ],
         },
+        # Torch configurations
         {
-            "output_path": "results/barbell_n2/llama3/ray/cc_on/ov_off/exp_self",
-            "module_path": "ray.experimental.fsdp.src.main.llama3.ray.cc_on.ov_off",
-            "batch_size": args.batch_size,
-            "seq_len": args.seq_len,
-            "num_actors": args.num_actors,
-            "num_iters": args.num_iters,
-        },
-        {
-            "output_path": "results/barbell_n2/llama3/ray/cc_on/ov_on/exp_self",
-            "module_path": "ray.experimental.fsdp.src.main.llama3.ray.cc_on.ov_on",
-            "batch_size": args.batch_size,
-            "seq_len": args.seq_len,
-            "num_actors": args.num_actors,
-            "num_iters": args.num_iters,
-        },
-        {
-            "output_path": "results/barbell_n2/llama3/torch/cc_off/fp_on/exp_self",
-            "module_path": "ray.experimental.fsdp.src.main.llama3.torch.cc_off.fp_on",
-            "batch_size": args.batch_size,
-            "seq_len": args.seq_len,
-            "num_actors": 1,
-            "num_iters": args.num_iters,
-        },
-        {
-            "output_path": "results/barbell_n2/llama3/torch/cc_on/fp_on/pf_on/exp_self",
-            "module_path": "ray.experimental.fsdp.src.main.llama3.torch.cc_on.fp_on.pf_on",
-            "batch_size": args.batch_size,
-            "seq_len": args.seq_len,
-            "num_actors": args.num_actors,
-            "num_iters": args.num_iters,
+            "framework": "torch",
+            "settings": [
+                {"cc": "off", "fp": "on", "num_actors": 1},
+                {"cc": "on", "fp": "on", "pf": "on", "num_actors": args.num_actors},
+            ],
         },
     ]
+
+    # Generate experiments from template
+    experiments = []
+    for variant in variations:
+        framework = variant["framework"]
+        for setting in variant["settings"]:
+            # Build path components based on settings
+            components = []
+
+            # Add all available settings to path and module
+            for key, value in setting.items():
+                if key != "num_actors":  # num_actors is not part of the path
+                    components.append(f"{key}_{value}")
+
+            # Construct paths
+            output_path = (
+                f"results/barbell_n2/llama3/{framework}/{'/'.join(components)}/exp_self"
+            )
+            module_path = f"ray.experimental.fsdp.src.main.llama3.{framework}.{'.'.join(components)}"
+
+            # Create experiment config
+            experiment = {
+                "output_path": output_path,
+                "module_path": module_path,
+                "batch_size": args.batch_size,
+                "seq_len": args.seq_len,
+                "num_partitions": args.num_partitions,
+                "num_actors": setting["num_actors"],
+                "num_iters": args.num_iters,
+            }
+
+            experiments.append(experiment)
 
     # Check if we're in the correct directory
     if not os.getcwd().endswith("python/ray/experimental/fsdp"):
