@@ -3,6 +3,7 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
+from torch.profiler import ProfilerActivity, profile
 
 import ray
 from ..common import millis_to_micros
@@ -19,6 +20,7 @@ class LinearActor:
         num_actors: int,
         device: torch.device,
         tracing: bool,
+        profile_path: Optional[str] = None,
     ):
         self.seed = 998244353
 
@@ -38,6 +40,24 @@ class LinearActor:
         self.it = 0
         self.events: Dict[str, Any] = {}
         self.elapses: Dict[str, List] = defaultdict(list)
+
+        self.profile_path = profile_path
+        self.profile = None
+        if self.profile_path:
+            self.init_profiling()
+
+    def init_profiling(self) -> None:
+        self.profile = profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            record_shapes=True,
+            with_stack=True,
+            profile_memory=True,
+        )
+        self.profile.__enter__()
+
+    def finish_profiling(self) -> None:
+        self.profile.__exit__(None, None, None)
+        self.profile.export_chrome_trace(self.profile_path)
 
     def init_and_shard_model(self) -> List[List[Shard]]:
         torch.manual_seed(2025)

@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 import ray
@@ -21,8 +22,10 @@ def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
     num_layers = args["num_layers"]
     num_units = args["num_partitions"]
     num_actors = args["num_actors"]
+    num_iters = args["num_iters"]
     device = "cuda:0"
     tracing = args["tracing"]
+    profile = args["profile"]
 
     actor_cls = LinearActor.options(num_gpus=1)
     actors = [
@@ -33,8 +36,20 @@ def init_actors(args: Dict[str, Any]) -> List[LinearActor]:
             num_actors=num_actors,
             device=device,
             tracing=tracing,
+            profile_path=(
+                os.path.join(
+                    args["output_path"],
+                    f"rank{rank}_"
+                    f"{num_layers}layer_"
+                    f"{layer_size}size_"
+                    f"{num_units}unit_"
+                    f"{num_iters}it.json",
+                )
+                if profile
+                else None
+            ),
         )
-        for _ in range(num_actors)
+        for rank in range(num_actors)
     ]
 
     return actors
@@ -85,6 +100,7 @@ def train(
     save_model: bool,
     model_prefix: str,
     tracing: bool,
+    profile: bool,
 ) -> None:
     with InputNode() as inp:
         inputs = [actor.get_input.bind(inp) for actor in actors]
@@ -182,6 +198,7 @@ def train(
             ray.get(actor.finish_tracing.remote())
 
     actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
+    actors_to_profiles = [ray.get(actor.finish_profiling.remote()) for actor in actors]
     for actor_elapses in actors_to_elapses:
         actor_elapses["total"] = total_elapses
     metrics, aliases = get_metrics_aliases(tracing)
@@ -220,6 +237,7 @@ def main(args: Dict[str, Any]) -> None:
         args.get("save_model", False),
         args["model_prefix"],
         args["tracing"],
+        args.get("profile", False),
     )
 
     for actor in actors:
