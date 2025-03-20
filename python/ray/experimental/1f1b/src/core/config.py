@@ -59,7 +59,6 @@ def parse_args() -> Dict[str, Any]:
     parser.add_argument(
         "--model-prefix",
         type=str,
-        required=True,
     )
     parser.add_argument(
         "--tracing",
@@ -68,4 +67,3 @@ def parse_args() -> Dict[str, Any]:
     args = parser.parse_args()
     args = vars(args)
     return args
-
