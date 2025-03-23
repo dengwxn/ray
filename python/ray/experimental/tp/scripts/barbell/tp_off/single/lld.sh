@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/barbell/tp_on/lld
+output_path=results/barbell/tp_off/single/lld
 mkdir -p $output_path
 rm -f ${output_path}/*.csv
 rm -f ${output_path}/*.log
@@ -36,7 +36,7 @@ batch_size=1
 seq_len=1024
 num_batches=2
 num_partitions=18
-num_actors=2
+num_actors=1
 num_iters=20
 latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
@@ -46,7 +46,7 @@ RANK=0 \
 	WORLD_SIZE=1 \
 	MASTER_ADDR=localhost \
 	MASTER_PORT=12345 \
-	python -m ray.experimental.tp.src.main.tp_on \
+	python -m ray.experimental.tp.src.main.tp_off.single \
 	--batch-size $batch_size \
 	--seq-len $seq_len \
 	--num-batches $num_batches \

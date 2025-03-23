@@ -2,10 +2,10 @@ import logging
 from typing import Any, Dict, List
 
 import ray
-from ..core.actor import ActorTP2PP as Actor
-from ..core.common import get_end_time, get_start_time, log_elapses_to_csv
-from ..core.config import parse_args
-from ..core.model import LLAMA_DEBUG as LLAMA
+from ...core.actor import ActorTP2PP as Actor
+from ...core.common import get_end_time, get_start_time, log_elapses_to_csv
+from ...core.config import parse_args
+from ...core.model import LLAMA_DEBUG as LLAMA
 from ray.dag import InputNode, MultiOutputNode
 
 logging.basicConfig(
@@ -60,32 +60,6 @@ def train(
     tracing: bool,
 ) -> None:
     with InputNode() as inp:
-        # b1_fw1 = actors[0].forward.bind(0, inp).with_tensor_transport(transport="nccl")
-
-        # # PP
-        # b2_fw1 = actors[0].forward.bind(1, inp).with_tensor_transport(transport="nccl")
-        # b1_fw2 = actors[1].forward.bind(0, b1_fw1)
-
-        # b1_bw1 = (
-        #     actors[1].backward.bind(0, b1_fw2).with_tensor_transport(transport="nccl")
-        # )
-        # b1_upd1 = actors[1].update.bind(0, inp)
-
-        # # PP
-        # b1_bw2 = actors[0].backward.bind(0, b1_bw1)
-        # b1_upd2 = actors[0].update.bind(0, b1_bw2)
-        # b2_fw2 = actors[1].forward.bind(1, b2_fw1)
-
-        # b2_bw1 = (
-        #     actors[1].backward.bind(1, b2_fw2).with_tensor_transport(transport="nccl")
-        # )
-        # b2_upd1 = actors[1].update.bind(1, inp)
-
-        # b2_bw2 = actors[0].backward.bind(1, b2_bw1)
-        # b2_upd2 = actors[0].update.bind(1, b2_bw2)
-
-        # updates = [b1_upd1, b1_upd2, b2_upd1, b2_upd2]
-
         b1_fw1s = [
             tp_actor.forward.bind(0, inp).with_tensor_transport(transport="nccl")
             for tp_actor in pp_to_tp_actors[0]
