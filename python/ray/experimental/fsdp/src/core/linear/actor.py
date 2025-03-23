@@ -61,7 +61,6 @@ class LinearActor:
         self.profile.export_chrome_trace(self.profile_path)
 
     def init_and_shard_model(self) -> List[List[Shard]]:
-        torch.manual_seed(2025)
         bparams = [
             BucketParameter(
                 layer_size=self.layer_size,
@@ -70,6 +69,7 @@ class LinearActor:
             )
             for _ in range(self.num_units)
         ]
+        torch.manual_seed(2025)
         for bparam in bparams:
             bparam.init_weights()
         actor_to_shards = [[] for _ in range(self.num_actors)]
