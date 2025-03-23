@@ -190,6 +190,7 @@ def main():
             "settings": [
                 {"tp": "off", "num_actors": args.num_actors},
                 {"tp": "on", "num_actors": args.num_actors},
+                {"tp_pp": "on", "num_actors": -1},
             ],
         },
     ]

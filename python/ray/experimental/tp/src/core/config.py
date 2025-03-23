@@ -33,7 +33,6 @@ def parse_args() -> Dict[str, Any]:
     parser.add_argument(
         "--num-actors",
         type=int,
-        required=True,
     )
     parser.add_argument(
         "--num-iters",

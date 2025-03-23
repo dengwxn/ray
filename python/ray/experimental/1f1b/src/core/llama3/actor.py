@@ -7,7 +7,7 @@ import torch
 
 import ray
 from ..common import millis_to_micros
-from .model import TransformerPP
+from .model import TransformerPP as Transformer
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class LlamaActor:
     @dataclass
     class BatchParameter:
-        model: TransformerPP
+        model: Transformer
         criterion: torch.nn.CrossEntropyLoss
         optimizer: torch.optim.AdamW
         logits_as_input: Optional[torch.Tensor] = None
@@ -42,8 +42,8 @@ class LlamaActor:
         self.seq_len = seq_len
         self.rank = rank
         self.num_batches = num_batches
-        self.num_partitions = num_partitions
-        self.num_actors = num_actors
+        # self.num_partitions = num_partitions
+        # self.num_actors = num_actors
         self.tracing = tracing
 
         self.input: Optional[torch.Tensor] = None
@@ -52,7 +52,7 @@ class LlamaActor:
         self.bparams: List[LlamaActor.BatchParameter] = []
         for i in range(num_batches):
             torch.manual_seed(2025 + i)
-            model = TransformerPP(model_args, rank).to(self.device)
+            model = Transformer(model_args, rank).to(self.device)
             criterion = torch.nn.CrossEntropyLoss()
             optimizer = torch.optim.AdamW(model.parameters(), lr=1e-6)
             bparam = self.BatchParameter(model, criterion, optimizer)
@@ -66,8 +66,6 @@ class LlamaActor:
         torch.manual_seed(self.seed)
         self.seed += 1
 
-        self.num_batches_forwarded = 0
-        self.num_batches_updated = 0
         self.input = torch.randint(
             0,
             self.model_args.vocab_size,
@@ -82,6 +80,8 @@ class LlamaActor:
             device=self.device,
         )
 
+        self.num_batches_forwarded = 0
+        self.num_batches_updated = 0
         for bparam in self.bparams:
             bparam.logits_as_input = None
             bparam.logits_as_output = None
@@ -269,7 +269,7 @@ class LlamaActor:
 class LlamaActorOff:
     @dataclass
     class BatchParameter:
-        model: TransformerPP
+        model: Transformer
         criterion: torch.nn.CrossEntropyLoss
         optimizer: torch.optim.AdamW
         logits_as_input: Optional[torch.Tensor] = None
@@ -305,7 +305,7 @@ class LlamaActorOff:
         self.bparams: List[LlamaActor.BatchParameter] = []
         for i in range(num_batches):
             torch.manual_seed(2025 + i)
-            model = TransformerPP(model_args, rank).to(self.device)
+            model = Transformer(model_args, rank).to(self.device)
             criterion = torch.nn.CrossEntropyLoss()
             optimizer = torch.optim.AdamW(model.parameters(), lr=1e-6)
             bparam = self.BatchParameter(model, criterion, optimizer)

@@ -122,7 +122,6 @@ def train(
 
 def main(args: Dict[str, Any]) -> None:
     ray.init()
-
     actors = init_actors(args)
 
     train(

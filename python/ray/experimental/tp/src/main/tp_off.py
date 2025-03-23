@@ -2,7 +2,7 @@ import logging
 from typing import Any, Dict, List
 
 import ray
-from ..core.actor import Actor
+from ..core.actor import ActorTP as Actor
 from ..core.common import get_end_time, get_start_time, log_elapses_to_csv
 from ..core.config import parse_args
 from ..core.model import LLAMA_DEBUG as LLAMA
