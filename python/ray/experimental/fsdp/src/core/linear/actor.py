@@ -4,10 +4,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 from torch.profiler import ProfilerActivity, profile
+from torch.nn.utils import parameters_to_vector
 
 import ray
 from ..common import millis_to_micros
-from .model import BucketParameter, Shard, shard_model
+from .model import BucketParameter, Shard, shard_model, LinearModel
 
 
 @ray.remote
@@ -301,3 +302,25 @@ class LinearActor:
             self.update_tracing("bw.upd.ends")
         if idx == 0:
             self.update_tracing("end")
+
+    def save_shard_weights(self, rank: int, model_file: str) -> List[torch.Tensor]:
+        sharded_params = {
+            idx: shard.sharded_param for idx, shard in enumerate(self.shards)
+        }
+        return sharded_params
+        # torch.save(sharded_params, f"{model_file}_rank{rank}.pt")
+
+    def restore_and_save_model(
+        self, shards: List[List[torch.Tensor]], model_file: str
+    ) -> None:
+        for unit in range(self.num_units):
+            flat_param = parameters_to_vector([shard[unit] for shard in shards])
+            self.shards[unit].set_flat_param(flat_param)
+
+        model = LinearModel(
+            self.layer_size, self.num_layers, self.num_units, self.device
+        )
+        for unit, bucket in enumerate(model.buckets):
+            bucket: BucketParameter
+            bucket.set_weights(self.shards[unit].model.fetch_weights())
+        torch.save(model.state_dict(), model_file)

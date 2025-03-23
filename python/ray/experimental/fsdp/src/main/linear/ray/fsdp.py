@@ -98,6 +98,7 @@ def train(
     output_path: str,
     latency_prefix: str,
     save_model: bool,
+    model_file: str,
     model_prefix: str,
     tracing: bool,
     profile: bool,
@@ -198,7 +199,8 @@ def train(
             ray.get(actor.finish_tracing.remote())
 
     actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
-    actors_to_profiles = [ray.get(actor.finish_profiling.remote()) for actor in actors]
+    if profile:
+        actors_to_profiles = [ray.get(actor.finish_profiling.remote()) for actor in actors]
     for actor_elapses in actors_to_elapses:
         actor_elapses["total"] = total_elapses
     metrics, aliases = get_metrics_aliases(tracing)
@@ -211,16 +213,10 @@ def train(
     )
 
     if save_model:
-        model_file = f"{model_prefix}.log"
-        with open(model_file, "w") as f:
-            for weight in weights:
-                f.write(f"{weight}\n")
-        for i, actor in enumerate(actors):
-            weights = ray.get(actor.fetch_weights.remote())
-            model_file = f"{model_prefix}_{i}.log"
-            with open(model_file, "w") as f:
-                for weight in weights:
-                    f.write(f"{weight}\n")
+        shards = []
+        for rank, actor in enumerate(actors):
+            shards.append(ray.get(actor.save_shard_weights.remote(rank, model_file)))
+        ray.get(actors[0].restore_and_save_model.remote(shards, model_file))
 
 
 def main(args: Dict[str, Any]) -> None:
@@ -235,6 +231,7 @@ def main(args: Dict[str, Any]) -> None:
         args["output_path"],
         args["latency_prefix"],
         args.get("save_model", False),
+        args.get("model_file", ""),
         args["model_prefix"],
         args["tracing"],
         args.get("profile", False),

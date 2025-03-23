@@ -45,6 +45,10 @@ class BucketParameter(torch.nn.Module):
                     layer.weight, mode="fan_in", nonlinearity="relu"
                 )
 
+    def set_weights(self, weights: List[torch.Tensor]) -> None:
+        for layer, weight in zip(self.linear_layers, weights):
+            layer.weight.data = weight
+
     def fetch_weights(self) -> List[torch.Tensor]:
         return [layer.weight.detach() for layer in self.linear_layers]
 
@@ -170,3 +174,54 @@ def _free_peer_shards(model: torch.nn.Module) -> None:
     for param in model.parameters():
         param.data = empty_tensor
         param.grad = None
+
+
+class LinearModel(torch.nn.Module):
+    def __init__(
+        self,
+        layer_size: int,
+        num_layers: int,
+        num_units: int,
+        device: torch.device,
+    ) -> None:
+        super().__init__()
+
+        if num_layers % num_units != 0:
+            raise ValueError(f"{num_layers=} must be divisible by {num_units=}")
+
+        self.layer_size = layer_size
+        self.num_layers = num_layers
+        self.num_units = num_units
+        self.device = device
+        self.buckets = torch.nn.ModuleList(
+            [
+                BucketParameter(
+                    layer_size,
+                    num_layers // num_units,
+                    device,
+                )
+                for _ in range(num_units)
+            ]
+        )
+
+        self.x = None
+        self.y = None
+        self.criterion = torch.nn.MSELoss()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        for bucket in self.buckets:
+            x = bucket(x)
+        return x
+
+    def init_weights(self) -> None:
+        torch.manual_seed(2025)
+        for bucket in self.buckets:
+            bucket: BucketParameter
+            bucket.init_weights()
+
+    def fetch_weights(self) -> List[torch.Tensor]:
+        weights = []
+        for bucket in self.buckets:
+            bucket: BucketParameter
+            weights.extend(bucket.fetch_weights())
+        return weights
