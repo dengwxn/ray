@@ -49,53 +49,78 @@ def init_actors(args: Dict[str, Any]) -> List[Actor]:
             )
         pp_to_tp_actors.append(actors)
 
-    return pp_to_tp_actors
+    actors = [actor for tp_actors in pp_to_tp_actors for actor in tp_actors]
+    return actors
+
+
+def filter(items: List[Any], idxs: List[int]) -> List[Any]:
+    return [items[idx] for idx in idxs]
 
 
 def train(
-    pp_to_tp_actors: List[List[Actor]],
+    actors: List[Actor],
     num_iters: int,
     output_path: str,
     latency_prefix: str,
     tracing: bool,
 ) -> None:
+    pp_idxs = [[0, 1], [2, 3]]
+
     with InputNode() as inp:
         b1_fw1s = [
-            tp_actor.forward.bind(0, inp).with_tensor_transport(transport="nccl")
-            for tp_actor in pp_to_tp_actors[0]
+            actor.forward.bind(0, inp).with_tensor_transport(transport="nccl")
+            for actor in filter(actors, pp_idxs[0])
         ]
 
         b2_fw1s = [
-            tp_actor.forward.bind(1, inp).with_tensor_transport(transport="nccl")
-            for tp_actor in pp_to_tp_actors[0]
+            actor.forward.bind(1, inp).with_tensor_transport(transport="nccl")
+            for actor in filter(actors, pp_idxs[0])
         ]
         b1_fw2s = [
-            tp_actor.forward.bind(0, b1_fw1)
-            for tp_actor, b1_fw1 in zip(pp_to_tp_actors[1], b1_fw1s)
+            actor.forward.bind(0, b1_fw1)
+            for actor, b1_fw1 in zip(
+                filter(actors, pp_idxs[1]),
+                b1_fw1s,
+            )
         ]
 
         b1_bw1s = [
-            tp_actor.backward.bind(0, b1_fw2).with_tensor_transport(transport="nccl")
-            for tp_actor, b1_fw2 in zip(pp_to_tp_actors[1], b1_fw2s)
+            actor.backward.bind(0, b1_fw2).with_tensor_transport(transport="nccl")
+            for actor, b1_fw2 in zip(
+                filter(actors, pp_idxs[1]),
+                b1_fw2s,
+            )
         ]
 
         b1_bw2s = [
-            tp_actor.backward.bind(0, b1_bw1)
-            for tp_actor, b1_bw1 in zip(pp_to_tp_actors[0], b1_bw1s)
+            actor.backward.bind(0, b1_bw1)
+            for actor, b1_bw1 in zip(
+                filter(actors, pp_idxs[0]),
+                b1_bw1s,
+            )
         ]
         b2_fw2s = [
-            tp_actor.forward.bind(1, b2_fw1)
-            for tp_actor, b2_fw1 in zip(pp_to_tp_actors[1], b2_fw1s)
+            actor.forward.bind(1, b2_fw1)
+            for actor, b2_fw1 in zip(
+                filter(actors, pp_idxs[1]),
+                b2_fw1s,
+            )
         ]
 
         b2_bw1s = [
-            tp_actor.backward.bind(1, b2_fw2).with_tensor_transport(transport="nccl")
-            for tp_actor, b2_fw2 in zip(pp_to_tp_actors[1], b2_fw2s)
+            actor.backward.bind(1, b2_fw2).with_tensor_transport(transport="nccl")
+            for actor, b2_fw2 in zip(
+                filter(actors, pp_idxs[1]),
+                b2_fw2s,
+            )
         ]
 
         b2_bw2s = [
-            tp_actor.backward.bind(1, b2_bw1)
-            for tp_actor, b2_bw1 in zip(pp_to_tp_actors[0], b2_bw1s)
+            actor.backward.bind(1, b2_bw1)
+            for actor, b2_bw1 in zip(
+                filter(actors, pp_idxs[0]),
+                b2_bw1s,
+            )
         ]
 
         updates = b1_bw2s + b2_bw2s
@@ -105,9 +130,8 @@ def train(
 
     total_elapses: List[int] = []
     for iter in range(num_iters):
-        for tp_actors in pp_to_tp_actors:
-            for actor in tp_actors:
-                ray.get(actor.init_training.remote())
+        for actor in actors:
+            ray.get(actor.init_training.remote())
 
         start = get_start_time()
         compiled_dag.execute(None)
@@ -118,18 +142,15 @@ def train(
             logger.warning(f"iter: {iter}, elapse: {elapse_us} us")
             total_elapses.append(elapse_us)
 
-        for tp_actors in pp_to_tp_actors:
-            for actor in tp_actors:
-                ray.get(actor.finish_tracing.remote())
+        for actor in actors:
+            ray.get(actor.finish_tracing.remote())
 
-    for tp_actors in pp_to_tp_actors:
-        for actor in tp_actors:
-            ray.get(actor.clean.remote())
+    for actor in actors:
+        ray.get(actor.clean.remote())
 
     actors_to_elapses = []
-    for tp_actors in pp_to_tp_actors:
-        for actor in tp_actors:
-            actors_to_elapses.append(ray.get(actor.fetch_traces.remote()))
+    for actor in actors:
+        actors_to_elapses.append(ray.get(actor.fetch_traces.remote()))
     for actor_elapses in actors_to_elapses:
         actor_elapses["total"] = total_elapses
     metrics = Actor.get_metrics(tracing)
@@ -143,17 +164,16 @@ def train(
 
 if __name__ == "__main__":
     args = parse_args()
-    pp_to_tp_actors = init_actors(args)
+    actors = init_actors(args)
 
     train(
-        pp_to_tp_actors,
+        actors,
         args["num_iters"],
         args["output_path"],
         args["latency_prefix"],
         args["tracing"],
     )
 
-    for tp_actors in pp_to_tp_actors:
-        for actor in tp_actors:
-            ray.kill(actor)
+    for actor in actors:
+        ray.kill(actor)
     ray.shutdown()

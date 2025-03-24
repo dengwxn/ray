@@ -51,12 +51,15 @@ def init_actors(args: Dict[str, Any]) -> List[Actor]:
             )
         dp_to_tp_actors.append(tp_actors)
 
-    actors = [actor for actors in dp_to_tp_actors for actor in actors]
-    return dp_to_tp_actors, actors
+    actors = [actor for tp_actors in dp_to_tp_actors for actor in tp_actors]
+    return actors
+
+
+def filter(items: List[Any], idxs: List[int]) -> List[Any]:
+    return [items[idx] for idx in idxs]
 
 
 def train(
-    dp_to_tp_actors: List[List[Actor]],
     actors: List[Actor],
     num_iters: int,
     output_path: str,
@@ -75,12 +78,13 @@ def train(
         ]
         for i in reversed(range(num_parts_dp)):
             for idxs in dp_idxs:
-                dp_actors = [actors[idx] for idx in idxs]
-                dp_backwards = [backwards[idx] for idx in idxs]
-                dp_grads_reduced = allreduce.bind(dp_backwards)
+                grads_reduced = allreduce.bind(filter(backwards, idxs))
                 dp_updates = [
                     actor.update.bind(i, grad, True)
-                    for actor, grad in zip(dp_actors, dp_grads_reduced)
+                    for actor, grad in zip(
+                        filter(actors, idxs),
+                        grads_reduced,
+                    )
                 ]
                 outputs.extend(dp_updates)
             if i > 0:
@@ -131,9 +135,8 @@ def clean(actors):
 
 if __name__ == "__main__":
     args = parse_args()
-    dp_to_tp_actors, actors = init_actors(args)
+    actors = init_actors(args)
     train(
-        dp_to_tp_actors,
         actors,
         args["num_iters"],
         args["output_path"],
