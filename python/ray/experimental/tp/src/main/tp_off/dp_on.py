@@ -22,7 +22,7 @@ def init_actors(args: Dict[str, Any]) -> List[Actor]:
     model_args = LLAMA
     batch_size = args["batch_size"]
     seq_len = args["seq_len"]
-    num_actors_tp = 2
+    num_actors_tp = 1
     master_addr = "127.0.0.1"
     num_actors_dp = 2
     num_parts_dp = 18
@@ -64,7 +64,7 @@ def train(
     tracing: bool,
 ) -> None:
     num_parts_dp = 18
-    dp_idxs = [[0, 2], [1, 3]]
+    dp_idxs = [[0, 1]]
 
     with InputNode() as inp:
         forwards = [actor.forward.bind(inp) for actor in actors]

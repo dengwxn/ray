@@ -324,7 +324,9 @@ class ActorTP2PP:
     def finish_tracing(self) -> None:
         torch.cuda.synchronize()
         logger = logging.getLogger(__name__)
-        logger.warning(f"Actor {self.rank_pp} finished iteration {self.it}")
+        logger.warning(
+            f"Actor ({self.rank_tp}, {self.rank_pp}) finished iteration {self.it}"
+        )
         self.it += 1
         if self.it <= 1:
             return
@@ -473,10 +475,11 @@ class ActorTP2DP:
         model_args,
         batch_size: int,
         seq_len: int,
-        rank: int,
+        rank_tp: int,
         num_actors_tp: int,
         master_addr: str,
         master_port: int,
+        rank_dp: int,
         num_actors_dp: int,
         num_parts_dp: int,
         tracing: bool,
@@ -484,19 +487,20 @@ class ActorTP2DP:
         self.model_args = model_args
         self.batch_size = batch_size
         self.seq_len = seq_len
-        self.rank = rank
+        self.rank_tp = rank_tp
+        self.rank_dp = rank_dp
         self.num_actors_dp = num_actors_dp
         self.num_parts_dp = num_parts_dp
         self.tracing = tracing
 
-        os.environ["RANK"] = str(rank)
+        os.environ["RANK"] = str(rank_tp)
         os.environ["WORLD_SIZE"] = str(num_actors_tp)
         os.environ["MASTER_ADDR"] = master_addr
         os.environ["MASTER_PORT"] = str(master_port)
         dist.init_process_group(backend="nccl")
 
         self.device = torch.device(f"cuda:{torch.cuda.current_device()}")
-        print(f"Actor {rank}, device: {self.device}")
+        print(f"Actor rank_tp: {rank_tp}, rank_dp: {rank_dp}, device: {self.device}")
 
         model_parallel_size = 2
         fs_init.initialize_model_parallel(model_parallel_size)
@@ -572,7 +576,9 @@ class ActorTP2DP:
     def finish_tracing(self) -> None:
         torch.cuda.synchronize()
         logger = logging.getLogger(__name__)
-        logger.warning(f"Actor {self.rank} finished iteration {self.it}")
+        logger.warning(
+            f"Actor ({self.rank_tp}, {self.rank_dp}) finished iteration {self.it}"
+        )
         self.it += 1
         if self.it <= 1:
             return
