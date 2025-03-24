@@ -399,23 +399,17 @@ class TransformerTP(nn.Module):
             params.max_seq_len * 2,
             params.rope_theta,
         )
+        self.freqs_cis = self.freqs_cis.to(torch.device("cuda:0"))
 
     def forward(self, tokens: torch.Tensor, start_pos: int):
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
-        self.freqs_cis = self.freqs_cis.to(h.device)
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
         mask = None
         if seqlen > 1:
             mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
-
             mask = torch.triu(mask, diagonal=1)
-
-            # When performing key-value caching, we compute the attention scores
-            # only for the new sequence. Thus, the matrix of scores is of size
-            # (seqlen, cache_len + seqlen), and the only masked entries are (i, j) for
-            # j > cache_len + i, since row i corresponds to token cache_len + i.
             mask = torch.hstack(
                 [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
             ).type_as(h)
@@ -518,6 +512,130 @@ class TransformerTP2PP(nn.Module):
         h = self.norm(h)
         output = self.output(h).float()
         return output
+
+
+def log_size(layer, indent=0):
+    num_params = sum(p.numel() for p in layer.parameters())
+    size_mib = num_params * 4 / (1024 * 1024)
+    indent_str = "  " * indent
+    logger.info(f"{indent_str}{layer.__class__.__name__}: {round(size_mib)} MiB")
+    if size_mib < 25:
+        return
+    for _, child in layer.named_children():
+        log_size(child, indent + 1)
+
+
+class PartitionTP2DPBase(nn.Module):
+    def get_flat_grad(self) -> torch.Tensor:
+        flat_grad = parameters_to_vector([param.grad for param in self.parameters()])
+        return flat_grad
+
+    def set_flat_grad(self, flat_grad: torch.Tensor) -> None:
+        offset = 0
+        for param in self.parameters():
+            if param.grad is None:
+                continue
+            size = param.data.numel()
+            grad = flat_grad[offset : offset + size].reshape(param.data.shape)
+            param.grad = grad
+            offset += size
+
+    def update(self, flat_grad: torch.Tensor, flat_grad_passed: bool) -> None:
+        if flat_grad_passed:
+            self.set_flat_grad(flat_grad)
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+
+
+class PartitionTP2DPFirst(PartitionTP2DPBase):
+    def __init__(self, params: ModelArgs):
+        super().__init__()
+        self.tok_embeddings = VocabParallelEmbedding(
+            params.vocab_size,
+            params.dim,
+            init_method=lambda x: x,
+        )
+        log_size(self.tok_embeddings)
+        self.freqs_cis = precompute_freqs_cis(
+            params.dim // params.n_heads,
+            params.max_seq_len * 2,
+            params.rope_theta,
+        )
+        self.freqs_cis = self.freqs_cis.to(torch.device("cuda:0"))
+        self.optimizer = torch.optim.AdamW(self.parameters(), lr=1e-6)
+
+    def post_embeddings(self, tokens: torch.Tensor, h: torch.Tensor):
+        start_pos = 0
+        self.freqs_cis = self.freqs_cis.to(h.device)
+        _bsz, seqlen = tokens.shape
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+            mask = torch.triu(mask, diagonal=1)
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+            ).type_as(h)
+        return freqs_cis, mask
+
+    def forward(self, x: torch.Tensor):
+        h = self.tok_embeddings(x)
+        freqs_cis, mask = self.post_embeddings(x, h)
+        return h, freqs_cis, mask
+
+
+class PartitionTP2DPTransformerBlock(PartitionTP2DPBase):
+    def __init__(self, params: ModelArgs, layer_id: int):
+        super().__init__()
+        self.layer = TransformerBlockTP(layer_id, params)
+        if layer_id == 0:
+            log_size(self.layer)
+        self.optimizer = torch.optim.AdamW(self.parameters(), lr=1e-6)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        start_pos: int,
+        freqs_cis: torch.Tensor,
+        mask: Optional[torch.Tensor],
+    ):
+        transformer = self.layer
+        h = x + transformer.attention(
+            transformer.attention_norm(x), start_pos, freqs_cis, mask
+        )
+        out = h + transformer.feed_forward(transformer.ffn_norm(h))
+        return out
+
+
+class PartitionTP2DPLast(PartitionTP2DPBase):
+    def __init__(self, params: ModelArgs):
+        super().__init__()
+        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        log_size(self.norm)
+        self.output = ColumnParallelLinear(
+            params.dim,
+            params.vocab_size,
+            bias=False,
+            init_method=lambda x: x,
+        )
+        log_size(self.output)
+        self.optimizer = torch.optim.AdamW(self.parameters(), lr=1e-6)
+
+    def forward(self, x: torch.Tensor):
+        x = self.norm(x)
+        return self.output(x)
+
+
+class TransformerTP2DP(nn.Module):
+    def __init__(self, params: ModelArgs):
+        super().__init__()
+        self.params = params
+        self.parts_dp = []
+        self.parts_dp.append(PartitionTP2DPFirst(params))
+        for layer_id in range(params.n_layers):
+            self.parts_dp.append(PartitionTP2DPTransformerBlock(params, layer_id))
+        self.parts_dp.append(PartitionTP2DPLast(params))
+        self.parts_dp = torch.nn.ModuleList(self.parts_dp)
 
 
 class Attention(nn.Module):

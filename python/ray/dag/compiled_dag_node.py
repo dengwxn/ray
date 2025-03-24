@@ -298,22 +298,12 @@ def do_exec_tasks(
         #     # [TODO] P2P.
         # )
 
-        logger.warning("")
-        log_op(
-            "op.comp.fw",
-            method_to_elapse["forward"],
-            method_to_percent["forward"],
-        )
-        log_op(
-            "op.comp.bw",
-            method_to_elapse["backward"],
-            method_to_percent["backward"],
-        )
-        log_op(
-            "op.comp.upd",
-            method_to_elapse["update"],
-            method_to_percent["update"],
-        )
+        # logger.warning("")
+        # log_op(
+        #     "op.comp.fw",
+        #     method_to_elapse["forward"],
+        #     method_to_percent["forward"],
+        # )
 
         logger.warning("")
     except Exception:
