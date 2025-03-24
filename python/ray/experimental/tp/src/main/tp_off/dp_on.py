@@ -65,6 +65,7 @@ def train(
 ) -> None:
     num_parts_dp = 18
     dp_idxs = [[0, 1]]
+    outputs = []
 
     with InputNode() as inp:
         forwards = [actor.forward.bind(inp) for actor in actors]
@@ -72,7 +73,6 @@ def train(
             actor.backward_loss.bind(forward)
             for actor, forward in zip(actors, forwards)
         ]
-        outputs = []
         for i in reversed(range(num_parts_dp)):
             for idxs in dp_idxs:
                 dp_actors = [actors[idx] for idx in idxs]

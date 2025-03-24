@@ -43,7 +43,7 @@ RANK=0 \
 	WORLD_SIZE=1 \
 	MASTER_ADDR=localhost \
 	MASTER_PORT=12345 \
-	python -m ray.experimental.tp.src.main.tp_on/pp_on \
+	python -m ray.experimental.tp.src.main.tp_on.pp_on \
 	--batch-size $batch_size \
 	--seq-len $seq_len \
 	--num-iters $num_iters \

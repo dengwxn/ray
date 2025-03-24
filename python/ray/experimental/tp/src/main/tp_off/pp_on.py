@@ -78,15 +78,10 @@ def train(
             tp_actor.backward.bind(0, b1_fw2).with_tensor_transport(transport="nccl")
             for tp_actor, b1_fw2 in zip(pp_to_tp_actors[1], b1_fw2s)
         ]
-        b1_upds = [tp_actor.update.bind(0, inp) for tp_actor in pp_to_tp_actors[1]]
 
         b1_bw2s = [
             tp_actor.backward.bind(0, b1_bw1)
             for tp_actor, b1_bw1 in zip(pp_to_tp_actors[0], b1_bw1s)
-        ]
-        b1_upd2s = [
-            tp_actor.update.bind(0, b1_bw2)
-            for tp_actor, b1_bw2 in zip(pp_to_tp_actors[0], b1_bw2s)
         ]
         b2_fw2s = [
             tp_actor.forward.bind(1, b2_fw1)
@@ -97,18 +92,13 @@ def train(
             tp_actor.backward.bind(1, b2_fw2).with_tensor_transport(transport="nccl")
             for tp_actor, b2_fw2 in zip(pp_to_tp_actors[1], b2_fw2s)
         ]
-        b2_upds = [tp_actor.update.bind(1, inp) for tp_actor in pp_to_tp_actors[1]]
 
         b2_bw2s = [
             tp_actor.backward.bind(1, b2_bw1)
             for tp_actor, b2_bw1 in zip(pp_to_tp_actors[0], b2_bw1s)
         ]
-        b2_upd2s = [
-            tp_actor.update.bind(1, b2_bw2)
-            for tp_actor, b2_bw2 in zip(pp_to_tp_actors[0], b2_bw2s)
-        ]
 
-        updates = b1_upds + b1_upd2s + b2_upds + b2_upd2s
+        updates = b1_bw2s + b2_bw2s
         dag = MultiOutputNode(updates)
 
     compiled_dag = dag.experimental_compile()

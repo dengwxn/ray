@@ -446,9 +446,25 @@ class ActorTP2PP:
 
         if self.tracing:
             self.update_tracing("bw.ends")
+            self.update_tracing("upd.starts")
+
+        assert idx < len(self.bparams)
+        bparam = self.bparams[idx]
+
+        bparam.optimizer.step()
+        bparam.optimizer.zero_grad()
+
+        if self.tracing:
+            self.update_tracing("upd.ends")
+        self.num_batches_updated += 1
+        if self.num_batches_updated == self.num_pp_batches:
+            self.update_tracing("end")
+
         return output
 
     def update(self, idx: int, _backward) -> None:
+        raise NotImplementedError
+
         if self.tracing:
             self.update_tracing("upd.starts")
 
