@@ -14,7 +14,7 @@ from .model import (
     TransformerTP,
     TransformerTP2DP,
     TransformerTP2PP,
-    TransformerTP2PP4DP,
+    TransformerTP2PP4DPFull,
 )
 
 
@@ -728,10 +728,10 @@ class ActorTP2DP:
 
 
 @ray.remote
-class ActorTP2PP4DP:
+class ActorTP2PP4DPFull:
     @dataclass
     class BatchModel:
-        model: TransformerTP2PP4DP
+        model: TransformerTP2PP4DPFull
         criterion: torch.nn.CrossEntropyLoss
         optimizer: torch.optim.AdamW
         logits_as_input: Optional[torch.Tensor] = None
@@ -770,10 +770,10 @@ class ActorTP2PP4DP:
         model_parallel_size = 2
         fs_init.initialize_model_parallel(model_parallel_size)
 
-        self.batches: List[ActorTP2PP4DP.BatchModel] = []
+        self.batches: List[ActorTP2PP4DPFull.BatchModel] = []
         for i in range(num_pp_batches):
             torch.manual_seed(2025 + i)
-            model = TransformerTP2PP4DP(model_args, rank_pp).to(self.device)
+            model = TransformerTP2PP4DPFull(model_args, rank_pp).to(self.device)
             criterion = torch.nn.CrossEntropyLoss()
             optimizer = torch.optim.AdamW(model.parameters(), lr=1e-6)
             batch = self.BatchModel(model, criterion, optimizer)

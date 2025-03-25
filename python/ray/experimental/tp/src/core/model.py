@@ -659,7 +659,7 @@ class PartitionTP2PP4DPBase(nn.Module):
         self.optimizer.zero_grad()
 
 
-class PartitionTP2PP4DPFirst(PartitionTP2DPBase):
+class PartitionTP2PP4DPFullFirst(PartitionTP2DPBase):
     def __init__(self, params: ModelArgs):
         super().__init__()
         self.tok_embeddings = VocabParallelEmbedding(
@@ -695,7 +695,7 @@ class PartitionTP2PP4DPFirst(PartitionTP2DPBase):
         return h, freqs_cis, mask
 
 
-class PartitionTP2PP4DPTransformerBlock(PartitionTP2DPBase):
+class PartitionTP2PP4DPFullTransformerBlock(PartitionTP2DPBase):
     def __init__(self, params: ModelArgs, layer_id: int):
         super().__init__()
         self.layer = TransformerBlockTP(layer_id, params)
@@ -718,7 +718,7 @@ class PartitionTP2PP4DPTransformerBlock(PartitionTP2DPBase):
         return out
 
 
-class PartitionTP2PP4DPLast(PartitionTP2DPBase):
+class PartitionTP2PP4DPFullLast(PartitionTP2DPBase):
     def __init__(self, params: ModelArgs):
         super().__init__()
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
@@ -737,7 +737,7 @@ class PartitionTP2PP4DPLast(PartitionTP2DPBase):
         return self.output(x)
 
 
-class TransformerTP2PP4DP(nn.Module):
+class TransformerTP2PP4DPFull(nn.Module):
     def __init__(self, params: ModelArgs, rank_pp: int):
         super().__init__()
 
@@ -747,10 +747,12 @@ class TransformerTP2PP4DP(nn.Module):
         # TP2DP
         self.params = params
         self.parts_dp = []
-        self.parts_dp.append(PartitionTP2PP4DPFirst(params))
+        self.parts_dp.append(PartitionTP2PP4DPFullFirst(params))
         for layer_id in range(params.n_layers):
-            self.parts_dp.append(PartitionTP2PP4DPTransformerBlock(params, layer_id))
-        self.parts_dp.append(PartitionTP2PP4DPLast(params))
+            self.parts_dp.append(
+                PartitionTP2PP4DPFullTransformerBlock(params, layer_id)
+            )
+        self.parts_dp.append(PartitionTP2PP4DPFullLast(params))
         self.parts_dp = torch.nn.ModuleList(self.parts_dp)
         self.num_parts_dp = len(self.parts_dp)
         self.idx_pp_mid = self.num_parts_dp // 2
