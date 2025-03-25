@@ -207,7 +207,7 @@ class ActorTP:
 @ray.remote
 class ActorTP2PP:
     @dataclass
-    class BatchParameter:
+    class BatchModel:
         model: TransformerTP2PP
         criterion: torch.nn.CrossEntropyLoss
         optimizer: torch.optim.AdamW
@@ -247,14 +247,14 @@ class ActorTP2PP:
         model_parallel_size = 2
         fs_init.initialize_model_parallel(model_parallel_size)
 
-        self.bparams: List[ActorTP2PP.BatchParameter] = []
+        self.batches: List[ActorTP2PP.BatchModel] = []
         for i in range(num_pp_batches):
             torch.manual_seed(2025 + i)
             model = TransformerTP2PP(model_args, rank_pp).to(self.device)
             criterion = torch.nn.CrossEntropyLoss()
             optimizer = torch.optim.AdamW(model.parameters(), lr=1e-6)
-            bparam = self.BatchParameter(model, criterion, optimizer)
-            self.bparams.append(bparam)
+            model = self.BatchModel(model, criterion, optimizer)
+            self.batches.append(model)
 
         self.it = 0
         self.events: Dict[str, Any] = {}
@@ -279,9 +279,9 @@ class ActorTP2PP:
 
         self.num_batches_forwarded = 0
         self.num_batches_updated = 0
-        for bparam in self.bparams:
-            bparam.logits_as_input = None
-            bparam.logits_as_output = None
+        for batch in self.batches:
+            batch.logits_as_input = None
+            batch.logits_as_output = None
 
         self.events: Dict[str, Any] = {
             "start": [],
@@ -395,19 +395,19 @@ class ActorTP2PP:
         if self.tracing:
             self.update_tracing("fw.starts")
 
-        assert idx < len(self.bparams)
-        bparam = self.bparams[idx]
+        assert idx < len(self.batches)
+        batch = self.batches[idx]
 
         if self.rank_pp == 0:
-            logits_as_output = bparam.model.forward_first(self.input, 0)
-            bparam.logits_as_output = logits_as_output
+            logits_as_output = batch.model.forward_first(self.input, 0)
+            batch.logits_as_output = logits_as_output
             logits_as_input = logits_as_output.detach()
             output = logits_as_input
         else:
             assert logits_as_input is not None
             logits_as_input = logits_as_input.to(self.device).requires_grad_(True)
-            bparam.logits_as_input = logits_as_input
-            logits_as_output = bparam.model.forward_second(
+            batch.logits_as_input = logits_as_input
+            logits_as_output = batch.model.forward_second(
                 self.input, 0, logits_as_input
             )
             output = logits_as_output
@@ -417,23 +417,22 @@ class ActorTP2PP:
         return output
 
     def backward_loss(self, idx: int, logits: torch.Tensor) -> torch.Tensor:
-        assert idx < len(self.bparams)
-        bparam = self.bparams[idx]
+        assert idx < len(self.batches)
+        batch = self.batches[idx]
 
-        loss = bparam.criterion(logits, self.target)
+        loss = batch.criterion(logits, self.target)
         loss.backward()
-        grad = bparam.logits_as_input.grad
+        grad = batch.logits_as_input.grad
 
         assert grad is not None
         return grad
 
     def backward_intra(self, idx: int, grad: torch.Tensor) -> None:
-        assert idx < len(self.bparams)
-        bparam = self.bparams[idx]
+        assert idx < len(self.batches)
+        batch = self.batches[idx]
         assert grad is not None
-        grad = grad.to(self.device)
 
-        bparam.logits_as_output.backward(grad)
+        batch.logits_as_output.backward(grad)
 
     def backward(self, idx: int, data: torch.Tensor) -> Optional[torch.Tensor]:
         if self.tracing:
@@ -448,11 +447,11 @@ class ActorTP2PP:
             self.update_tracing("bw.ends")
             self.update_tracing("upd.starts")
 
-        assert idx < len(self.bparams)
-        bparam = self.bparams[idx]
+        assert idx < len(self.batches)
+        batch = self.batches[idx]
 
-        bparam.optimizer.step()
-        bparam.optimizer.zero_grad()
+        batch.optimizer.step()
+        batch.optimizer.zero_grad()
 
         if self.tracing:
             self.update_tracing("upd.ends")
@@ -461,24 +460,6 @@ class ActorTP2PP:
             self.update_tracing("end")
 
         return output
-
-    def update(self, idx: int, _backward) -> None:
-        raise NotImplementedError
-
-        if self.tracing:
-            self.update_tracing("upd.starts")
-
-        assert idx < len(self.bparams)
-        bparam = self.bparams[idx]
-
-        bparam.optimizer.step()
-        bparam.optimizer.zero_grad()
-
-        if self.tracing:
-            self.update_tracing("upd.ends")
-        self.num_batches_updated += 1
-        if self.num_batches_updated == self.num_pp_batches:
-            self.update_tracing("end")
 
     def clean(self) -> None:
         dist.destroy_process_group()
