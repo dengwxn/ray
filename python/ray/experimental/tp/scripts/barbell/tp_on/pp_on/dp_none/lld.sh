@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/barbell/tp_on/pp_on/lld
+output_path=results/barbell/tp_on/pp_on/dp_none/lld
 mkdir -p $output_path
 rm -f ${output_path}/*.csv
 rm -f ${output_path}/*.log
@@ -43,7 +43,7 @@ RANK=0 \
 	WORLD_SIZE=1 \
 	MASTER_ADDR=localhost \
 	MASTER_PORT=12345 \
-	python -m ray.experimental.tp.src.main.tp_on.pp_on \
+	python -m ray.experimental.tp.src.main.tp_on.pp_on.dp_none \
 	--batch-size $batch_size \
 	--seq-len $seq_len \
 	--num-iters $num_iters \
