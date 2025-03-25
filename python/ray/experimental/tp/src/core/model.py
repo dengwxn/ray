@@ -636,6 +636,7 @@ class TransformerTP2DP(nn.Module):
             self.parts_dp.append(PartitionTP2DPTransformerBlock(params, layer_id))
         self.parts_dp.append(PartitionTP2DPLast(params))
         self.parts_dp = torch.nn.ModuleList(self.parts_dp)
+        self.inters_dp = []
 
 
 class Attention(nn.Module):

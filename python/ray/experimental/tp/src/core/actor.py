@@ -212,7 +212,7 @@ class ActorTP2PP:
         criterion: torch.nn.CrossEntropyLoss
         optimizer: torch.optim.AdamW
         logits_as_input: Optional[torch.Tensor] = None
-        logits_as_output: Optional[torch.Tensor] = None
+        logits: Optional[torch.Tensor] = None
 
     def __init__(
         self,
@@ -281,7 +281,7 @@ class ActorTP2PP:
         self.num_batches_updated = 0
         for batch in self.batches:
             batch.logits_as_input = None
-            batch.logits_as_output = None
+            batch.logits = None
 
         self.events: Dict[str, Any] = {
             "start": [],
@@ -399,18 +399,16 @@ class ActorTP2PP:
         batch = self.batches[idx]
 
         if self.rank_pp == 0:
-            logits_as_output = batch.model.forward_first(self.input, 0)
-            batch.logits_as_output = logits_as_output
-            logits_as_input = logits_as_output.detach()
+            logits = batch.model.forward_first(self.input, 0)
+            batch.logits = logits
+            logits_as_input = logits.detach()
             output = logits_as_input
         else:
             assert logits_as_input is not None
-            logits_as_input = logits_as_input.to(self.device).requires_grad_(True)
+            logits_as_input = logits_as_input.requires_grad_(True)
             batch.logits_as_input = logits_as_input
-            logits_as_output = batch.model.forward_second(
-                self.input, 0, logits_as_input
-            )
-            output = logits_as_output
+            logits = batch.model.forward_second(self.input, 0, logits_as_input)
+            output = logits
 
         if self.tracing:
             self.update_tracing("fw.ends")
@@ -432,7 +430,7 @@ class ActorTP2PP:
         batch = self.batches[idx]
         assert grad is not None
 
-        batch.logits_as_output.backward(grad)
+        batch.logits.backward(grad)
 
     def backward(self, idx: int, data: torch.Tensor) -> Optional[torch.Tensor]:
         if self.tracing:
@@ -513,7 +511,7 @@ class ActorTP2DP:
     def init_training(self):
         torch.manual_seed(998244353)
 
-        self.intermediates = []
+        self.model.inters_dp = []
 
         self.input = torch.randint(
             0,
@@ -670,7 +668,7 @@ class ActorTP2DP:
                 logits_as_input = logits.detach().requires_grad_(True)
             else:
                 logits_as_input = logits
-            self.intermediates.append((logits, logits_as_input))
+            self.model.inters_dp.append((logits, logits_as_input))
 
         if self.tracing:
             self.update_tracing("fw.ends")
@@ -694,7 +692,7 @@ class ActorTP2DP:
         if self.tracing:
             self.update_tracing("bw.grad.intra.starts")
 
-        logits, logits_as_input = self.intermediates[idx]
+        logits, logits_as_input = self.model.inters_dp[idx]
         grad = logits_as_input.grad
         assert logits is not None
         assert grad is not None
