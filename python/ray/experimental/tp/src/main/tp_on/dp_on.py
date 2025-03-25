@@ -67,31 +67,34 @@ def train(
     tracing: bool,
 ) -> None:
     num_parts_dp = 18
-    dp_idxs = [[0, 2], [1, 3]]
+    idxs_dp = [[0, 2], [1, 3]]
     outputs = []
 
-    with InputNode() as inp:
-        forwards = [actor.forward.bind(inp) for actor in actors]
+    def get_dp_backwards(forwards):
         backwards = [
             actor.backward_loss.bind(forward)
             for actor, forward in zip(actors, forwards)
         ]
         for i in reversed(range(num_parts_dp)):
-            for idxs in dp_idxs:
+            for idxs in idxs_dp:
                 grads_reduced = allreduce.bind(filter(backwards, idxs))
-                dp_updates = [
+                updates = [
                     actor.update.bind(i, grad, True)
                     for actor, grad in zip(
                         filter(actors, idxs),
                         grads_reduced,
                     )
                 ]
-                outputs.extend(dp_updates)
+                outputs.extend(updates)
             if i > 0:
                 backwards = [
                     actor.backward_intra.bind(i - 1, grad)
                     for actor, grad in zip(actors, backwards)
                 ]
+
+    with InputNode() as inp:
+        forwards = [actor.forward.bind(inp) for actor in actors]
+        get_dp_backwards(forwards)
         dag = MultiOutputNode(outputs)
 
     compiled_dag = dag.experimental_compile()

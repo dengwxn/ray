@@ -64,64 +64,52 @@ def train(
     latency_prefix: str,
     tracing: bool,
 ) -> None:
-    pp_idxs = [[0, 1], [2, 3]]
+    idxs_pp = [[0, 1], [2, 3]]
+
+    def get_pp_backwards(idx_batch, idxs_pp, values, with_nccl):
+        bws = [
+            actor.backward.bind(idx_batch, value)
+            for actor, value in zip(
+                filter(actors, idxs_pp),
+                values,
+            )
+        ]
+        if with_nccl:
+            bws = [bw.with_tensor_transport(transport="nccl") for bw in bws]
+        return bws
 
     with InputNode() as inp:
         b1_fw1s = [
             actor.forward.bind(0, inp).with_tensor_transport(transport="nccl")
-            for actor in filter(actors, pp_idxs[0])
+            for actor in filter(actors, idxs_pp[0])
         ]
 
         b2_fw1s = [
             actor.forward.bind(1, inp).with_tensor_transport(transport="nccl")
-            for actor in filter(actors, pp_idxs[0])
+            for actor in filter(actors, idxs_pp[0])
         ]
         b1_fw2s = [
             actor.forward.bind(0, b1_fw1)
             for actor, b1_fw1 in zip(
-                filter(actors, pp_idxs[1]),
+                filter(actors, idxs_pp[1]),
                 b1_fw1s,
             )
         ]
 
-        b1_bw1s = [
-            actor.backward.bind(0, b1_fw2).with_tensor_transport(transport="nccl")
-            for actor, b1_fw2 in zip(
-                filter(actors, pp_idxs[1]),
-                b1_fw2s,
-            )
-        ]
+        b1_bw1s = get_pp_backwards(0, idxs_pp[1], b1_fw2s, True)
 
-        b1_bw2s = [
-            actor.backward.bind(0, b1_bw1)
-            for actor, b1_bw1 in zip(
-                filter(actors, pp_idxs[0]),
-                b1_bw1s,
-            )
-        ]
+        b1_bw2s = get_pp_backwards(0, idxs_pp[0], b1_bw1s, False)
         b2_fw2s = [
             actor.forward.bind(1, b2_fw1)
             for actor, b2_fw1 in zip(
-                filter(actors, pp_idxs[1]),
+                filter(actors, idxs_pp[1]),
                 b2_fw1s,
             )
         ]
 
-        b2_bw1s = [
-            actor.backward.bind(1, b2_fw2).with_tensor_transport(transport="nccl")
-            for actor, b2_fw2 in zip(
-                filter(actors, pp_idxs[1]),
-                b2_fw2s,
-            )
-        ]
+        b2_bw1s = get_pp_backwards(1, idxs_pp[1], b2_fw2s, True)
 
-        b2_bw2s = [
-            actor.backward.bind(1, b2_bw1)
-            for actor, b2_bw1 in zip(
-                filter(actors, pp_idxs[0]),
-                b2_bw1s,
-            )
-        ]
+        b2_bw2s = get_pp_backwards(1, idxs_pp[0], b2_bw1s, False)
 
         updates = b1_bw2s + b2_bw2s
         dag = MultiOutputNode(updates)
