@@ -756,59 +756,12 @@ class TransformerTP2PP4DP(nn.Module):
         self.idx_pp_mid = self.num_parts_dp // 2
         self.inters_dp = []
 
-        self.params = params
-        self.vocab_size = params.vocab_size
-        self.n_layers = params.n_layers
-
-        self.tok_embeddings = VocabParallelEmbedding(
-            params.vocab_size,
-            params.dim,
-            init_method=lambda x: x,
-        )
-        log_size(self.tok_embeddings)
-
-        self.layers = torch.nn.ModuleList()
-        for layer_id in range(params.n_layers):
-            self.layers.append(TransformerBlockTP(layer_id, params))
-        log_size(self.layers[0])
-
-        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
-        log_size(self.norm)
-        self.output = ColumnParallelLinear(
-            params.dim,
-            params.vocab_size,
-            bias=False,
-            init_method=lambda x: x,
-        )
-        log_size(self.output)
-
         self.freqs_cis = precompute_freqs_cis(
             params.dim // params.n_heads,
             params.max_seq_len * 2,
             params.rope_theta,
         )
         self.freqs_cis = self.freqs_cis.to(torch.device("cuda:0"))
-
-    # def forward_first(self, tokens: torch.Tensor, start_pos: int):
-    #     assert self.rank_pp == 0
-
-    #     _bsz, seqlen = tokens.shape
-    #     freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
-
-    #     h = self.tok_embeddings(tokens)
-
-    #     mask = None
-    #     if seqlen > 1:
-    #         mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
-    #         mask = torch.triu(mask, diagonal=1)
-    #         mask = torch.hstack(
-    #             [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
-    #         ).type_as(h)
-
-    #     for layer in self.layers[: self.pidx]:
-    #         h = layer(h, start_pos, freqs_cis, mask)
-
-    #     return h
 
     def forward_first(self, tokens: torch.Tensor):
         assert self.rank_pp == 0
@@ -828,27 +781,6 @@ class TransformerTP2PP4DP(nn.Module):
             self.inters_dp.append((logits, logits_as_input))
 
         return logits
-
-    # def forward_second(self, tokens: torch.Tensor, start_pos: int, h: torch.Tensor):
-    #     assert self.rank_pp == 1
-
-    #     _bsz, seqlen = tokens.shape
-    #     freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
-
-    #     mask = None
-    #     if seqlen > 1:
-    #         mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
-    #         mask = torch.triu(mask, diagonal=1)
-    #         mask = torch.hstack(
-    #             [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
-    #         ).type_as(h)
-
-    #     for layer in self.layers[self.idx_pp_mid :]:
-    #         h = layer(h, start_pos, freqs_cis, mask)
-    #     h = self.norm(h)
-    #     output = self.output(h).float()
-
-    #     return output
 
     def forward_second(self, tokens: torch.Tensor, logits_as_input: torch.Tensor):
         assert self.rank_pp == 1
