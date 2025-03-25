@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
 
 import ray
 from ....core.actor import ActorTP2PP2DP as Actor
@@ -7,6 +7,7 @@ from ....core.common import get_end_time, get_start_time, log_elapses_to_csv
 from ....core.config import parse_args
 from ....core.model import LLAMA_DEBUG as LLAMA
 from ray.dag import InputNode, MultiOutputNode
+from ray.experimental.collective import allreduce
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(filename)s:%(lineno)d -- %(message)s",
@@ -54,6 +55,8 @@ def init_actors(args: Dict[str, Any]) -> List[Actor]:
 
 
 def filter(items: List[Any], idxs: List[int]) -> List[Any]:
+    assert isinstance(items, list)
+    assert isinstance(idxs, list)
     return [items[idx] for idx in idxs]
 
 
@@ -65,45 +68,77 @@ def train(
     tracing: bool,
 ) -> None:
     idxs_pp = [[0, 1], [2, 3]]
+    # idxs_pp = [[0, 1, 4, 5], [2, 3, 6, 7]]
+    # idxs_dp = [[[0, 4], [1, 5]], [[2, 6], [3, 7]]]
 
-    def get_pp_forwards(idx_batch, idxs_pp, values, with_nccl=False):
-        if not isinstance(values, list):
-            values = [values for _ in idxs_pp]
+    def get_pp_forwards(
+        idx_batch: int,
+        idxs_pp: List[int],
+        inputs: Union[Any, List[Any]],
+        with_nccl: bool = False,
+    ):
+        if not isinstance(inputs, list):
+            inputs = [inputs for _ in idxs_pp]
         fws = [
-            actor.forward.bind(idx_batch, value)
-            for actor, value in zip(
+            actor.forward.bind(idx_batch, input)
+            for actor, input in zip(
                 filter(actors, idxs_pp),
-                values,
+                inputs,
             )
         ]
         if with_nccl:
             fws = [fw.with_tensor_transport(transport="nccl") for fw in fws]
         return fws
 
-    def get_pp_backwards(idx_batch, idxs_pp, values, with_nccl=False):
+    def get_pp_backwards(
+        idx_batch: int,
+        idxs_pp: List[int],
+        tensors: List[Any],
+        with_nccl: bool = False,
+    ):
         bws = [
-            actor.backward.bind(idx_batch, value)
-            for actor, value in zip(
+            actor.backward.bind(idx_batch, tensor)
+            for actor, tensor in zip(
                 filter(actors, idxs_pp),
-                values,
+                tensors,
             )
         ]
         if with_nccl:
             bws = [bw.with_tensor_transport(transport="nccl") for bw in bws]
         return bws
 
-    def get_pp_updates(idx_batch, idxs_pp, values):
+    def get_pp_allreduces_updates(
+        idx_batch: int,
+        idxs_tp_dp: List[List[int]],
+        values: List[Any],
+    ):
+        upds = []
+        for idxs_tp in idxs_tp_dp:
+            grads_tp = [allreduce.bind(filter(values, idxs_tp))]
+            upds_tp = [
+                # [TODO] grad_passed = True
+                actor.update.bind(idx_batch, grad)
+                for actor, grad in zip(
+                    filter(actors, idxs_tp),
+                    grads_tp,
+                )
+            ]
+            upds.extend(upds_tp)
+        return upds
+
+    def get_pp_updates(
+        idx_batch: int,
+        idxs_pp: List[int],
+        grads: List[Any],
+    ):
         upds = [
-            actor.update.bind(idx_batch, value)
-            for actor, value in zip(
+            actor.update.bind(idx_batch, grad)
+            for actor, grad in zip(
                 filter(actors, idxs_pp),
-                values,
+                grads,
             )
         ]
         return upds
-
-    # [TODO]
-    # def get_pp_allreduces
 
     with InputNode() as inp:
         b1_fw1s = get_pp_forwards(0, idxs_pp[0], inp, True)
