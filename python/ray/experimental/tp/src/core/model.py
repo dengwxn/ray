@@ -766,7 +766,9 @@ class TransformerTP2PP4DP(nn.Module):
     def forward_first(self, tokens: torch.Tensor):
         assert self.rank_pp == 0
 
-        for i, part in enumerate(self.parts_dp[: self.idx_pp_mid]):
+        for i, part in enumerate(self.parts_dp):
+            if i >= self.idx_pp_mid:
+                break
             if i == 0:
                 logits, freqs_cis, mask = part.forward(tokens)
             elif i < self.num_parts_dp - 1:

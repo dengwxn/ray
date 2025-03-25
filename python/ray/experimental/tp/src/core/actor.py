@@ -803,6 +803,7 @@ class ActorTP2PP4DP:
         self.num_batches_forwarded = 0
         self.num_batches_updated = 0
         for batch in self.batches:
+            batch.model.inters_dp = []
             batch.logits_as_input = None
             batch.logits = None
 
@@ -937,9 +938,9 @@ class ActorTP2PP4DP:
             self.update_tracing("fw.ends")
         return output
 
-    def backward_loss(self, idx: int, logits: torch.Tensor) -> torch.Tensor:
-        assert idx < len(self.batches)
-        batch = self.batches[idx]
+    def backward_loss(self, idx_batch: int, logits: torch.Tensor) -> torch.Tensor:
+        assert idx_batch < len(self.batches)
+        batch = self.batches[idx_batch]
 
         loss = batch.criterion(logits, self.target)
         loss.backward()
@@ -948,28 +949,28 @@ class ActorTP2PP4DP:
         assert grad is not None
         return grad
 
-    def backward_intra(self, idx: int, grad: torch.Tensor) -> None:
-        assert idx < len(self.batches)
-        batch = self.batches[idx]
+    def backward_intra(self, idx_batch: int, grad: torch.Tensor) -> None:
+        assert idx_batch < len(self.batches)
+        batch = self.batches[idx_batch]
         assert grad is not None
 
         batch.logits.backward(grad)
 
-    def backward(self, idx: int, data: torch.Tensor) -> Optional[torch.Tensor]:
+    def backward(self, idx_batch: int, data: torch.Tensor) -> Optional[torch.Tensor]:
         if self.tracing:
             self.update_tracing("bw.starts")
 
         if self.rank_pp == 0:
-            output = self.backward_intra(idx, data)
+            output = self.backward_intra(idx_batch, data)
         else:
-            output = self.backward_loss(idx, data)
+            output = self.backward_loss(idx_batch, data)
 
         if self.tracing:
             self.update_tracing("bw.ends")
             self.update_tracing("upd.starts")
 
-        assert idx < len(self.batches)
-        batch = self.batches[idx]
+        assert idx_batch < len(self.batches)
+        batch = self.batches[idx_batch]
 
         batch.optimizer.step()
         batch.optimizer.zero_grad()
