@@ -109,6 +109,17 @@ LLAMA_70B = ModelArgs(
 )
 
 
+def log_size(layer, indent=0):
+    num_params = sum(p.numel() for p in layer.parameters())
+    size_mib = num_params * 4 / (1024 * 1024)
+    indent_str = "  " * indent
+    logger.info(f"{indent_str}{layer.__class__.__name__}: {round(size_mib)} MiB")
+    if size_mib < 25:
+        return
+    for _, child in layer.named_children():
+        log_size(child, indent + 1)
+
+
 class RMSNorm(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
@@ -358,18 +369,6 @@ class TransformerTP(nn.Module):
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
 
-        def log_size(layer, indent=0):
-            num_params = sum(p.numel() for p in layer.parameters())
-            size_mib = num_params * 4 / (1024 * 1024)
-            indent_str = "  " * indent
-            logger.info(
-                f"{indent_str}{layer.__class__.__name__}: {round(size_mib)} MiB"
-            )
-            if size_mib < 25:
-                return
-            for _, child in layer.named_children():
-                log_size(child, indent + 1)
-
         self.tok_embeddings = VocabParallelEmbedding(
             # self.tok_embeddings = torch.nn.Embedding(
             params.vocab_size,
@@ -427,18 +426,6 @@ class TransformerTP2PP(nn.Module):
         self.params = params
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
-
-        def log_size(layer, indent=0):
-            num_params = sum(p.numel() for p in layer.parameters())
-            size_mib = num_params * 4 / (1024 * 1024)
-            indent_str = "  " * indent
-            logger.info(
-                f"{indent_str}{layer.__class__.__name__}: {round(size_mib)} MiB"
-            )
-            if size_mib < 25:
-                return
-            for _, child in layer.named_children():
-                log_size(child, indent + 1)
 
         self.tok_embeddings = VocabParallelEmbedding(
             params.vocab_size,
@@ -510,17 +497,6 @@ class TransformerTP2PP(nn.Module):
         h = self.norm(h)
         output = self.output(h).float()
         return output
-
-
-def log_size(layer, indent=0):
-    num_params = sum(p.numel() for p in layer.parameters())
-    size_mib = num_params * 4 / (1024 * 1024)
-    indent_str = "  " * indent
-    logger.info(f"{indent_str}{layer.__class__.__name__}: {round(size_mib)} MiB")
-    if size_mib < 25:
-        return
-    for _, child in layer.named_children():
-        log_size(child, indent + 1)
 
 
 class PartitionTP2DPBase(nn.Module):
@@ -635,6 +611,85 @@ class TransformerTP2DP(nn.Module):
         self.parts_dp.append(PartitionTP2DPLast(params))
         self.parts_dp = torch.nn.ModuleList(self.parts_dp)
         self.inters_dp = []
+
+
+class TransformerTP2PP2DP(nn.Module):
+    def __init__(self, params: ModelArgs, rank: int):
+        super().__init__()
+        self.params = params
+        self.vocab_size = params.vocab_size
+        self.n_layers = params.n_layers
+
+        self.tok_embeddings = VocabParallelEmbedding(
+            params.vocab_size,
+            params.dim,
+            init_method=lambda x: x,
+        )
+        log_size(self.tok_embeddings)
+
+        self.layers = torch.nn.ModuleList()
+        for layer_id in range(params.n_layers):
+            self.layers.append(TransformerBlockTP(layer_id, params))
+        log_size(self.layers[0])
+
+        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        log_size(self.norm)
+        self.output = ColumnParallelLinear(
+            params.dim,
+            params.vocab_size,
+            bias=False,
+            init_method=lambda x: x,
+        )
+        log_size(self.output)
+
+        self.freqs_cis = precompute_freqs_cis(
+            params.dim // params.n_heads,
+            params.max_seq_len * 2,
+            params.rope_theta,
+        )
+        self.freqs_cis = self.freqs_cis.to(torch.device("cuda:0"))
+
+        self.pidx = 9
+        self.rank = rank
+
+    def forward_first(self, tokens: torch.Tensor, start_pos: int):
+        assert self.rank == 0
+
+        _bsz, seqlen = tokens.shape
+        h = self.tok_embeddings(tokens)
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+            mask = torch.triu(mask, diagonal=1)
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+            ).type_as(h)
+
+        for layer in self.layers[: self.pidx]:
+            h = layer(h, start_pos, freqs_cis, mask)
+        return h
+
+    def forward_second(self, tokens: torch.Tensor, start_pos: int, h: torch.Tensor):
+        assert self.rank == 1
+
+        _bsz, seqlen = tokens.shape
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+            mask = torch.triu(mask, diagonal=1)
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+            ).type_as(h)
+
+        for layer in self.layers[self.pidx :]:
+            h = layer(h, start_pos, freqs_cis, mask)
+        h = self.norm(h)
+        output = self.output(h).float()
+        return output
 
 
 class PartitionTP2PP4DPBase(nn.Module):
