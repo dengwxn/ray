@@ -955,6 +955,7 @@ class ActorTP2PP2DP:
         assert grad is not None
 
         batch.logits.backward(grad)
+        # [TODO] return grad
 
     def backward(self, idx: int, data: torch.Tensor) -> Optional[torch.Tensor]:
         if self.tracing:
@@ -967,10 +968,18 @@ class ActorTP2PP2DP:
 
         if self.tracing:
             self.update_tracing("bw.ends")
+        return output
+
+    def update(self, idx: int, _backward) -> None:
+        if self.tracing:
             self.update_tracing("upd.starts")
 
         assert idx < len(self.batches)
         batch = self.batches[idx]
+
+        # [TODO] get flat_grad
+        # [TODO] allreduce flat_grad
+        # [TODO] step
 
         batch.optimizer.step()
         batch.optimizer.zero_grad()
@@ -980,8 +989,6 @@ class ActorTP2PP2DP:
         self.num_batches_updated += 1
         if self.num_batches_updated == self.num_pp_batches:
             self.update_tracing("end")
-
-        return output
 
     def clean(self) -> None:
         dist.destroy_process_group()
