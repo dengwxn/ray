@@ -441,7 +441,6 @@ class TransformerTP2PP(nn.Module):
                 log_size(child, indent + 1)
 
         self.tok_embeddings = VocabParallelEmbedding(
-            # self.tok_embeddings = torch.nn.Embedding(
             params.vocab_size,
             params.dim,
             init_method=lambda x: x,
@@ -456,7 +455,6 @@ class TransformerTP2PP(nn.Module):
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
         log_size(self.norm)
         self.output = ColumnParallelLinear(
-            # self.output = torch.nn.Linear(
             params.dim,
             params.vocab_size,
             bias=False,
@@ -637,6 +635,241 @@ class TransformerTP2DP(nn.Module):
         self.parts_dp.append(PartitionTP2DPLast(params))
         self.parts_dp = torch.nn.ModuleList(self.parts_dp)
         self.inters_dp = []
+
+
+class PartitionTP2PP4DPBase(nn.Module):
+    def get_flat_grad(self) -> torch.Tensor:
+        flat_grad = parameters_to_vector([param.grad for param in self.parameters()])
+        return flat_grad
+
+    def set_flat_grad(self, flat_grad: torch.Tensor) -> None:
+        offset = 0
+        for param in self.parameters():
+            if param.grad is None:
+                continue
+            size = param.data.numel()
+            grad = flat_grad[offset : offset + size].reshape(param.data.shape)
+            param.grad = grad
+            offset += size
+
+    def update(self, flat_grad: torch.Tensor, flat_grad_passed: bool) -> None:
+        if flat_grad_passed:
+            self.set_flat_grad(flat_grad)
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+
+
+class PartitionTP2PP4DPFirst(PartitionTP2DPBase):
+    def __init__(self, params: ModelArgs):
+        super().__init__()
+        self.tok_embeddings = VocabParallelEmbedding(
+            params.vocab_size,
+            params.dim,
+            init_method=lambda x: x,
+        )
+        log_size(self.tok_embeddings)
+        self.freqs_cis = precompute_freqs_cis(
+            params.dim // params.n_heads,
+            params.max_seq_len * 2,
+            params.rope_theta,
+        )
+        self.freqs_cis = self.freqs_cis.to(torch.device("cuda:0"))
+        self.optimizer = torch.optim.AdamW(self.parameters(), lr=1e-6)
+
+    def post_embeddings(self, tokens: torch.Tensor, h: torch.Tensor):
+        start_pos = 0
+        _bsz, seqlen = tokens.shape
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+            mask = torch.triu(mask, diagonal=1)
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+            ).type_as(h)
+        return freqs_cis, mask
+
+    def forward(self, x: torch.Tensor):
+        h = self.tok_embeddings(x)
+        freqs_cis, mask = self.post_embeddings(x, h)
+        return h, freqs_cis, mask
+
+
+class PartitionTP2PP4DPTransformerBlock(PartitionTP2DPBase):
+    def __init__(self, params: ModelArgs, layer_id: int):
+        super().__init__()
+        self.layer = TransformerBlockTP(layer_id, params)
+        if layer_id == 0:
+            log_size(self.layer)
+        self.optimizer = torch.optim.AdamW(self.parameters(), lr=1e-6)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        start_pos: int,
+        freqs_cis: torch.Tensor,
+        mask: Optional[torch.Tensor],
+    ):
+        transformer = self.layer
+        h = x + transformer.attention(
+            transformer.attention_norm(x), start_pos, freqs_cis, mask
+        )
+        out = h + transformer.feed_forward(transformer.ffn_norm(h))
+        return out
+
+
+class PartitionTP2PP4DPLast(PartitionTP2DPBase):
+    def __init__(self, params: ModelArgs):
+        super().__init__()
+        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        log_size(self.norm)
+        self.output = ColumnParallelLinear(
+            params.dim,
+            params.vocab_size,
+            bias=False,
+            init_method=lambda x: x,
+        )
+        log_size(self.output)
+        self.optimizer = torch.optim.AdamW(self.parameters(), lr=1e-6)
+
+    def forward(self, x: torch.Tensor):
+        x = self.norm(x)
+        return self.output(x)
+
+
+class TransformerTP2PP4DP(nn.Module):
+    def __init__(self, params: ModelArgs, rank_pp: int):
+        super().__init__()
+
+        # TP2PP
+        self.rank_pp = rank_pp
+
+        # TP2DP
+        self.params = params
+        self.parts_dp = []
+        self.parts_dp.append(PartitionTP2PP4DPFirst(params))
+        for layer_id in range(params.n_layers):
+            self.parts_dp.append(PartitionTP2PP4DPTransformerBlock(params, layer_id))
+        self.parts_dp.append(PartitionTP2PP4DPLast(params))
+        self.parts_dp = torch.nn.ModuleList(self.parts_dp)
+        self.num_parts_dp = len(self.parts_dp)
+        self.idx_pp_mid = self.num_parts_dp // 2
+        self.inters_dp = []
+
+        self.params = params
+        self.vocab_size = params.vocab_size
+        self.n_layers = params.n_layers
+
+        self.tok_embeddings = VocabParallelEmbedding(
+            params.vocab_size,
+            params.dim,
+            init_method=lambda x: x,
+        )
+        log_size(self.tok_embeddings)
+
+        self.layers = torch.nn.ModuleList()
+        for layer_id in range(params.n_layers):
+            self.layers.append(TransformerBlockTP(layer_id, params))
+        log_size(self.layers[0])
+
+        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        log_size(self.norm)
+        self.output = ColumnParallelLinear(
+            params.dim,
+            params.vocab_size,
+            bias=False,
+            init_method=lambda x: x,
+        )
+        log_size(self.output)
+
+        self.freqs_cis = precompute_freqs_cis(
+            params.dim // params.n_heads,
+            params.max_seq_len * 2,
+            params.rope_theta,
+        )
+        self.freqs_cis = self.freqs_cis.to(torch.device("cuda:0"))
+
+    # def forward_first(self, tokens: torch.Tensor, start_pos: int):
+    #     assert self.rank_pp == 0
+
+    #     _bsz, seqlen = tokens.shape
+    #     freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+
+    #     h = self.tok_embeddings(tokens)
+
+    #     mask = None
+    #     if seqlen > 1:
+    #         mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+    #         mask = torch.triu(mask, diagonal=1)
+    #         mask = torch.hstack(
+    #             [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+    #         ).type_as(h)
+
+    #     for layer in self.layers[: self.pidx]:
+    #         h = layer(h, start_pos, freqs_cis, mask)
+
+    #     return h
+
+    def forward_first(self, tokens: torch.Tensor):
+        assert self.rank_pp == 0
+
+        for i, part in enumerate(self.parts_dp[: self.idx_pp_mid]):
+            if i == 0:
+                logits, freqs_cis, mask = part.forward(tokens)
+            elif i < self.num_parts_dp - 1:
+                logits = part.forward(logits_as_input, 0, freqs_cis, mask)
+            else:
+                logits = part.forward(logits_as_input)
+            # if i < self.num_parts_dp - 1:
+            #     logits_as_input = logits.detach().requires_grad_(True)
+            # else:
+            #     logits_as_input = logits
+            logits_as_input = logits
+            self.inters_dp.append((logits, logits_as_input))
+
+        return logits
+
+    # def forward_second(self, tokens: torch.Tensor, start_pos: int, h: torch.Tensor):
+    #     assert self.rank_pp == 1
+
+    #     _bsz, seqlen = tokens.shape
+    #     freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+
+    #     mask = None
+    #     if seqlen > 1:
+    #         mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+    #         mask = torch.triu(mask, diagonal=1)
+    #         mask = torch.hstack(
+    #             [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+    #         ).type_as(h)
+
+    #     for layer in self.layers[self.idx_pp_mid :]:
+    #         h = layer(h, start_pos, freqs_cis, mask)
+    #     h = self.norm(h)
+    #     output = self.output(h).float()
+
+    #     return output
+
+    def forward_second(self, tokens: torch.Tensor, logits_as_input: torch.Tensor):
+        assert self.rank_pp == 1
+
+        part = self.parts_dp[0]
+        freqs_cis, mask = part.post_embeddings(tokens, logits_as_input)
+        for i, part in enumerate(self.parts_dp):
+            if i < self.idx_pp_mid:
+                continue
+            if i < self.num_parts_dp - 1:
+                logits = part.forward(logits_as_input, 0, freqs_cis, mask)
+            else:
+                logits = part.forward(logits_as_input)
+            # if i < self.num_parts_dp - 1:
+            #     logits_as_input = logits.detach().requires_grad_(True)
+            # else:
+            #     logits_as_input = logits
+            logits_as_input = logits
+            self.inters_dp.append((logits, logits_as_input))
+
+        return logits
 
 
 class Attention(nn.Module):
