@@ -751,7 +751,7 @@ class ActorTP2PP2DP:
         rank_pp: int,
         num_pp_batches: int,
         rank_dp: int,
-        num_actors_dp: int,
+        num_dp: int,
         tracing: bool,
     ):
         self.model_args = model_args
@@ -761,7 +761,7 @@ class ActorTP2PP2DP:
         self.rank_pp = rank_pp
         self.num_pp_batches = num_pp_batches
         self.rank_dp = rank_dp
-        self.num_actors_dp = num_actors_dp
+        self.num_dp = num_dp
         self.tracing = tracing
 
         os.environ["RANK"] = str(rank_tp)
@@ -1001,7 +1001,7 @@ class ActorTP2PP2DP:
         batch = self.batches[idx]
 
         if flat_grad_passed:
-            flat_grad /= self.num_actors_dp
+            flat_grad /= self.num_dp
             self.set_flat_grad(idx, flat_grad)
         batch.optimizer.step()
         batch.optimizer.zero_grad()

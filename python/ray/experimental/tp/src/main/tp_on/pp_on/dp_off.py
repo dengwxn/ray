@@ -26,34 +26,32 @@ def init_actors(args: Dict[str, Any]) -> List[Actor]:
     master_addr = "127.0.0.1"
     num_pp = 2
     num_pp_batches = 2
-    num_actors_dp = 2
+    num_dp = 1
     tracing = args["tracing"]
 
     actor_cls = Actor.options(num_gpus=1)
-    pp_to_tp_actors: List[List[Actor]] = []
-    for i in range(num_pp):
-        master_port = 12345 + i
-        actors = []
-        for j in range(num_tp):
-            actors.append(
-                actor_cls.remote(
-                    model_args=model_args,
-                    batch_size=batch_size,
-                    seq_len=seq_len,
-                    rank_tp=j,
-                    num_tp=num_tp,
-                    master_addr=master_addr,
-                    master_port=master_port,
-                    rank_pp=i,
-                    num_pp_batches=num_pp_batches,
-                    rank_dp=0,  # [TODO]
-                    num_actors_dp=num_actors_dp,
-                    tracing=tracing,
+    actors: List[Actor] = []
+    for rank_dp in range(num_dp):
+        for rank_pp in range(num_pp):
+            master_port = 12345 + rank_pp
+            for rank_tp in range(num_tp):
+                actors.append(
+                    actor_cls.remote(
+                        model_args=model_args,
+                        batch_size=batch_size,
+                        seq_len=seq_len,
+                        rank_tp=rank_tp,
+                        num_tp=num_tp,
+                        master_addr=master_addr,
+                        master_port=master_port,
+                        rank_pp=rank_pp,
+                        num_pp_batches=num_pp_batches,
+                        rank_dp=rank_dp,
+                        num_dp=num_dp,
+                        tracing=tracing,
+                    )
                 )
-            )
-        pp_to_tp_actors.append(actors)
 
-    actors = [actor for tp_actors in pp_to_tp_actors for actor in tp_actors]
     return actors
 
 
