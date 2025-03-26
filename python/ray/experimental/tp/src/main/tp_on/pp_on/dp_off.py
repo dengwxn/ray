@@ -26,6 +26,7 @@ def init_actors(args: Dict[str, Any]) -> List[Actor]:
     master_addr = "127.0.0.1"
     num_pp = 2
     num_pp_batches = 2
+    num_actors_dp = 2
     tracing = args["tracing"]
 
     actor_cls = Actor.options(num_gpus=1)
@@ -45,6 +46,8 @@ def init_actors(args: Dict[str, Any]) -> List[Actor]:
                     master_port=master_port,
                     rank_pp=i,
                     num_pp_batches=num_pp_batches,
+                    rank_dp=0,  # [TODO]
+                    num_actors_dp=num_actors_dp,
                     tracing=tracing,
                 )
             )
@@ -60,6 +63,19 @@ def filter(items: List[Any], idxs: List[int]) -> List[Any]:
     return [items[idx] for idx in idxs]
 
 
+def filter_map(
+    items_inp: List[Any], idxs_inp: List[int], idxs_out: List[int]
+) -> List[Any]:
+    assert isinstance(items_inp, list)
+    assert isinstance(idxs_inp, list)
+    assert isinstance(idxs_out, list)
+    items_out = []
+    for idx_out in idxs_out:
+        assert idx_out in idxs_inp
+        items_out.append(items_inp[idxs_inp.index(idx_out)])
+    return items_out
+
+
 def train(
     actors: List[Actor],
     num_iters: int,
@@ -68,8 +84,9 @@ def train(
     tracing: bool,
 ) -> None:
     idxs_pp = [[0, 1], [2, 3]]
+    idxs_pp_dp_tp = [[[0], [1]], [[2], [3]]]
     # idxs_pp = [[0, 1, 4, 5], [2, 3, 6, 7]]
-    # idxs_dp = [[[0, 4], [1, 5]], [[2, 6], [3, 7]]]
+    # idxs_pp_dp_tp = [[[0, 4], [1, 5]], [[2, 6], [3, 7]]]
 
     def get_pp_forwards(
         idx_batch: int,
@@ -109,15 +126,22 @@ def train(
 
     def get_pp_allreduces_updates(
         idx_batch: int,
-        idxs_tp_dp: List[List[int]],
-        values: List[Any],
+        idxs_pp: List[int],
+        idxs_dp_tp: List[List[int]],
+        bwds: List[Any],
     ):
         upds = []
-        for idxs_tp in idxs_tp_dp:
-            grads_tp = [allreduce.bind(filter(values, idxs_tp))]
+        for idxs_tp in idxs_dp_tp:
+            grads_tp = [
+                actor.get_flat_grad.bind(idx_batch, bwd)
+                for actor, bwd in zip(
+                    filter(actors, idxs_tp),
+                    filter_map(bwds, idxs_pp, idxs_tp),
+                )
+            ]
+            grads_tp = allreduce.bind(grads_tp)
             upds_tp = [
-                # [TODO] grad_passed = True
-                actor.update.bind(idx_batch, grad)
+                actor.update.bind(idx_batch, grad, True)
                 for actor, grad in zip(
                     filter(actors, idxs_tp),
                     grads_tp,
@@ -132,7 +156,7 @@ def train(
         grads: List[Any],
     ):
         upds = [
-            actor.update.bind(idx_batch, grad)
+            actor.update.bind(idx_batch, grad, False)
             for actor, grad in zip(
                 filter(actors, idxs_pp),
                 grads,
@@ -147,17 +171,17 @@ def train(
         b1_fw2s = get_pp_forwards(0, idxs_pp[1], b1_fw1s)
 
         b1_bw1s = get_pp_backwards(0, idxs_pp[1], b1_fw2s, True)
-        b1_upd1s = get_pp_updates(0, idxs_pp[1], b1_bw1s)
+        b1_upd1s = get_pp_allreduces_updates(0, idxs_pp[1], idxs_pp_dp_tp[1], b1_bw1s)
 
         b1_bw2s = get_pp_backwards(0, idxs_pp[0], b1_bw1s)
-        b1_upd2s = get_pp_updates(0, idxs_pp[0], b1_bw2s)
+        b1_upd2s = get_pp_allreduces_updates(0, idxs_pp[0], idxs_pp_dp_tp[0], b1_bw2s)
         b2_fw2s = get_pp_forwards(1, idxs_pp[1], b2_fw1s)
 
         b2_bw1s = get_pp_backwards(1, idxs_pp[1], b2_fw2s, True)
-        b2_upd1s = get_pp_updates(1, idxs_pp[1], b2_bw1s)
+        b2_upd1s = get_pp_allreduces_updates(1, idxs_pp[1], idxs_pp_dp_tp[1], b2_bw1s)
 
         b2_bw2s = get_pp_backwards(1, idxs_pp[0], b2_bw1s)
-        b2_upd2s = get_pp_updates(1, idxs_pp[0], b2_bw2s)
+        b2_upd2s = get_pp_allreduces_updates(1, idxs_pp[0], idxs_pp_dp_tp[0], b2_bw2s)
 
         updates = b1_upd1s + b1_upd2s + b2_upd1s + b2_upd2s
         dag = MultiOutputNode(updates)

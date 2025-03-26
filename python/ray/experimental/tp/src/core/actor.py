@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 import fairscale.nn.model_parallel.initialize as fs_init
 import torch
 import torch.distributed as dist
+from torch.nn.utils import parameters_to_vector
 
 import ray
 from .common import millis_to_micros
@@ -749,6 +750,8 @@ class ActorTP2PP2DP:
         master_port: int,
         rank_pp: int,
         num_pp_batches: int,
+        rank_dp: int,
+        num_actors_dp: int,
         tracing: bool,
     ):
         self.model_args = model_args
@@ -757,6 +760,8 @@ class ActorTP2PP2DP:
         self.rank_tp = rank_tp
         self.rank_pp = rank_pp
         self.num_pp_batches = num_pp_batches
+        self.rank_dp = rank_dp
+        self.num_actors_dp = num_actors_dp
         self.tracing = tracing
 
         os.environ["RANK"] = str(rank_tp)
@@ -955,7 +960,6 @@ class ActorTP2PP2DP:
         assert grad is not None
 
         batch.logits.backward(grad)
-        # [TODO] return grad
 
     def backward(self, idx: int, data: torch.Tensor) -> Optional[torch.Tensor]:
         if self.tracing:
@@ -970,17 +974,35 @@ class ActorTP2PP2DP:
             self.update_tracing("bw.ends")
         return output
 
-    def update(self, idx: int, _backward) -> None:
+    def get_flat_grad(self, idx: int, _) -> torch.Tensor:
+        assert idx < len(self.batches)
+        batch = self.batches[idx]
+        flat_grad = parameters_to_vector(
+            [param.grad for param in batch.model.parameters() if param.grad is not None]
+        )
+        return flat_grad
+
+    def set_flat_grad(self, idx: int, flat_grad: torch.Tensor) -> None:
+        assert idx < len(self.batches)
+        batch = self.batches[idx]
+        offset = 0
+        for param in batch.model.parameters():
+            if param.grad is None:
+                continue
+            size = param.data.numel()
+            grad = flat_grad[offset : offset + size].reshape(param.data.shape)
+            param.grad = grad
+            offset += size
+
+    def update(self, idx: int, flat_grad: torch.Tensor, flat_grad_passed: bool) -> None:
         if self.tracing:
             self.update_tracing("upd.starts")
-
         assert idx < len(self.batches)
         batch = self.batches[idx]
 
-        # [TODO] get flat_grad
-        # [TODO] allreduce flat_grad
-        # [TODO] step
-
+        if flat_grad_passed:
+            flat_grad /= self.num_actors_dp
+            self.set_flat_grad(idx, flat_grad)
         batch.optimizer.step()
         batch.optimizer.zero_grad()
 
