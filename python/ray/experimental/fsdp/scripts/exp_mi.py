@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import os
 import subprocess
@@ -63,13 +64,12 @@ def run_experiment(config):
     # Set timezone
     os.environ["TZ"] = "America/Los_Angeles"
 
-    # Generate timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
     # Disable ray log deduplication
     os.environ["RAY_DEDUP_LOGS"] = "0"
 
     # Create output directory
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    config["output_path"] = os.path.join(config["output_path"], timestamp)
     output_path = config["output_path"]
     os.makedirs(output_path, exist_ok=True)
 
@@ -77,6 +77,12 @@ def run_experiment(config):
     for file in os.listdir(output_path):
         if file.endswith(".csv") or file.endswith(".log"):
             os.remove(os.path.join(output_path, file))
+
+    # Save config to a JSON file in output_path
+    config_file = os.path.join(output_path, "config.json")
+    with open(config_file, "w") as f:
+        json.dump(config, f, indent=4)
+    logger.info(f"Saved config to {config_file}")
 
     logger.info(f"Running {output_path}...")
 
@@ -86,8 +92,8 @@ def run_experiment(config):
     num_partitions = config["num_partitions"]
     num_actors = config["num_actors"]
     num_iters = config["num_iters"]
-    latency_prefix = timestamp
-    log_file = os.path.join(output_path, f"{timestamp}.log")
+    latency_prefix = "latency"
+    log_file = os.path.join(output_path, f"actors.log")
 
     # Build command
     module_path = config["module_path"]
@@ -131,7 +137,7 @@ def run_experiment(config):
     return True, output_path, log_file
 
 
-def main():
+def parse_args() -> argparse.Namespace:
     # Parse command line arguments
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -155,7 +161,7 @@ def main():
     parser.add_argument(
         "--num-partitions",
         type=int,
-        default=18,
+        default=34,
         help="Number of partitions",
     )
     parser.add_argument(
@@ -171,10 +177,18 @@ def main():
         help="Number of iterations",
     )
     args = parser.parse_args()
+    return args
+
+
+def main():
+    args = parse_args()
 
     # Get current working directory for debugging
     current_dir = os.getcwd()
     logger.info(f"Current working directory: {current_dir}")
+    if not current_dir.endswith("python/ray/experimental/fsdp"):
+        logger.error("Not running from python/ray/experimental/fsdp directory")
+        sys.exit(1)
 
     # Define template variations
     variations = [
@@ -191,6 +205,7 @@ def main():
         {
             "framework": "torch",
             "settings": [
+                {"cc": "off", "fp": "off", "num_actors": 1},
                 {"cc": "off", "fp": "on", "num_actors": 1},
                 {"cc": "on", "fp": "on", "pf": "on", "num_actors": args.num_actors},
             ],
@@ -211,7 +226,9 @@ def main():
                     components.append(f"{key}_{value}")
 
             # Construct paths
-            output_path = f"results/{args.folder}/llama3/{framework}/{'/'.join(components)}/exp_self"
+            output_path = (
+                f"results/{args.folder}/llama3/{framework}/{'/'.join(components)}"
+            )
             module_path = f"ray.experimental.fsdp.src.main.llama3.{framework}.{'.'.join(components)}"
 
             # Create experiment config
@@ -226,11 +243,6 @@ def main():
             }
 
             experiments.append(experiment)
-
-    # Check if we're in the correct directory
-    if not os.getcwd().endswith("python/ray/experimental/fsdp"):
-        logger.error("Not running from python/ray/experimental/fsdp directory")
-        sys.exit(1)
 
     # Run experiments sequentially
     for config in experiments:
