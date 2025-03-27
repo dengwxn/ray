@@ -28,7 +28,6 @@ def parse_args() -> Dict[str, Any]:
     parser.add_argument(
         "--num-partitions",
         type=int,
-        required=True,
     )
     parser.add_argument(
         "--num-actors",

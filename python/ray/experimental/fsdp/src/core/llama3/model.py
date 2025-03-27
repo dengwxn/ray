@@ -54,7 +54,6 @@ LLAMA_DEBUG = ModelArgs(
     max_seq_len=2048,
 )
 
-
 LLAMA_1B = ModelArgs(
     dim=2048,
     n_layers=16,
@@ -91,6 +90,20 @@ LLAMA_8B = ModelArgs(
     n_kv_heads=8,
     vocab_size=128256,
     multiple_of=1024,
+    ffn_dim_multiplier=1.3,
+    norm_eps=1e-5,
+    rope_theta=500000,
+    max_batch_size=32,
+    max_seq_len=2048,
+)
+
+LLAMA_70B = ModelArgs(
+    dim=8192,
+    n_layers=80,
+    n_heads=64,
+    n_kv_heads=8,
+    vocab_size=128256,
+    multiple_of=4096,
     ffn_dim_multiplier=1.3,
     norm_eps=1e-5,
     rope_theta=500000,

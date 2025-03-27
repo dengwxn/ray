@@ -17,7 +17,7 @@ from .....core.common import (
     millis_to_micros,
 )
 from .....core.config import parse_args
-from .....core.llama3.model import LLAMA_DEBUG as LLAMA
+from .....core.llama3.model import LLAMA_8B as LLAMA
 from .....core.llama3.model import BucketParameterBase, TransformerWrapped
 
 logging.basicConfig(
@@ -91,7 +91,7 @@ def spawn_torch_fsdp(
 
         model_args = LLAMA
         logger.info(f"model_args: {model_args}")
-        model = TransformerWrapped(model_args).to("cuda")
+        model = TransformerWrapped(model_args).to("cuda").half()
         size_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
         logger.warning(f"Model size: {size_bytes / 1024 / 1024} MiB")
 

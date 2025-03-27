@@ -5,7 +5,7 @@ import ray
 from .....core.common import get_end_time, get_start_time, log_elapses_to_csv
 from .....core.config import parse_args
 from .....core.llama3.actor import LlamaActor
-from .....core.llama3.model import LLAMA_DEBUG as LLAMA
+from .....core.llama3.model import LLAMA_8B as LLAMA
 from ray.dag import InputNode, MultiOutputNode
 from ray.experimental.collective import allgather, reducescatter
 
@@ -32,10 +32,11 @@ def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
             batch_size=batch_size,
             seq_len=seq_len,
             num_partitions=num_partitions,
+            rank=rank,
             num_actors=num_actors,
             tracing=tracing,
         )
-        for _ in range(num_actors)
+        for rank in range(num_actors)
     ]
 
     return actors
@@ -126,14 +127,11 @@ def train(
         dag = MultiOutputNode(updates)
 
     compiled_dag = dag.experimental_compile(_overlap_gpu_communication=True)
-    actor_to_shards = ray.get(actors[0].init_and_shard_model.remote())
-    for actor, shards in zip(actors, actor_to_shards):
-        ray.get(actor.set_shards.remote(shards))
+    ray.get([actor.init_and_set_shard_model.remote() for actor in actors])
 
     total_elapses: List[int] = []
     for iter in range(num_iters):
-        for actor in actors:
-            ray.get(actor.init_training.remote())
+        ray.get([actor.init_training.remote() for actor in actors])
 
         start = get_start_time()
         compiled_dag.execute(None)
@@ -150,8 +148,7 @@ def train(
             logger.warning(f"iter: {iter}, elapse: {elapse_us} us")
             total_elapses.append(elapse_us)
 
-        for actor in actors:
-            ray.get(actor.finish_tracing.remote())
+        ray.get([actor.finish_tracing.remote() for actor in actors])
 
     actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
     for actor_elapses in actors_to_elapses:

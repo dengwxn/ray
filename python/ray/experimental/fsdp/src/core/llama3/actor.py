@@ -19,6 +19,7 @@ class LlamaActor:
         batch_size: int,
         seq_len: int,
         num_partitions: int,
+        rank: int,
         num_actors: int,
         tracing: bool,
     ):
@@ -30,6 +31,7 @@ class LlamaActor:
         self.batch_size = batch_size
         self.seq_len = seq_len
         self.num_partitions = num_partitions
+        self.rank = rank
         self.num_actors = num_actors
         self.tracing = tracing
 
@@ -45,7 +47,7 @@ class LlamaActor:
 
     def init_and_shard_model(self) -> List[List[Shard]]:
         torch.manual_seed(2025)
-        model = TransformerBP(self.model_args).to(self.device)
+        model = TransformerBP(self.model_args).to(self.device).half()
         bparams = model.bparams
         assert len(bparams) == self.num_partitions
         for bparam in bparams:
@@ -59,6 +61,10 @@ class LlamaActor:
 
     def set_shards(self, shards: List[Shard]) -> None:
         self.shards = [shard.to(self.device) for shard in shards]
+
+    def init_and_set_shard_model(self) -> None:
+        actor_to_shards = self.init_and_shard_model()
+        self.set_shards(actor_to_shards[self.rank])
 
     def init_training(self) -> None:
         torch.manual_seed(self.seed)

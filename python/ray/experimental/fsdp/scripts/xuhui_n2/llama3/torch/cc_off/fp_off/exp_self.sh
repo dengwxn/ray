@@ -33,7 +33,7 @@ rm -f ${output_path}/*.log
 echo "Running $output_path..."
 
 batch_size=2
-seq_len=2048
+seq_len=1024
 num_actors=1
 num_iters=20
 latency_prefix=${timestamp}
