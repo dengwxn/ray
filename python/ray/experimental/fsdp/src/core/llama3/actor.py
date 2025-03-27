@@ -308,6 +308,7 @@ class LlamaActor:
         if self.tracing:
             self.update_tracing("bw.grad.intra.starts")
         pred, pred_as_input = self.intermediates[idx]
+        self.intermediates[idx] = (None, None)
         grad = pred_as_input.grad
         pred.backward(grad)
         if self.tracing:
