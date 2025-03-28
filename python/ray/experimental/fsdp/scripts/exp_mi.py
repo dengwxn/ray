@@ -14,43 +14,6 @@ logger = logging.getLogger(__name__)
 logger.info("Welcome to Downton Abbey!")
 
 
-def run_command(command, env=None):
-    """
-    Run a shell command and return its exit code, stdout, and stderr.
-
-    Args:
-        command (list): Command to run as a list of arguments
-        env (dict, optional): Environment variables to set
-
-    Returns:
-        tuple: (exit_code, stdout, stderr)
-    """
-    try:
-        logger.info(f"Executing command: {' '.join(command)}")
-        process = subprocess.run(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,  # Don't raise exception on non-zero exit
-            env=env if env else os.environ.copy(),  # Pass environment
-        )
-
-        exit_code = process.returncode
-        stdout = process.stdout
-        stderr = process.stderr
-
-        if stdout:
-            logger.info(f"Command stdout: {stdout}")
-        if stderr:
-            logger.error(f"Command stderr: {stderr}")
-
-        return exit_code, stdout, stderr
-    except Exception as e:
-        logger.error(f"Exception: {str(e)}")
-        return -1, "", str(e)
-
-
 def run_experiment(config):
     """
     Run a single experiment with the specified configuration.
@@ -128,7 +91,6 @@ def run_experiment(config):
         )
 
     status = process.returncode
-
     if status != 0:
         logger.error(f"WA, status: {status}, log: {log_file}")
         return False, output_path, log_file
@@ -192,6 +154,15 @@ def main():
 
     # Define template variations
     variations = [
+        # Torch configurations
+        {
+            "framework": "torch",
+            "settings": [
+                # {"cc": "off", "fp": "off", "num_actors": 1},
+                # {"cc": "off", "fp": "on", "num_actors": 1},
+                {"cc": "on", "fp": "on", "pf": "on", "num_actors": args.num_actors},
+            ],
+        },
         # Ray configurations
         {
             "framework": "ray",
@@ -199,15 +170,6 @@ def main():
                 {"cc": "off", "ov": "off", "num_actors": 1},
                 {"cc": "on", "ov": "off", "num_actors": args.num_actors},
                 {"cc": "on", "ov": "on", "num_actors": args.num_actors},
-            ],
-        },
-        # Torch configurations
-        {
-            "framework": "torch",
-            "settings": [
-                {"cc": "off", "fp": "off", "num_actors": 1},
-                {"cc": "off", "fp": "on", "num_actors": 1},
-                {"cc": "on", "fp": "on", "pf": "on", "num_actors": args.num_actors},
             ],
         },
     ]
