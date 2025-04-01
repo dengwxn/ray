@@ -212,6 +212,16 @@ class VisionWorker(BaseWorker):
         self.update_tracing("bw.ends")
         self.update_tracing("upd.starts")
 
+        # num_grads = 0
+        # num_params = 0
+        # for param in self.model.parameters():
+        #     num_params += 1
+        #     if param.grad is not None:
+        #         num_grads += 1
+        # logger.warning(
+        #     f"{self.name} {self.rank} num_grads: {num_grads}, num_params: {num_params}"
+        # )
+
         self.optimizer.step()
         self.optimizer.zero_grad()
 

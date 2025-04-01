@@ -23,7 +23,7 @@ def main(
     # model_name: str = "ViT-bigG-14",
     batch_size: int = 16,
     vision_num_tp: int = 1,
-    vision_num_dp: int = 2,
+    vision_num_dp: int = 3,
     text_num_tp: int = 1,
     text_num_dp: int = 1,
     num_iters: int = 50,
