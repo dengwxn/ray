@@ -1,0 +1,6 @@
+fire
+numpy
+pandas
+torch
+torchvision
+open_clip_torch
