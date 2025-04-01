@@ -39,9 +39,7 @@ def main(
 
     # change to the available accelerator type
     vision_workers = [
-        VisionWorker.options(accelerator_type=NVIDIA_TESLA_T4).remote(
-            model_name, vision_dp_size, vision_tp_size, text_dp_size
-        )
+        VisionWorker.remote(model_name, vision_dp_size, vision_tp_size, text_dp_size)
         for _ in range(vision_dp_size * vision_tp_size)
     ]
     initialize_dist_group(vision_workers)
@@ -49,9 +47,7 @@ def main(
 
     # change to the available accelerator type
     text_workers = [
-        TextWorker.options(accelerator_type=NVIDIA_TESLA_T4).remote(
-            model_name, text_dp_size, text_tp_size, vision_dp_size
-        )
+        TextWorker.remote(model_name, text_dp_size, text_tp_size, vision_dp_size)
         for _ in range(text_dp_size * text_tp_size)
     ]
     initialize_dist_group(text_workers)
