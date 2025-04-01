@@ -42,7 +42,7 @@ latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
-python src/core/train_adag.py \
+python src/core/main.py \
 	>$log_file 2>&1
 status=$?
 

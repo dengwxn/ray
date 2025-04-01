@@ -1,15 +1,17 @@
+import logging
 import os
-import time
 
 import numpy as np
 import torch
 import torch.nn as nn
-from models import TextEncoder, VisionEncoder, init_optimizer, parallelize_2d
-from multi_process_group import BaseWorker
+from common import count_params, random_seed
+from dist import BaseWorker
+from model import TextEncoder, VisionEncoder, init_optimizer, parallelize_2d
 from open_clip.loss import ClipLoss
-from utils import count_params, random_seed
 
 import ray
+
+logger = logging.getLogger(__name__)
 
 
 @ray.remote(num_gpus=1)
@@ -168,6 +170,8 @@ class TextWorker(BaseWorker):
         return self.text_features.detach()
 
     def backward(self, vision_features):
+        if isinstance(vision_features, tuple):
+            vision_features = vision_features[0]
         with torch.autocast(device_type="cuda"):
             self.loss = self.clip_loss_fn(
                 vision_features.cuda(), self.text_features, self.logit_scale
