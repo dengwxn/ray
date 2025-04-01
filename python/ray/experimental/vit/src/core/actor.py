@@ -348,27 +348,6 @@ class VisionWorkerV2(BaseWorker):
         self.update_tracing("end")
         return None
 
-    def get_rank(self):
-        return self.dp_rank, self.tp_rank
-
-    def get_num_params(self):
-        return self.num_params
-
-    def get_device_name(self):
-        return torch.cuda.get_device_name()
-
-    def reduce_activations(self, *activations):
-        # Concat the activations of DP workers
-        return torch.cat(activations, dim=0)
-
-    def scatter_activations(self, activations):
-        # Scatter the activations to each text dp group
-        result = torch.chunk(activations, self.text_dp_size)
-        return (*result,)
-
-    def echo(self, input):
-        return input
-
 
 @ray.remote(num_gpus=1)
 class TextWorker(BaseWorker):
@@ -566,33 +545,11 @@ class TextWorkerV2(BaseWorker):
         self.update_tracing("end")
         return None
 
-    def get_rank(self):
-        return self.dp_rank, self.tp_rank
-
-    def get_num_params(self):
-        return self.num_params
-
-    def get_device_name(self):
-        return torch.cuda.get_device_name()
-
-    def reduce_activations(self, *activations):
-        # Concat the activations of DP workers
-        return torch.cat(activations, dim=0)
-
-    def scatter_activations(self, activations):
-        # Scatter the activations to each vision dp group
-        result = torch.chunk(activations, self.vision_dp_size)
-        return (*result,)
-
-    def echo(self, input):
-        return input
-
 
 class WorkerV2(BaseWorker):
     def __init__(self, model_name, dp_size, tp_size, seed=998244353):
         super().__init__()
-        self.name = "Combo"
-
+        self.name = "WorkerV2"
         self.text = TextWorkerV2(model_name, dp_size, tp_size, dp_size, seed=seed)
         self.vision = VisionWorkerV2(model_name, dp_size, tp_size, dp_size, seed=seed)
 
