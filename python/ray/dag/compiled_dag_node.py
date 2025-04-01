@@ -306,6 +306,7 @@ def do_exec_tasks(
         # )
 
         logger.warning("")
+        time.sleep(3)
     except Exception:
         logging.exception("Compiled DAG task exited with exception")
         raise

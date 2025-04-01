@@ -1,12 +1,11 @@
+import logging
 from collections import defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import List
 
-import torch.nn as nn
-
 import ray
-from ray.air._internal.util import find_free_port
-from ray.air.util.torch_dist import _init_torch_distributed
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -18,27 +17,6 @@ class TorchDistributedConfig:
     master_addr: str
     master_port: str
     gpu_ids: List[int]
-
-
-class BaseWorker:
-    def __init__(self) -> None:
-        pass
-
-    def get_metadata(self):
-        return {
-            "gpu_ids": ray.get_gpu_ids(),
-            "address": ray.util.get_node_ip_address(),
-            "port": find_free_port(),
-        }
-
-    def init_dist_group(self, dist_config):
-        self.dist_config = dist_config
-        _init_torch_distributed(
-            init_method="env", backend="nccl", **asdict(dist_config)
-        )
-        print(f"Rank {self.dist_config.rank}: Initialized")
-        if self.dist_config.rank == 0:
-            print(asdict(self.dist_config))
 
 
 def initialize_dist_group(workers):
@@ -95,12 +73,4 @@ def initialize_dist_group(workers):
             for worker_id, worker in enumerate(workers)
         ]
     )
-    print("Finished initializing distributed process group.")
-
-
-if __name__ == "__main__":
-    workers = [BaseWorker.remote() for i in range(2)]
-    initialize_dist_group(workers)
-
-    workers = [BaseWorker.remote() for i in range(6)]
-    initialize_dist_group(workers)
+    logger.info("Finished initializing distributed process group.")

@@ -106,9 +106,16 @@ def main(
     dag = dag.experimental_compile(_submit_timeout=480)
 
     for i in range(num_iters):
+        ray.get([actor.init_training.remote() for actor in text_actors])
+        ray.get([actor.init_training.remote() for actor in vision_actors])
+
         ray.get(dag.execute((i, global_batch_size)))
+
         if (i + 1) % 10 == 0:
             logger.info(f"steps: {i+1}")
+
+        ray.get([actor.finish_tracing.remote() for actor in text_actors])
+        ray.get([actor.finish_tracing.remote() for actor in vision_actors])
 
 
 if __name__ == "__main__":
