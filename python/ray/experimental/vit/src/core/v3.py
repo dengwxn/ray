@@ -3,7 +3,7 @@ import logging
 import fire
 from actor import TextWorker, VisionWorker, WorkerV3
 from common import random_seed
-from dist import initialize_dist_group
+from dist import init_torch_distributed
 
 import ray
 from ray.dag.input_node import InputNode
@@ -23,11 +23,15 @@ def main(
     batch_size: int = 16,
     num_iters: int = 2,
 ):
-    actor = WorkerV3.remote(model_name, 1, 1)
+    num_dp = 4
+
+    actors = [WorkerV3.remote(model_name, num_dp, 1) for _ in range(num_dp)]
+    init_torch_distributed(actors)
+    ray.get([actor.init_fsdp_model.remote() for actor in actors])
 
     for i in range(num_iters):
-        ray.get(actor.forward.remote((i, batch_size)))
-        ray.get(actor.backward.remote())
+        ray.get([actor.forward.remote((i, batch_size)) for actor in actors])
+        ray.get([actor.backward.remote() for actor in actors])
         logger.info(f"Iteration {i} finished")
 
 

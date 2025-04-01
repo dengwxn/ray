@@ -3,7 +3,7 @@ import logging
 import fire
 from actor import TextWorker, VisionWorker
 from common import random_seed
-from dist import initialize_dist_group
+from dist import init_torch_distributed
 
 import ray
 from ray.dag.input_node import InputNode
@@ -42,14 +42,14 @@ def main(
         VisionWorker.remote(model_name, vision_num_dp, vision_num_tp, text_num_dp)
         for _ in range(vision_num_dp * vision_num_tp)
     ]
-    initialize_dist_group(vision_actors)
+    init_torch_distributed(vision_actors)
     ray.get([worker.init_parallel_strategy.remote() for worker in vision_actors])
 
     text_actors = [
         TextWorker.remote(model_name, text_num_dp, text_num_tp, vision_num_dp)
         for _ in range(text_num_dp * text_num_tp)
     ]
-    initialize_dist_group(text_actors)
+    init_torch_distributed(text_actors)
     ray.get([worker.init_parallel_strategy.remote() for worker in text_actors])
 
     vision_params = ray.get(vision_actors[0].get_num_params.remote())

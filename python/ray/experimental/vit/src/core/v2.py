@@ -3,7 +3,7 @@ import logging
 import fire
 from actor import TextWorker, VisionWorker, WorkerV2
 from common import random_seed
-from dist import initialize_dist_group
+from dist import init_torch_distributed
 
 import ray
 from ray.dag.input_node import InputNode

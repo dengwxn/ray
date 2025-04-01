@@ -19,7 +19,7 @@ class TorchDistributedConfig:
     gpu_ids: List[int]
 
 
-def initialize_dist_group(workers):
+def init_torch_distributed(workers):
     """Initialize PyTorch Distributed Process Group for a set of workers."""
     worker_metadata = ray.get([worker.get_metadata.remote() for worker in workers])
 
@@ -69,7 +69,7 @@ def initialize_dist_group(workers):
 
     ray.get(
         [
-            worker.init_dist_group.remote(dist_configs[worker_id])
+            worker.init_torch_distributed.remote(dist_configs[worker_id])
             for worker_id, worker in enumerate(workers)
         ]
     )

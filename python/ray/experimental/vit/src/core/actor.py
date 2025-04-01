@@ -37,7 +37,7 @@ class BaseWorker:
             "port": find_free_port(),
         }
 
-    def init_dist_group(self, dist_config):
+    def init_torch_distributed(self, dist_config):
         self.dist_config = dist_config
         _init_torch_distributed(
             init_method="env", backend="nccl", **asdict(dist_config)
@@ -158,7 +158,7 @@ class VisionWorker(BaseWorker):
             list(self.model.named_parameters()) + [("logit_scale", self.logit_scale)]
         )
 
-    def init_parallel_strategy(self):
+    def init_fsdp_model(self):
         self.rank = int(os.environ["LOCAL_RANK"])
         torch.cuda.set_device(self.rank)
 
@@ -274,7 +274,7 @@ class VisionWorkerV2(BaseWorker):
             list(self.model.named_parameters()) + [("logit_scale", self.logit_scale)]
         )
 
-    def init_parallel_strategy(self):
+    def init_fsdp_model(self):
         self.rank = int(os.environ["LOCAL_RANK"])
         torch.cuda.set_device(self.rank)
 
@@ -365,19 +365,9 @@ class VisionWorkerV3(BaseWorker):
         self.text_dp_size = text_dp_size
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.clip_loss_fn = ClipLoss(cache_labels=True)
-        self.optimizer = init_optimizer(
-            list(self.model.named_parameters()) + [("logit_scale", self.logit_scale)]
-        )
 
-    def init_parallel_strategy(self):
-        self.rank = int(os.environ["LOCAL_RANK"])
-        torch.cuda.set_device(self.rank)
-
-        self.world_size = int(os.environ["LOCAL_WORLD_SIZE"])
-        assert (
-            self.world_size == self.tp_size * self.dp_size
-        ), "world size must be equal to tp size * dp size"
-
+    def init_fsdp_model(self):
+        self.world_size = self.tp_size * self.dp_size
         if self.world_size > 1:
             self.model, self.device_mesh = parallelize_2d(
                 self.model,
@@ -389,10 +379,14 @@ class VisionWorkerV3(BaseWorker):
             self.tp_rank = self.device_mesh["tp"].get_local_rank()
             self.dp_rank = self.device_mesh["dp"].get_local_rank()
         else:
-            self.model.to("cuda")
+            self.model.to(self.device)
             self.device_mesh = None
             self.tp_rank = 0
             self.dp_rank = 0
+        self.logit_scale.to(self.device)
+        self.optimizer = init_optimizer(
+            list(self.model.named_parameters()) + [("logit_scale", self.logit_scale)]
+        )
 
     def load_batch(self, inputs):
         i, global_batch_size = inputs
@@ -407,7 +401,6 @@ class VisionWorkerV3(BaseWorker):
         self.update_tracing("fw.starts")
 
         images = self.load_batch(inputs).to(self.device)
-        # with torch.autocast(device_type="cuda"):
         self.vision_features = self.model(images)
         feats = self.vision_features.detach()
 
@@ -417,10 +410,9 @@ class VisionWorkerV3(BaseWorker):
     def backward(self, text_features):
         self.update_tracing("bw.starts")
 
-        with torch.autocast(device_type="cuda"):
-            self.loss = self.clip_loss_fn(
-                self.vision_features, text_features.cuda(), self.logit_scale
-            )
+        self.loss = self.clip_loss_fn(
+            self.vision_features, text_features.cuda(), self.logit_scale
+        )
         self.loss.backward()
 
         self.update_tracing("bw.ends")
@@ -454,7 +446,7 @@ class TextWorker(BaseWorker):
             list(self.model.named_parameters()) + [("logit_scale", self.logit_scale)]
         )
 
-    def init_parallel_strategy(self):
+    def init_fsdp_model(self):
         self.rank = int(os.environ["LOCAL_RANK"])
         torch.cuda.set_device(self.rank)
 
@@ -563,7 +555,7 @@ class TextWorkerV2(BaseWorker):
             list(self.model.named_parameters()) + [("logit_scale", self.logit_scale)]
         )
 
-    def init_parallel_strategy(self):
+    def init_fsdp_model(self):
         self.rank = int(os.environ["LOCAL_RANK"])
         torch.cuda.set_device(self.rank)
 
@@ -647,19 +639,9 @@ class TextWorkerV3(BaseWorker):
         self.vision_dp_size = vision_dp_size
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.clip_loss_fn = ClipLoss(cache_labels=True)
-        self.optimizer = init_optimizer(
-            list(self.model.named_parameters()) + [("logit_scale", self.logit_scale)]
-        )
 
-    def init_parallel_strategy(self):
-        self.rank = int(os.environ["LOCAL_RANK"])
-        torch.cuda.set_device(self.rank)
-
-        self.world_size = int(os.environ["LOCAL_WORLD_SIZE"])
-        assert (
-            self.world_size == self.tp_size * self.dp_size
-        ), "world size must be equal to tp size * dp size"
-
+    def init_fsdp_model(self):
+        self.world_size = self.tp_size * self.dp_size
         if self.world_size > 1:
             self.model, self.device_mesh = parallelize_2d(
                 self.model,
@@ -671,11 +653,14 @@ class TextWorkerV3(BaseWorker):
             self.tp_rank = self.device_mesh["tp"].get_local_rank()
             self.dp_rank = self.device_mesh["dp"].get_local_rank()
         else:
-            self.model.to("cuda")
+            self.model.to(self.device)
             self.device_mesh = None
             self.tp_rank = 0
             self.dp_rank = 0
-        self.logit_scale.to("cuda")
+        self.logit_scale.to(self.device)
+        self.optimizer = init_optimizer(
+            list(self.model.named_parameters()) + [("logit_scale", self.logit_scale)]
+        )
 
     def load_batch(self, inputs):
         i, global_batch_size = inputs
@@ -690,7 +675,6 @@ class TextWorkerV3(BaseWorker):
         self.update_tracing("fw.starts")
 
         texts = self.load_batch(inputs).to(self.device)
-        # with torch.autocast(device_type="cuda"):
         self.text_features = self.model(texts)
         feats = self.text_features.detach()
 
@@ -702,10 +686,9 @@ class TextWorkerV3(BaseWorker):
 
         if isinstance(vision_features, tuple):
             vision_features = vision_features[0]
-        with torch.autocast(device_type="cuda"):
-            self.loss = self.clip_loss_fn(
-                vision_features.cuda(), self.text_features, self.logit_scale
-            )
+        self.loss = self.clip_loss_fn(
+            vision_features.cuda(), self.text_features, self.logit_scale
+        )
         self.loss.backward()
 
         self.update_tracing("bw.ends")
@@ -747,6 +730,10 @@ class WorkerV3(BaseWorker):
 
         self.text_acts = None
         self.vision_acts = None
+
+    def init_fsdp_model(self):
+        self.text.init_fsdp_model()
+        self.vision.init_fsdp_model()
 
     def forward(self, inputs):
         self.text_acts = self.text.forward(inputs)
