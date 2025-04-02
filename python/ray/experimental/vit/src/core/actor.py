@@ -72,7 +72,6 @@ class BaseWorker:
         return self.elapses
 
     def update_tracing(self, key: str) -> None:
-        return  # [TODO]
         event = torch.cuda.Event(enable_timing=True)
         event.record()
         assert key in self.events
@@ -336,9 +335,7 @@ class TextWorkerV2(BaseWorker):
 
 
 class TextWorkerV3(BaseWorker):
-    def __init__(
-        self, model_name, dp_size, tp_size, vision_dp_size, seed=998244353
-    ) -> None:
+    def __init__(self, model_name, num_dp, seed=998244353) -> None:
         super().__init__()
         self.name = "Text"
         self.device = torch.device("cuda:0")
@@ -346,19 +343,18 @@ class TextWorkerV3(BaseWorker):
         random_seed(seed)
         self.model = TextEncoder(model_name).to(self.device)
         self.num_params = count_params(self.model)
-        self.dp_size = dp_size
-        self.tp_size = tp_size
-        self.vision_dp_size = vision_dp_size
+        self.num_dp = num_dp
+        self.num_tp = 1
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.clip_loss_fn = ClipLoss(cache_labels=True)
 
     def init_fsdp_model(self):
-        self.world_size = self.tp_size * self.dp_size
+        self.world_size = self.num_tp * self.num_dp
         if self.world_size > 1:
             self.model, self.device_mesh = parallelize_2d(
                 self.model,
-                self.dp_size,
-                self.tp_size,
+                self.num_dp,
+                self.num_tp,
                 text=True,
                 vision=False,
             )
@@ -376,25 +372,25 @@ class TextWorkerV3(BaseWorker):
 
     def load_batch(self, inputs):
         i, global_batch_size = inputs
-        text_batch_size = global_batch_size // self.dp_size
+        text_batch_size = global_batch_size // self.num_dp
 
         torch.manual_seed(i)
         texts = torch.randint(0, 49408, (text_batch_size, 77))
         return texts
 
     def forward(self, inputs):
-        self.update_tracing("start")
-        self.update_tracing("fw.starts")
+        # self.update_tracing("start")
+        # self.update_tracing("fw.starts")
 
         texts = self.load_batch(inputs).to(self.device)
         self.text_features = self.model(texts)
         feats = self.text_features.detach()
 
-        self.update_tracing("fw.ends")
+        # self.update_tracing("fw.ends")
         return feats
 
     def backward(self, vision_features):
-        self.update_tracing("bw.starts")
+        # self.update_tracing("bw.starts")
 
         if isinstance(vision_features, tuple):
             vision_features = vision_features[0]
@@ -403,14 +399,14 @@ class TextWorkerV3(BaseWorker):
         )
         self.loss.backward()
 
-        self.update_tracing("bw.ends")
-        self.update_tracing("upd.starts")
+        # self.update_tracing("bw.ends")
+        # self.update_tracing("upd.starts")
 
         self.optimizer.step()
         self.optimizer.zero_grad()
 
-        self.update_tracing("upd.ends")
-        self.update_tracing("end")
+        # self.update_tracing("upd.ends")
+        # self.update_tracing("end")
         return None
 
 
@@ -626,9 +622,7 @@ class VisionWorkerV2(BaseWorker):
 
 
 class VisionWorkerV3(BaseWorker):
-    def __init__(
-        self, model_name, dp_size, tp_size, text_dp_size, seed=998244353
-    ) -> None:
+    def __init__(self, model_name, num_dp, seed=998244353) -> None:
         super().__init__()
         self.name = "Vision"
         self.device = torch.device("cuda:0")
@@ -636,19 +630,18 @@ class VisionWorkerV3(BaseWorker):
         random_seed(seed)
         self.model = VisionEncoder(model_name).to(self.device)
         self.num_params = count_params(self.model)
-        self.dp_size = dp_size
-        self.tp_size = tp_size
-        self.text_dp_size = text_dp_size
+        self.num_dp = num_dp
+        self.num_tp = 1
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.clip_loss_fn = ClipLoss(cache_labels=True)
 
     def init_fsdp_model(self):
-        self.world_size = self.tp_size * self.dp_size
+        self.world_size = self.num_tp * self.num_dp
         if self.world_size > 1:
             self.model, self.device_mesh = parallelize_2d(
                 self.model,
-                self.dp_size,
-                self.tp_size,
+                self.num_dp,
+                self.num_tp,
                 text=False,
                 vision=True,
             )
@@ -666,39 +659,39 @@ class VisionWorkerV3(BaseWorker):
 
     def load_batch(self, inputs):
         i, global_batch_size = inputs
-        vision_batch_size = global_batch_size // self.dp_size
+        vision_batch_size = global_batch_size // self.num_dp
 
         torch.manual_seed(i)
         images = torch.randn(vision_batch_size, 3, 224, 224)
         return images
 
     def forward(self, inputs):
-        self.update_tracing("start")
-        self.update_tracing("fw.starts")
+        # self.update_tracing("start")
+        # self.update_tracing("fw.starts")
 
         images = self.load_batch(inputs).to(self.device)
         self.vision_features = self.model(images)
         feats = self.vision_features.detach()
 
-        self.update_tracing("fw.ends")
+        # self.update_tracing("fw.ends")
         return feats
 
     def backward(self, text_features):
-        self.update_tracing("bw.starts")
+        # self.update_tracing("bw.starts")
 
         self.loss = self.clip_loss_fn(
             self.vision_features, text_features.cuda(), self.logit_scale
         )
         self.loss.backward()
 
-        self.update_tracing("bw.ends")
-        self.update_tracing("upd.starts")
+        # self.update_tracing("bw.ends")
+        # self.update_tracing("upd.starts")
 
         self.optimizer.step()
         self.optimizer.zero_grad()
 
-        self.update_tracing("upd.ends")
-        self.update_tracing("end")
+        # self.update_tracing("upd.ends")
+        # self.update_tracing("end")
         return None
 
 
@@ -722,11 +715,13 @@ class WorkerV2(BaseWorker):
 
 @ray.remote(num_gpus=1)
 class WorkerV3(BaseWorker):
-    def __init__(self, model_name, dp_size, tp_size, seed=998244353):
+    def __init__(self, model_name, num_dp, seed=998244353):
         super().__init__()
         self.name = "WorkerV3"
-        self.text = TextWorkerV3(model_name, dp_size, tp_size, dp_size, seed=seed)
-        self.vision = VisionWorkerV3(model_name, dp_size, tp_size, dp_size, seed=seed)
+        self.rank = 4  # [TODO]
+
+        self.text = TextWorkerV3(model_name, num_dp, seed=seed)
+        self.vision = VisionWorkerV3(model_name, num_dp, seed=seed)
 
         self.text_acts = None
         self.vision_acts = None
@@ -736,9 +731,21 @@ class WorkerV3(BaseWorker):
         self.vision.init_fsdp_model()
 
     def forward(self, inputs):
+        self.update_tracing("start")
+        self.update_tracing("fw.starts")
+
         self.text_acts = self.text.forward(inputs)
         self.vision_acts = self.vision.forward(inputs)
 
+        self.update_tracing("fw.ends")
+
     def backward(self):
+        self.update_tracing("bw.starts")
+        self.update_tracing("upd.starts")  # [TODO]
+
         self.text.backward(self.vision_acts)
         self.vision.backward(self.text_acts)
+
+        self.update_tracing("bw.ends")
+        self.update_tracing("upd.ends")  # [TODO]
+        self.update_tracing("end")

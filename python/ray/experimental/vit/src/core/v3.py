@@ -22,14 +22,18 @@ def main(
 ):
     num_dp = 4
 
-    actors = [Worker.remote(model_name, num_dp, 1) for _ in range(num_dp)]
+    actors = [Worker.remote(model_name, num_dp) for _ in range(num_dp)]
     init_torch_distributed(actors)
     ray.get([actor.init_fsdp_model.remote() for actor in actors])
 
     for i in range(num_iters):
+        ray.get([actor.init_training.remote() for actor in actors])
+
         ray.get([actor.forward.remote((i, batch_size)) for actor in actors])
         ray.get([actor.backward.remote() for actor in actors])
+
         logger.info(f"Iteration {i} finished")
+        ray.get([actor.finish_tracing.remote() for actor in actors])
 
 
 if __name__ == "__main__":
