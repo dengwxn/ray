@@ -17,7 +17,6 @@ sudo apt-get install -y --no-install-recommends \
 	python3-dev \
 	python3-setuptools \
 	python3-venv
-rm -rf /var/lib/apt/lists/*
 
 sudo apt-get update
 sudo apt-get install -y build-essential curl clang-12 pkg-config psmisc unzip
@@ -27,10 +26,9 @@ sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/too
 git clone https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
 
 echo 'plugins=(git zsh-autosuggestions)' >>~/.zshrc
-echo 'ZSH_THEME="robbyrussell"' >>~/.zshrc
 
 cd ~/Ray-SFO
-git checkout ddp-dev-link-0213
+git checkout tp-dev-bliss-0320
 python3 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip wheel
