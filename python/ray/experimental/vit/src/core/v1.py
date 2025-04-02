@@ -19,11 +19,11 @@ logger.info("Welcome to Downton Abbey!")
 
 def main(
     # https://github.com/mlfoundations/open_clip/blob/main/docs/model_profile.csv
-    model_name: str = "ViT-L-14",
-    # model_name: str = "ViT-bigG-14",
+    # model_name: str = "ViT-L-14",
+    model_name: str = "ViT-bigG-14",
     bs_single: int = 16,
     num_tp_vision: int = 1,
-    num_dp_vision: int = 1,
+    num_dp_vision: int = 3,
     num_tp_text: int = 1,
     num_dp_text: int = 1,
     num_iters: int = 50,
@@ -80,11 +80,9 @@ def main(
             .scatter_activations.options(num_returns=num_dp_text)
             .bind(reduced_vision_acts)
         )
-        if not isinstance(scattered_text_acts, list):
-            assert num_dp_vision == 1
+        if num_dp_vision == 1 and not isinstance(scattered_text_acts, list):
             scattered_text_acts = [scattered_text_acts]
-        if not isinstance(scattered_vision_acts, list):
-            assert num_dp_text == 1
+        if num_dp_text == 1 and not isinstance(scattered_vision_acts, list):
             scattered_vision_acts = [scattered_vision_acts]
 
         # with_tensor_transport for NCCL transport
