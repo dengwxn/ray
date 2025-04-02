@@ -15,10 +15,10 @@ logger.info("Welcome to Downton Abbey!")
 
 
 def main(
-    model_name: str = "ViT-L-14",
-    # model_name: str = "ViT-bigG-14",
-    batch_size: int = 16,
-    num_iters: int = 2,
+    # model_name: str = "ViT-L-14",
+    model_name: str = "ViT-bigG-14",
+    batch_size: int = 12,
+    num_iters: int = 50,
 ):
     num_dp = 4
 

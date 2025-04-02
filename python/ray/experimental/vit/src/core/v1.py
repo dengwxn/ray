@@ -19,8 +19,8 @@ logger.info("Welcome to Downton Abbey!")
 
 def main(
     # https://github.com/mlfoundations/open_clip/blob/main/docs/model_profile.csv
-    model_name: str = "ViT-L-14",
-    # model_name: str = "ViT-bigG-14",
+    # model_name: str = "ViT-L-14",
+    model_name: str = "ViT-bigG-14",
     batch_size: int = 16,
     vision_num_tp: int = 1,
     vision_num_dp: int = 3,
@@ -43,14 +43,14 @@ def main(
         for _ in range(vision_num_dp * vision_num_tp)
     ]
     init_torch_distributed(vision_actors)
-    ray.get([worker.init_parallel_strategy.remote() for worker in vision_actors])
+    ray.get([worker.init_fsdp_model.remote() for worker in vision_actors])
 
     text_actors = [
         TextWorker.remote(model_name, text_num_dp, text_num_tp, vision_num_dp)
         for _ in range(text_num_dp * text_num_tp)
     ]
     init_torch_distributed(text_actors)
-    ray.get([worker.init_parallel_strategy.remote() for worker in text_actors])
+    ray.get([worker.init_fsdp_model.remote() for worker in text_actors])
 
     vision_params = ray.get(vision_actors[0].get_num_params.remote())
     text_params = ray.get(text_actors[0].get_num_params.remote())

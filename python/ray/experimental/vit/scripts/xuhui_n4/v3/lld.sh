@@ -26,7 +26,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/xuhui_n4/v1/lld
+output_path=results/xuhui_n4/v3/lld
 mkdir -p $output_path
 rm -f ${output_path}/*.csv
 rm -f ${output_path}/*.log
@@ -42,7 +42,7 @@ latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
-python src/core/v1.py \
+python src/core/v3.py \
 	>$log_file 2>&1
 status=$?
 
