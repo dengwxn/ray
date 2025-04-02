@@ -17,6 +17,8 @@ from ray.air.util.torch_dist import _init_torch_distributed
 
 logger = logging.getLogger(__name__)
 
+# [TODO] with torch.autocast(device_type="cuda"):
+
 
 def millis_to_micros(millis: float) -> int:
     return round(millis * 1e3)
@@ -249,8 +251,7 @@ class TextWorker(BaseWorker):
         self.update_tracing("fw.starts")
 
         texts = self.load_batch(inputs).to(self.device)
-        with torch.autocast(device_type="cuda"):
-            self.text_features = self.model(texts)
+        self.text_features = self.model(texts)
         feats = self.text_features.detach()
 
         self.update_tracing("fw.ends")
@@ -261,10 +262,9 @@ class TextWorker(BaseWorker):
 
         if isinstance(vision_features, tuple):
             vision_features = vision_features[0]
-        with torch.autocast(device_type="cuda"):
-            self.loss = self.clip_loss_fn(
-                vision_features.cuda(), self.text_features, self.logit_scale
-            )
+        self.loss = self.clip_loss_fn(
+            vision_features.cuda(), self.text_features, self.logit_scale
+        )
         self.loss.backward()
 
         self.update_tracing("bw.ends")
@@ -339,11 +339,11 @@ class TextWorkerV2(BaseWorker):
             self.tp_rank = self.device_mesh["tp"].get_local_rank()
             self.dp_rank = self.device_mesh["dp"].get_local_rank()
         else:
-            self.model.to("cuda")
+            self.model.to(self.device)
             self.device_mesh = None
             self.tp_rank = 0
             self.dp_rank = 0
-        self.logit_scale.to("cuda")
+        self.logit_scale.to(self.device)
 
     def load_batch(self, inputs):
         i, bs_global = inputs
@@ -359,7 +359,6 @@ class TextWorkerV2(BaseWorker):
         self.update_tracing("fw.starts")
 
         texts = self.load_batch(inputs).to(self.device)
-        # with torch.autocast(device_type="cuda"):
         self.text_features = self.model(texts)
         feats = self.text_features.detach()
 
@@ -371,10 +370,9 @@ class TextWorkerV2(BaseWorker):
 
         if isinstance(vision_features, tuple):
             vision_features = vision_features[0]
-        with torch.autocast(device_type="cuda"):
-            self.loss = self.clip_loss_fn(
-                vision_features.cuda(), self.text_features, self.logit_scale
-            )
+        self.loss = self.clip_loss_fn(
+            vision_features.cuda(), self.text_features, self.logit_scale
+        )
         self.loss.backward()
 
         self.update_tracing("bw.ends")
@@ -524,8 +522,7 @@ class VisionWorker(BaseWorker):
         self.update_tracing("fw.starts")
 
         images = self.load_batch(inputs).to(self.device)
-        with torch.autocast(device_type="cuda"):
-            self.vision_features = self.model(images)
+        self.vision_features = self.model(images)
         feats = self.vision_features.detach()
 
         self.update_tracing("fw.ends")
@@ -534,10 +531,11 @@ class VisionWorker(BaseWorker):
     def backward(self, text_features):
         self.update_tracing("bw.starts")
 
-        with torch.autocast(device_type="cuda"):
-            self.loss = self.clip_loss_fn(
-                self.vision_features, text_features.cuda(), self.logit_scale
-            )
+        if isinstance(text_features, tuple):
+            text_features = text_features[0]
+        self.loss = self.clip_loss_fn(
+            self.vision_features, text_features.cuda(), self.logit_scale
+        )
         self.loss.backward()
 
         self.update_tracing("bw.ends")
@@ -622,7 +620,7 @@ class VisionWorkerV2(BaseWorker):
             self.tp_rank = self.device_mesh["tp"].get_local_rank()
             self.dp_rank = self.device_mesh["dp"].get_local_rank()
         else:
-            self.model.to("cuda")
+            self.model.to(self.device)
             self.device_mesh = None
             self.tp_rank = 0
             self.dp_rank = 0
@@ -641,7 +639,6 @@ class VisionWorkerV2(BaseWorker):
         self.update_tracing("fw.starts")
 
         images = self.load_batch(inputs).to(self.device)
-        # with torch.autocast(device_type="cuda"):
         self.vision_features = self.model(images)
         feats = self.vision_features.detach()
 
@@ -651,10 +648,9 @@ class VisionWorkerV2(BaseWorker):
     def backward(self, text_features):
         self.update_tracing("bw.starts")
 
-        with torch.autocast(device_type="cuda"):
-            self.loss = self.clip_loss_fn(
-                self.vision_features, text_features.cuda(), self.logit_scale
-            )
+        self.loss = self.clip_loss_fn(
+            self.vision_features, text_features.cuda(), self.logit_scale
+        )
         self.loss.backward()
 
         self.update_tracing("bw.ends")
