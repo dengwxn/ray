@@ -21,33 +21,33 @@ def main(
     # https://github.com/mlfoundations/open_clip/blob/main/docs/model_profile.csv
     # model_name: str = "ViT-L-14",
     model_name: str = "ViT-bigG-14",
-    batch_size: int = 16,
-    vision_num_tp: int = 1,
-    vision_num_dp: int = 3,
-    text_num_tp: int = 1,
-    text_num_dp: int = 1,
+    bs_single: int = 16,
+    num_tp_vision: int = 1,
+    num_dp_vision: int = 3,
+    num_tp_text: int = 1,
+    num_dp_text: int = 1,
     num_iters: int = 50,
 ):
     random_seed(998244353)
-    assert vision_num_tp == text_num_tp == 1
+    assert num_tp_vision == num_tp_text == 1
 
-    global_batch_size = batch_size * max(vision_num_dp, text_num_dp)
-    vision_batch_size = global_batch_size // vision_num_dp
-    text_batch_size = global_batch_size // text_num_dp
+    bs_global = bs_single * max(num_dp_vision, num_dp_text)
+    bs_vision = bs_global // num_dp_vision
+    bs_text = bs_global // num_dp_text
     logger.info(
-        f"Global batch size: {global_batch_size}, vision batch size: {vision_batch_size}, text batch size: {text_batch_size}"
+        f"Global batch size: {bs_global}, vision batch size: {bs_vision}, text batch size: {bs_text}"
     )
 
     vision_actors = [
-        VisionWorker.remote(model_name, vision_num_dp, vision_num_tp, text_num_dp)
-        for _ in range(vision_num_dp * vision_num_tp)
+        VisionWorker.remote(model_name, num_dp_vision, num_tp_vision, num_dp_text)
+        for _ in range(num_dp_vision * num_tp_vision)
     ]
     init_torch_distributed(vision_actors)
     ray.get([worker.init_fsdp_model.remote() for worker in vision_actors])
 
     text_actors = [
-        TextWorker.remote(model_name, text_num_dp, text_num_tp, vision_num_dp)
-        for _ in range(text_num_dp * text_num_tp)
+        TextWorker.remote(model_name, num_dp_text, num_tp_text, num_dp_vision)
+        for _ in range(num_dp_text * num_tp_text)
     ]
     init_torch_distributed(text_actors)
     ray.get([worker.init_fsdp_model.remote() for worker in text_actors])
@@ -72,16 +72,16 @@ def main(
         # scatter activations to the other dp groups
         scattered_text_acts = (
             text_actors[0]
-            .scatter_activations.options(num_returns=vision_num_dp)
+            .scatter_activations.options(num_returns=num_dp_vision)
             .bind(reduced_text_acts)
         )
         scattered_vision_acts = (
             vision_actors[0]
-            .scatter_activations.options(num_returns=text_num_dp)
+            .scatter_activations.options(num_returns=num_dp_text)
             .bind(reduced_vision_acts)
         )
         if not isinstance(scattered_vision_acts, list):
-            assert text_num_dp == 1
+            assert num_dp_text == 1
             scattered_vision_acts = [scattered_vision_acts]
 
         # with_tensor_transport for NCCL transport
@@ -109,7 +109,7 @@ def main(
         ray.get([actor.init_training.remote() for actor in text_actors])
         ray.get([actor.init_training.remote() for actor in vision_actors])
 
-        ray.get(dag.execute((i, global_batch_size)))
+        ray.get(dag.execute((i, bs_global)))
 
         if (i + 1) % 10 == 0:
             logger.info(f"Iteration {i+1} finished")

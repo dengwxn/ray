@@ -140,22 +140,20 @@ class BaseWorker:
 @ray.remote(num_gpus=1)
 class TextWorker(BaseWorker):
     def __init__(
-        self, model_name, dp_size, tp_size, vision_dp_size, seed=998244353
+        self, model_name, num_dp, num_tp, num_dp_vision, seed=998244353
     ) -> None:
         super().__init__()
         self.name = "Text"
+        self.device = torch.device("cuda:0")
 
         random_seed(seed)
         self.model = TextEncoder(model_name)
         self.num_params = count_params(self.model)
-        self.dp_size = dp_size
-        self.tp_size = tp_size
-        self.vision_dp_size = vision_dp_size
+        self.num_dp = num_dp
+        self.num_tp = num_tp
+        self.num_dp_vision = num_dp_vision
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.clip_loss_fn = ClipLoss(cache_labels=True)
-        self.optimizer = init_optimizer(
-            list(self.model.named_parameters()) + [("logit_scale", self.logit_scale)]
-        )
 
     def init_fsdp_model(self):
         self.rank = int(os.environ["LOCAL_RANK"])
@@ -163,39 +161,43 @@ class TextWorker(BaseWorker):
 
         self.world_size = int(os.environ["LOCAL_WORLD_SIZE"])
         assert (
-            self.world_size == self.tp_size * self.dp_size
+            self.world_size == self.num_tp * self.num_dp
         ), "world size must be equal to tp size * dp size"
 
         if self.world_size > 1:
             self.model, self.device_mesh = parallelize_2d(
                 self.model,
-                self.dp_size,
-                self.tp_size,
+                self.num_dp,
+                self.num_tp,
                 text=True,
                 vision=False,
             )
             self.tp_rank = self.device_mesh["tp"].get_local_rank()
             self.dp_rank = self.device_mesh["dp"].get_local_rank()
         else:
-            self.model.to("cuda")
+            self.model.to(self.device)
             self.device_mesh = None
             self.tp_rank = 0
             self.dp_rank = 0
-        self.logit_scale.to("cuda")
+        self.logit_scale.to(self.device)
+        self.optimizer = init_optimizer(
+            list(self.model.named_parameters()) + [("logit_scale", self.logit_scale)]
+        )
 
     def load_batch(self, inputs):
-        i, global_batch_size = inputs
-        text_batch_size = global_batch_size // self.dp_size
+        i, bs_global = inputs
+        bs_text = bs_global // self.num_dp
+        logger.warning(f"bs_text: {bs_text}")
 
         torch.manual_seed(i)
-        texts = torch.randint(0, 49408, (text_batch_size, 77))
+        texts = torch.randint(0, 49408, (bs_text, 77))
         return texts
 
     def forward(self, inputs):
         self.update_tracing("start")
         self.update_tracing("fw.starts")
 
-        texts = self.load_batch(inputs).to(device="cuda")
+        texts = self.load_batch(inputs).to(self.device)
         with torch.autocast(device_type="cuda"):
             self.text_features = self.model(texts)
         feats = self.text_features.detach()
@@ -239,7 +241,7 @@ class TextWorker(BaseWorker):
 
     def scatter_activations(self, activations):
         # Scatter the activations to each vision dp group
-        result = torch.chunk(activations, self.vision_dp_size)
+        result = torch.chunk(activations, self.num_dp_vision)
         return (*result,)
 
     def echo(self, input):
@@ -293,11 +295,12 @@ class TextWorkerV2(BaseWorker):
         self.logit_scale.to("cuda")
 
     def load_batch(self, inputs):
-        i, global_batch_size = inputs
-        text_batch_size = global_batch_size // self.dp_size
+        i, bs_global = inputs
+        bs_text = bs_global // self.dp_size
+        logger.warning(f"bs_text: {bs_text}")
 
         torch.manual_seed(i)
-        texts = torch.randint(0, 49408, (text_batch_size, 77))
+        texts = torch.randint(0, 49408, (bs_text, 77))
         return texts
 
     def forward(self, inputs):
@@ -371,11 +374,12 @@ class TextWorkerV3(BaseWorker):
         )
 
     def load_batch(self, inputs):
-        i, global_batch_size = inputs
-        text_batch_size = global_batch_size // self.num_dp
+        i, bs_global = inputs
+        bs_text = bs_global // self.num_dp
+        logger.warning(f"bs_text: {bs_text}")
 
         torch.manual_seed(i)
-        texts = torch.randint(0, 49408, (text_batch_size, 77))
+        texts = torch.randint(0, 49408, (bs_text, 77))
         return texts
 
     def forward(self, inputs):
@@ -412,23 +416,19 @@ class TextWorkerV3(BaseWorker):
 
 @ray.remote(num_gpus=1)
 class VisionWorker(BaseWorker):
-    def __init__(
-        self, model_name, dp_size, tp_size, text_dp_size, seed=998244353
-    ) -> None:
+    def __init__(self, model_name, num_dp, num_tp, num_dp_text, seed=998244353) -> None:
         super().__init__()
         self.name = "Vision"
+        self.device = torch.device("cuda:0")
 
         random_seed(seed)
         self.model = VisionEncoder(model_name)
         self.num_params = count_params(self.model)
-        self.dp_size = dp_size
-        self.tp_size = tp_size
-        self.text_dp_size = text_dp_size
+        self.num_dp = num_dp
+        self.num_tp = num_tp
+        self.num_dp_text = num_dp_text
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.clip_loss_fn = ClipLoss(cache_labels=True)
-        self.optimizer = init_optimizer(
-            list(self.model.named_parameters()) + [("logit_scale", self.logit_scale)]
-        )
 
     def init_fsdp_model(self):
         self.rank = int(os.environ["LOCAL_RANK"])
@@ -436,38 +436,43 @@ class VisionWorker(BaseWorker):
 
         self.world_size = int(os.environ["LOCAL_WORLD_SIZE"])
         assert (
-            self.world_size == self.tp_size * self.dp_size
+            self.world_size == self.num_tp * self.num_dp
         ), "world size must be equal to tp size * dp size"
 
         if self.world_size > 1:
             self.model, self.device_mesh = parallelize_2d(
                 self.model,
-                self.dp_size,
-                self.tp_size,
+                self.num_dp,
+                self.num_tp,
                 text=False,
                 vision=True,
             )
             self.tp_rank = self.device_mesh["tp"].get_local_rank()
             self.dp_rank = self.device_mesh["dp"].get_local_rank()
         else:
-            self.model.to("cuda")
+            self.model.to(self.device)
             self.device_mesh = None
             self.tp_rank = 0
             self.dp_rank = 0
+        self.logit_scale.to(self.device)
+        self.optimizer = init_optimizer(
+            list(self.model.named_parameters()) + [("logit_scale", self.logit_scale)]
+        )
 
     def load_batch(self, inputs):
-        i, global_batch_size = inputs
-        vision_batch_size = global_batch_size // self.dp_size
+        i, bs_global = inputs
+        bs_vision = bs_global // self.num_dp
+        logger.warning(f"bs_vision: {bs_vision}")
 
         torch.manual_seed(i)
-        images = torch.randn(vision_batch_size, 3, 224, 224)
+        images = torch.randn(bs_vision, 3, 224, 224)
         return images
 
     def forward(self, inputs):
         self.update_tracing("start")
         self.update_tracing("fw.starts")
 
-        images = self.load_batch(inputs).to(device="cuda")
+        images = self.load_batch(inputs).to(self.device)
         with torch.autocast(device_type="cuda"):
             self.vision_features = self.model(images)
         feats = self.vision_features.detach()
@@ -519,7 +524,7 @@ class VisionWorker(BaseWorker):
 
     def scatter_activations(self, activations):
         # Scatter the activations to each text dp group
-        result = torch.chunk(activations, self.text_dp_size)
+        result = torch.chunk(activations, self.num_dp_text)
         return (*result,)
 
     def echo(self, input):
@@ -572,11 +577,12 @@ class VisionWorkerV2(BaseWorker):
             self.dp_rank = 0
 
     def load_batch(self, inputs):
-        i, global_batch_size = inputs
-        vision_batch_size = global_batch_size // self.dp_size
+        i, bs_global = inputs
+        bs_vision = bs_global // self.dp_size
+        logger.warning(f"bs_vision: {bs_vision}")
 
         torch.manual_seed(i)
-        images = torch.randn(vision_batch_size, 3, 224, 224)
+        images = torch.randn(bs_vision, 3, 224, 224)
         return images
 
     def forward(self, inputs):
@@ -658,11 +664,12 @@ class VisionWorkerV3(BaseWorker):
         )
 
     def load_batch(self, inputs):
-        i, global_batch_size = inputs
-        vision_batch_size = global_batch_size // self.num_dp
+        i, bs_global = inputs
+        bs_vision = bs_global // self.num_dp
+        logger.warning(f"bs_vision: {bs_vision}")
 
         torch.manual_seed(i)
-        images = torch.randn(vision_batch_size, 3, 224, 224)
+        images = torch.randn(bs_vision, 3, 224, 224)
         return images
 
     def forward(self, inputs):
