@@ -1,13 +1,10 @@
 import logging
 
 import fire
-from actor import TextWorker, VisionWorker, WorkerV3
-from common import random_seed
+from actor import WorkerV3 as Worker
 from dist import init_torch_distributed
 
 import ray
-from ray.dag.input_node import InputNode
-from ray.dag.output_node import MultiOutputNode
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(filename)s:%(lineno)d -- %(message)s",
@@ -25,7 +22,7 @@ def main(
 ):
     num_dp = 4
 
-    actors = [WorkerV3.remote(model_name, num_dp, 1) for _ in range(num_dp)]
+    actors = [Worker.remote(model_name, num_dp, 1) for _ in range(num_dp)]
     init_torch_distributed(actors)
     ray.get([actor.init_fsdp_model.remote() for actor in actors])
 
