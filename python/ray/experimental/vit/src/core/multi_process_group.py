@@ -1,8 +1,6 @@
 from collections import defaultdict
 from dataclasses import asdict, dataclass
-from typing import List
-
-import torch.nn as nn
+from typing import List, Dict, Any
 
 import ray
 from ray.air._internal.util import find_free_port
@@ -24,14 +22,14 @@ class BaseWorker:
     def __init__(self) -> None:
         pass
 
-    def get_metadata(self):
+    def get_metadata(self) -> Dict[str, Any]:
         return {
             "gpu_ids": ray.get_gpu_ids(),
             "address": ray.util.get_node_ip_address(),
             "port": find_free_port(),
         }
 
-    def init_dist_group(self, dist_config):
+    def init_dist_group(self, dist_config: TorchDistributedConfig) -> None:
         self.dist_config = dist_config
         _init_torch_distributed(
             init_method="env", backend="nccl", **asdict(dist_config)
@@ -41,7 +39,7 @@ class BaseWorker:
             print(asdict(self.dist_config))
 
 
-def initialize_dist_group(workers):
+def initialize_dist_group(workers: List["ray.actor.ActorHandle"]) -> None:
     """Initialize PyTorch Distributed Process Group for a set of workers."""
     worker_metadata = ray.get([worker.get_metadata.remote() for worker in workers])
 
@@ -99,8 +97,8 @@ def initialize_dist_group(workers):
 
 
 if __name__ == "__main__":
-    workers = [BaseWorker.remote() for i in range(2)]
+    workers = [BaseWorker.remote() for _ in range(2)]
     initialize_dist_group(workers)
 
-    workers = [BaseWorker.remote() for i in range(6)]
+    workers = [BaseWorker.remote() for _ in range(6)]
     initialize_dist_group(workers)

@@ -4,10 +4,16 @@ import torch
 import torch.nn as nn
 from open_clip import get_model_config
 from open_clip.model import _build_text_tower, _build_vision_tower
-from open_clip.transformer import ResidualAttentionBlock, text_global_pool
+from open_clip.transformer import (
+    ResidualAttentionBlock,
+    text_global_pool,
+    VisionTransformer,
+    TextTransformer,
+    Transformer,
+)
 from torch import optim
 from torch.distributed._tensor import Replicate
-from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.device_mesh import init_device_mesh, DeviceMesh
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import ShardingStrategy
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
@@ -18,20 +24,22 @@ from torch.distributed.tensor.parallel import (
 )
 from torch.nn import functional as F
 
+from typing import Iterator, Tuple, Union, Callable
+
 
 class VisionEncoder(nn.Module):
-    def __init__(self, model_name) -> None:
+    def __init__(self, model_name: str) -> None:
         super().__init__()
 
         self.model_name = model_name
         self.model_config = get_model_config(model_name)
         assert self.model_config is not None, f"Unsupported {model_name}!"
 
-        self.visual = _build_vision_tower(
+        self.visual: VisionTransformer = _build_vision_tower(
             self.model_config["embed_dim"], self.model_config["vision_cfg"]
         )
 
-    def forward(self, images, normalize: bool = True):
+    def forward(self, images: torch.Tensor, normalize: bool = True):
         features = self.visual(images)
         return F.normalize(features, dim=-1) if normalize else features
 
@@ -44,7 +52,7 @@ class TextEncoder(nn.Module):
         self.model_config = get_model_config(model_name)
         assert self.model_config is not None, f"Unsupported {model_name}!"
 
-        text = _build_text_tower(
+        text: TextTransformer = _build_text_tower(
             self.model_config["embed_dim"], self.model_config["text_cfg"]
         )
         self.transformer = text.transformer
@@ -55,7 +63,7 @@ class TextEncoder(nn.Module):
         self.text_pool_type = text.pool_type
         self.register_buffer("attn_mask", text.attn_mask, persistent=False)
 
-    def forward(self, text, normalize: bool = True):
+    def forward(self, text: torch.Tensor, normalize: bool = True) -> torch.Tensor:
         cast_dtype = self.transformer.get_cast_dtype()
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
@@ -73,7 +81,9 @@ class TextEncoder(nn.Module):
         return F.normalize(x, dim=-1) if normalize else x
 
 
-def parallelize_transformer(transformer, tp_mesh):
+def parallelize_transformer(
+    transformer: Transformer, tp_mesh: DeviceMesh
+) -> Transformer:
     for _, transformer_block in enumerate(transformer.resblocks):
         layer_tp_plan = {
             "mlp.c_fc": ColwiseParallel(),
@@ -89,9 +99,15 @@ def parallelize_transformer(transformer, tp_mesh):
     return transformer
 
 
-def parallelize_tp(model, tp_mesh, text, vision):
+def parallelize_tp(
+    model: Union[TextEncoder, VisionEncoder],
+    tp_mesh: DeviceMesh,
+    text: bool,
+    vision: bool,
+) -> Union[TextEncoder, VisionEncoder]:
     """
-    Imitate the example in https://github.com/pytorch/examples/blob/main/distributed/tensor_parallelism/fsdp_tp_example.py
+    Imitate the example in
+    https://github.com/pytorch/examples/blob/main/distributed/tensor_parallelism/fsdp_tp_example.py
     """
     if text:
         model = parallelize_module(
@@ -103,16 +119,20 @@ def parallelize_tp(model, tp_mesh, text, vision):
                 ),
             },
         )
+        assert isinstance(model, TextEncoder)
         parallelize_transformer(model.transformer, tp_mesh)
 
     if vision:
+        assert isinstance(model, VisionEncoder)
         parallelize_transformer(model.visual.transformer, tp_mesh)
 
     model.to("cuda")
     return model
 
 
-def parallelize_dp(model, dp_mesh):
+def parallelize_dp(
+    model: Union[TextEncoder, VisionEncoder], dp_mesh: DeviceMesh
+) -> Union[TextEncoder, VisionEncoder]:
     model.to(torch.cuda.current_device())
     model = FSDP(
         model,
@@ -123,7 +143,13 @@ def parallelize_dp(model, dp_mesh):
     return model
 
 
-def parallelize_2d(model, dp_size, tp_size, text, vision):
+def parallelize_2d(
+    model: Union[TextEncoder, VisionEncoder],
+    dp_size: int,
+    tp_size: int,
+    text: bool,
+    vision: bool,
+) -> Tuple[Union[TextEncoder, VisionEncoder], DeviceMesh]:
     assert dp_size * tp_size > 1, "DP or TP must be greater than 1!"
 
     device_mesh = init_device_mesh(
@@ -142,23 +168,25 @@ def parallelize_2d(model, dp_size, tp_size, text, vision):
     return model, device_mesh
 
 
-def init_tp_params(transformer):
-    proj_std = (transformer.width**-0.5) * ((2 * transformer.layers) ** -0.5)
-    fc_std = (2 * transformer.width) ** -0.5
-    for block in transformer.resblocks:
-        nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
-        nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
-        nn.init.zeros_(block.mlp.c_fc.bias)
+# def init_tp_params(transformer):
+#     proj_std = (transformer.width**-0.5) * ((2 * transformer.layers) ** -0.5)
+#     fc_std = (2 * transformer.width) ** -0.5
+#     for block in transformer.resblocks:
+#         nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
+#         nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+#         nn.init.zeros_(block.mlp.c_fc.bias)
 
 
-def get_clip_wrap_policy():
+def get_clip_wrap_policy() -> Callable[[nn.Module, bool, int], bool]:
     return partial(
         transformer_auto_wrap_policy,
         transformer_layer_cls={ResidualAttentionBlock},
     )
 
 
-def init_optimizer(named_parameters):
+def init_optimizer(
+    named_parameters: Iterator[Tuple[str, nn.Parameter]],
+) -> optim.Optimizer:
     params = [p for _, p in named_parameters if p.requires_grad]
 
     return optim.AdamW(params, lr=1e-3, betas=(0.9, 0.98), eps=1e-06, foreach=True)

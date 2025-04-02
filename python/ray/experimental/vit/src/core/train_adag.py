@@ -1,7 +1,7 @@
 import fire
-from adag_workers import TextWorker, VisionWorker
-from multi_process_group import initialize_dist_group
-from utils import get_logger, random_seed
+from .adag_workers import TextWorker, VisionWorker
+from .multi_process_group import initialize_dist_group
+from .utils import get_logger, random_seed
 
 import ray
 from ray.dag.input_node import InputNode
@@ -17,8 +17,12 @@ def main(
     batch_size: int = 16,
     vision_tp_size: int = 1,
     vision_dp_size: int = 2,
+    # Barbell
+    # vision_dp_size: int = 1,
     text_tp_size: int = 1,
     text_dp_size: int = 2,
+    # Barbell
+    # text_dp_size: int = 1,
     seed: int = 123,
     steps: int = 50,
 ):
@@ -32,16 +36,17 @@ def main(
     vision_batch_size = global_batch_size // vision_dp_size
     text_batch_size = global_batch_size // text_dp_size
     logger.info(
-        f"Global batch size: {global_batch_size}, Vision batch size: {vision_batch_size}, Text batch size: {text_batch_size}"
+        f"Global batch size: {global_batch_size}, "
+        f"Vision batch size: {vision_batch_size}, "
+        f"Text batch size: {text_batch_size}"
     )
 
     logger.info("Start aDAG compiling...")
 
     # change to the available accelerator type
     vision_workers = [
-        VisionWorker.options(accelerator_type=NVIDIA_TESLA_T4).remote(
-            model_name, vision_dp_size, vision_tp_size, text_dp_size
-        )
+        # VisionWorker.options(accelerator_type=NVIDIA_TESLA_T4).remote(
+        VisionWorker.remote(model_name, vision_dp_size, vision_tp_size, text_dp_size)
         for _ in range(vision_dp_size * vision_tp_size)
     ]
     initialize_dist_group(vision_workers)
@@ -49,9 +54,8 @@ def main(
 
     # change to the available accelerator type
     text_workers = [
-        TextWorker.options(accelerator_type=NVIDIA_TESLA_T4).remote(
-            model_name, text_dp_size, text_tp_size, vision_dp_size
-        )
+        # TextWorker.options(accelerator_type=NVIDIA_TESLA_T4).remote(
+        TextWorker.remote(model_name, text_dp_size, text_tp_size, vision_dp_size)
         for _ in range(text_dp_size * text_tp_size)
     ]
     initialize_dist_group(text_workers)
@@ -91,12 +95,18 @@ def main(
             .scatter_activations.options(num_returns=vision_dp_size)
             .bind(reduced_text_activations)
         )
+        # Barbell
+        if vision_dp_size == 1:
+            scattered_text_activations = [scattered_text_activations]
 
         scattered_vision_activations = (
             vision_workers[0]
             .scatter_activations.options(num_returns=text_dp_size)
             .bind(reduced_vision_activations)
         )
+        # Barbell
+        if text_dp_size == 1:
+            scattered_vision_activations = [scattered_vision_activations]
 
         # with_tensor_transport for NCCL transport
         scattered_text_activations = [
