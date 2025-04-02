@@ -52,8 +52,16 @@ class BaseWorker:
             "end": [],
             "fw.starts": [],
             "fw.ends": [],
+            "fw.text.starts": [],
+            "fw.text.ends": [],
+            "fw.vision.starts": [],
+            "fw.vision.ends": [],
             "bw.starts": [],
             "bw.ends": [],
+            "bw.text.starts": [],
+            "bw.text.ends": [],
+            "bw.vision.starts": [],
+            "bw.vision.ends": [],
             "upd.starts": [],
             "upd.ends": [],
         }
@@ -131,9 +139,52 @@ class BaseWorker:
         )
 
         log("actor.total", total)
-        log("fw.total", fw_total, len(self.events["fw.starts"]))
-        log("bw.total", bw_total, len(self.events["bw.starts"]))
-        log("upd.total", upd_total, len(self.events["upd.starts"]))
+        log("fw.total", fw_total)
+        log("bw.total", bw_total)
+        log("upd.total", upd_total)
+
+        if self.name == "WorkerV3":
+            fw_text_total = sum(
+                [
+                    fw_start.elapsed_time(fw_end)
+                    for fw_start, fw_end in zip(
+                        self.events["fw.text.starts"],
+                        self.events["fw.text.ends"],
+                    )
+                ]
+            )
+            bw_text_total = sum(
+                [
+                    bw_start.elapsed_time(bw_end)
+                    for bw_start, bw_end in zip(
+                        self.events["bw.text.starts"],
+                        self.events["bw.text.ends"],
+                    )
+                ]
+            )
+            fw_vision_total = sum(
+                [
+                    fw_start.elapsed_time(fw_end)
+                    for fw_start, fw_end in zip(
+                        self.events["fw.vision.starts"],
+                        self.events["fw.vision.ends"],
+                    )
+                ]
+            )
+            bw_vision_total = sum(
+                [
+                    bw_start.elapsed_time(bw_end)
+                    for bw_start, bw_end in zip(
+                        self.events["bw.vision.starts"],
+                        self.events["bw.vision.ends"],
+                    )
+                ]
+            )
+            log("fw.text.total", fw_text_total)
+            log("bw.text.total", bw_text_total)
+            log("fw.vision.total", fw_vision_total)
+            log("bw.vision.total", bw_vision_total)
+
         logger.warning("")
 
 
@@ -740,19 +791,31 @@ class WorkerV3(BaseWorker):
     def forward(self, inputs):
         self.update_tracing("start")
         self.update_tracing("fw.starts")
+        self.update_tracing("fw.text.starts")
 
         self.text_acts = self.text.forward(inputs)
+
+        self.update_tracing("fw.text.ends")
+        self.update_tracing("fw.vision.starts")
+
         self.vision_acts = self.vision.forward(inputs)
 
+        self.update_tracing("fw.vision.ends")
         self.update_tracing("fw.ends")
 
     def backward(self):
         self.update_tracing("bw.starts")
         self.update_tracing("upd.starts")  # [TODO]
+        self.update_tracing("bw.text.starts")
 
         self.text.backward(self.vision_acts)
+
+        self.update_tracing("bw.text.ends")
+        self.update_tracing("bw.vision.starts")
+
         self.vision.backward(self.text_acts)
 
-        self.update_tracing("bw.ends")
+        self.update_tracing("bw.vision.ends")
         self.update_tracing("upd.ends")  # [TODO]
+        self.update_tracing("bw.ends")
         self.update_tracing("end")

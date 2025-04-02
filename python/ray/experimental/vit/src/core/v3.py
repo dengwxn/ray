@@ -17,9 +17,12 @@ logger.info("Welcome to Downton Abbey!")
 def main(
     # model_name: str = "ViT-L-14",
     model_name: str = "ViT-bigG-14",
-    batch_size: int = 12,
+    bs_single: int = 16,
+    num_dp_vision: int = 3,
+    num_dp_text: int = 1,
     num_iters: int = 50,
 ):
+    bs_global = bs_single * max(num_dp_vision, num_dp_text)
     num_dp = 4
 
     actors = [Worker.remote(model_name, num_dp) for _ in range(num_dp)]
@@ -29,7 +32,7 @@ def main(
     for i in range(num_iters):
         ray.get([actor.init_training.remote() for actor in actors])
 
-        ray.get([actor.forward.remote((i, batch_size)) for actor in actors])
+        ray.get([actor.forward.remote((i, bs_global)) for actor in actors])
         ray.get([actor.backward.remote() for actor in actors])
 
         logger.info(f"Iteration {i} finished")
