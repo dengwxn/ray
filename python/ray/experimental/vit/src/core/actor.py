@@ -777,10 +777,10 @@ class WorkerV2(BaseWorker):
 
 @ray.remote(num_gpus=1)
 class WorkerV3(BaseWorker):
-    def __init__(self, model_name, num_dp, seed=998244353):
+    def __init__(self, model_name, rank, num_dp, seed=998244353):
         super().__init__()
         self.name = "WorkerV3"
-        self.rank = 4  # [TODO]
+        self.rank = rank
 
         self.text = TextWorkerV3(model_name, num_dp, seed=seed)
         self.vision = VisionWorkerV3(model_name, num_dp, seed=seed)

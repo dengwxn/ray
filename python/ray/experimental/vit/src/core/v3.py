@@ -19,13 +19,12 @@ def main(
     model_name: str = "ViT-bigG-14",
     bs_single: int = 16,
     num_dp_vision: int = 3,
-    num_dp_text: int = 1,
     num_dp: int = 4,
     num_iters: int = 50,
 ):
-    bs_global = bs_single * max(num_dp_vision, num_dp_text)
+    bs_global = bs_single * num_dp_vision
 
-    actors = [Worker.remote(model_name, num_dp) for _ in range(num_dp)]
+    actors = [Worker.remote(model_name, i, num_dp) for i in range(num_dp)]
     init_torch_distributed(actors)
     ray.get([actor.init_fsdp_model.remote() for actor in actors])
 

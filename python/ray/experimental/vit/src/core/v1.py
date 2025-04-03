@@ -112,8 +112,7 @@ def main(
 
         ray.get(dag.execute((i, bs_global)))
 
-        if (i + 1) % 10 == 0:
-            logger.info(f"Iteration {i+1} finished")
+        logger.info(f"Iteration {i} finished")
 
         ray.get([actor.finish_tracing.remote() for actor in text_actors])
         ray.get([actor.finish_tracing.remote() for actor in vision_actors])

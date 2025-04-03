@@ -26,23 +26,15 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/xuhui_n4/v1/lld
+output_path=results/xuhui_n4/v1/lld/$timestamp
 mkdir -p $output_path
-rm -f ${output_path}/*.csv
-rm -f ${output_path}/*.log
 echo "Running $output_path..."
 
-batch_size=1
-seq_len=1024
-num_batches=2
-num_partitions=18
-num_actors=2
 num_iters=20
-latency_prefix=${timestamp}
-model_prefix=$output_path/${timestamp}_model
-log_file=$output_path/${timestamp}.log
+log_file=$output_path/actors.log
 
 python src/core/v1.py \
+	--num_iters $num_iters \
 	>$log_file 2>&1
 status=$?
 

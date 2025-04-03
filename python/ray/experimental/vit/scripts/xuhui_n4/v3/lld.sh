@@ -26,33 +26,37 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
 
-output_path=results/xuhui_n4/v3/lld
+output_path=results/xuhui_n4/v3/lld/$timestamp
 mkdir -p $output_path
-rm -f ${output_path}/*.csv
-rm -f ${output_path}/*.log
 echo "Running $output_path..."
 
-batch_size=1
-seq_len=1024
-num_batches=2
-num_partitions=18
-num_actors=2
 num_iters=20
-latency_prefix=${timestamp}
-model_prefix=$output_path/${timestamp}_model
-log_file=$output_path/${timestamp}.log
+num_dp_list=(1 2 4)
 
+log_file=$output_path/actors_bs16_dp4.log
 python src/core/v3.py \
+	--num_iters $num_iters \
+	--bs_single 16 \
+	--num_dp 4 \
 	>$log_file 2>&1
 status=$?
-
-if $debug; then
-	code $output_path/${timestamp}.log
-fi
-
 if [ $status -ne 0 ]; then
 	echo -e "${RED}ER${NC}"
 	exit 1
 fi
+
+for num_dp in "${num_dp_list[@]}"; do
+	log_file=$output_path/actors_bs8_dp${num_dp}.log
+	python src/core/v3.py \
+		--num_iters $num_iters \
+		--bs_single 8 \
+		--num_dp $num_dp \
+		>$log_file 2>&1
+	status=$?
+	if [ $status -ne 0 ]; then
+		echo -e "${RED}ER${NC}"
+		exit 1
+	fi
+done
 
 echo -e "${GREEN}AC${NC}"
