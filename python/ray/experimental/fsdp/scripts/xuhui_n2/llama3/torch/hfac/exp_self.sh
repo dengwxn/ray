@@ -35,7 +35,7 @@ echo "Running $output_path..."
 
 batch_size=1
 seq_len=1024
-num_actors=2
+num_actors=1
 num_iters=20
 latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
