@@ -27,7 +27,7 @@ timestamp=$(date '+%Y%m%d_%H%M%S')
 export RAY_DEDUP_LOGS=0
 export CUDA_VISIBLE_DEVICES=2,3
 
-output_path=results/xuhui_n2/llama3/torch/cc_on/fp_on/pf_on/exp_self
+output_path=results/xuhui_n2/llama3/torch/hfac/exp_self
 mkdir -p $output_path
 rm -f ${output_path}/*.csv
 rm -f ${output_path}/*.log
@@ -41,7 +41,7 @@ latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
-python -m ray.experimental.fsdp.src.main.llama3.torch.cc_on.fp_on.pf_on \
+python -m ray.experimental.fsdp.src.main.llama3.torch.hfac \
 	--batch-size $batch_size \
 	--seq-len $seq_len \
 	--num-actors $num_actors \
