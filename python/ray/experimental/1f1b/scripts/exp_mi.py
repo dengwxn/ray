@@ -68,6 +68,7 @@ def run_experiment(config):
 
     # Disable ray log deduplication
     os.environ["RAY_DEDUP_LOGS"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
 
     # Create output directory
     output_path = config["output_path"]
@@ -191,7 +192,7 @@ def main():
         {
             "framework": "ray",
             "settings": [
-                {"p2p": "off", "ov": "off", "num_actors": args.num_actors},
+                # {"p2p": "off", "ov": "off", "num_actors": args.num_actors},
                 {"p2p": "on", "ov": "off", "num_actors": args.num_actors},
             ],
         },

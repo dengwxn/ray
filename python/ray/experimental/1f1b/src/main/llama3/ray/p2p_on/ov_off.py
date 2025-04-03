@@ -10,7 +10,7 @@ from .....core.common import (
 )
 from .....core.config import parse_args
 from .....core.llama3.actor import LlamaActor
-from .....core.llama3.model import LLAMA_DEBUG as LLAMA
+from .....core.llama3.model import LLAMA_1B as LLAMA
 from ray.dag import InputNode, MultiOutputNode
 
 logging.basicConfig(
