@@ -251,7 +251,8 @@ class TextWorker(BaseWorker):
         self.update_tracing("fw.starts")
 
         texts = self.load_batch(inputs).to(self.device)
-        self.text_features = self.model(texts)
+        with torch.autocast(device_type="cuda"):
+            self.text_features = self.model(texts)
         feats = self.text_features.detach()
 
         self.update_tracing("fw.ends")
@@ -262,9 +263,10 @@ class TextWorker(BaseWorker):
 
         if isinstance(vision_features, tuple):
             vision_features = vision_features[0]
-        self.loss = self.clip_loss_fn(
-            vision_features.cuda(), self.text_features, self.logit_scale
-        )
+        with torch.autocast(device_type="cuda"):
+            self.loss = self.clip_loss_fn(
+                vision_features.cuda(), self.text_features, self.logit_scale
+            )
         self.loss.backward()
 
         self.update_tracing("bw.ends")
@@ -436,7 +438,8 @@ class TextWorkerV3(BaseWorker):
         # self.update_tracing("fw.starts")
 
         texts = self.load_batch(inputs).to(self.device)
-        self.text_features = self.model(texts)
+        with torch.autocast(device_type="cuda"):
+            self.text_features = self.model(texts)
         feats = self.text_features.detach()
 
         # self.update_tracing("fw.ends")
@@ -447,9 +450,10 @@ class TextWorkerV3(BaseWorker):
 
         if isinstance(vision_features, tuple):
             vision_features = vision_features[0]
-        self.loss = self.clip_loss_fn(
-            vision_features.cuda(), self.text_features, self.logit_scale
-        )
+        with torch.autocast(device_type="cuda"):
+            self.loss = self.clip_loss_fn(
+                vision_features.cuda(), self.text_features, self.logit_scale
+            )
         self.loss.backward()
 
         # self.update_tracing("bw.ends")
@@ -522,7 +526,8 @@ class VisionWorker(BaseWorker):
         self.update_tracing("fw.starts")
 
         images = self.load_batch(inputs).to(self.device)
-        self.vision_features = self.model(images)
+        with torch.autocast(device_type="cuda"):
+            self.vision_features = self.model(images)
         feats = self.vision_features.detach()
 
         self.update_tracing("fw.ends")
@@ -533,9 +538,10 @@ class VisionWorker(BaseWorker):
 
         if isinstance(text_features, tuple):
             text_features = text_features[0]
-        self.loss = self.clip_loss_fn(
-            self.vision_features, text_features.cuda(), self.logit_scale
-        )
+        with torch.autocast(device_type="cuda"):
+            self.loss = self.clip_loss_fn(
+                self.vision_features, text_features.cuda(), self.logit_scale
+            )
         self.loss.backward()
 
         self.update_tracing("bw.ends")
@@ -724,7 +730,8 @@ class VisionWorkerV3(BaseWorker):
         # self.update_tracing("fw.starts")
 
         images = self.load_batch(inputs).to(self.device)
-        self.vision_features = self.model(images)
+        with torch.autocast(device_type="cuda"):
+            self.vision_features = self.model(images)
         feats = self.vision_features.detach()
 
         # self.update_tracing("fw.ends")
@@ -733,9 +740,10 @@ class VisionWorkerV3(BaseWorker):
     def backward(self, text_features):
         # self.update_tracing("bw.starts")
 
-        self.loss = self.clip_loss_fn(
-            self.vision_features, text_features.cuda(), self.logit_scale
-        )
+        with torch.autocast(device_type="cuda"):
+            self.loss = self.clip_loss_fn(
+                self.vision_features, text_features.cuda(), self.logit_scale
+            )
         self.loss.backward()
 
         # self.update_tracing("bw.ends")
