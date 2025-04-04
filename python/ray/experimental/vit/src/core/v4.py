@@ -22,27 +22,21 @@ logger.info("Welcome to Downton Abbey!")
 # WORLD_SIZE = 4
 # CUDA_VISIBLE_DEVICES = "0,1,2,3"
 
-WORLD_SIZE = 3
-CUDA_VISIBLE_DEVICES = "1,2,3"
+# WORLD_SIZE = 3
+# CUDA_VISIBLE_DEVICES = "1,2,3"
 
-# WORLD_SIZE = 2
-# CUDA_VISIBLE_DEVICES = "2,3"
+WORLD_SIZE = 2
+CUDA_VISIBLE_DEVICES = "2,3"
 
 
 def train(
     rank: int,
-    # model_name: str = "ViT-L-14",
-    model_name: str = "ViT-bigG-14",
-    bs_single: int = 16,
-    num_dp_vision: int = 3,
-    num_dp: int = 4,
-    num_iters: int = 50,
-):
-    if num_dp > WORLD_SIZE:
-        num_dp_vision -= num_dp - WORLD_SIZE
-        num_dp = WORLD_SIZE
-        assert num_dp > 0
-        assert num_dp_vision > 0
+    model_name: str,
+    bs_single: int,
+    num_dp_vision: int,
+    num_dp: int,
+    num_iters: int,
+) -> None:
     bs_global = bs_single * num_dp_vision
 
     torch.cuda.set_device(rank)
@@ -76,9 +70,21 @@ def train(
         actor.finish_tracing()
 
 
-def main() -> None:
+def main(
+    # model_name: str = "ViT-L-14",
+    model_name: str = "ViT-bigG-14",
+    bs_single: int = 16,
+    num_dp_vision: int = 3,
+    num_dp: int = 4,
+    num_iters: int = 50,
+) -> None:
     os.environ["CUDA_VISIBLE_DEVICES"] = CUDA_VISIBLE_DEVICES
-    mp.spawn(train, nprocs=WORLD_SIZE)
+    assert num_dp <= WORLD_SIZE
+    mp.spawn(
+        train,
+        args=(model_name, bs_single, num_dp_vision, num_dp, num_iters),
+        nprocs=WORLD_SIZE,
+    )
 
 
 if __name__ == "__main__":
