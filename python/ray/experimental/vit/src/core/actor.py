@@ -775,8 +775,7 @@ class WorkerV2(BaseWorker):
         self.vision.backward(text_acts)
 
 
-@ray.remote(num_gpus=1)
-class WorkerV3(BaseWorker):
+class WorkerV4(BaseWorker):
     def __init__(self, model_name, rank, num_dp, seed=998244353):
         super().__init__()
         self.name = "WorkerV3"
@@ -823,3 +822,8 @@ class WorkerV3(BaseWorker):
         self.update_tracing("upd.ends")  # [TODO]
         self.update_tracing("bw.ends")
         self.update_tracing("end")
+
+
+@ray.remote(num_gpus=1)
+class WorkerV3(WorkerV4):
+    pass
