@@ -264,11 +264,11 @@ def do_exec_tasks(
         ):
             if avg is None:
                 logger.warning(
-                    f"{method} sum: {round(1.25 * sum)} us, sum/20: {round(1.25 * sum / 20)} us, percent: {percent}%"
+                    f"{method} sum: {round(1.25 * sum)} us, sum/50: {round(1.25 * sum / 50)} us, percent: {percent}%"
                 )
             else:
                 logger.warning(
-                    f"{method} sum: {round(1.25 * sum)} us, sum/20: {round(1.25 * sum / 20)} us, avg: {avg} us, percent: {percent}%"
+                    f"{method} sum: {round(1.25 * sum)} us, sum/50: {round(1.25 * sum / 50)} us, avg: {avg} us, percent: {percent}%"
                 )
 
         method_to_percent: Dict[str, float] = {}
