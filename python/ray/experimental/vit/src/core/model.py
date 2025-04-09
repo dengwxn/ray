@@ -63,7 +63,7 @@ class TextEncoder(nn.Module):
         x = x + self.positional_embedding.to(cast_dtype)
         x = self.transformer(x, attn_mask=self.attn_mask)
         x = self.ln_final(x)  # [batch_size, n_ctx, transformer.width]
-        x, _ = text_global_pool(x, text, self.text_pool_type)
+        x = text_global_pool(x, text, self.text_pool_type)
         if self.text_projection is not None:
             if isinstance(self.text_projection, nn.Linear):
                 x = self.text_projection(x)
