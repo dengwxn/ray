@@ -66,7 +66,7 @@ def train(
                     for j, actor in enumerate(actors)
                 ]
             actors_to_updates = [
-                actor.update.bind(grads_allreduced[j], True, i)
+                actor.update.bind(grads_allreduced[j], False, i)
                 for j, actor in enumerate(actors)
             ]
             outputs.extend(actors_to_updates)

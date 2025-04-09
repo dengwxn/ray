@@ -385,7 +385,8 @@ class BucketParameter(nn.Module):
                 p.grad = grad
                 offset += size
 
-        self.optimizer.step()
+        logger.warning("Disabling optimizer step")
+        # self.optimizer.step()
         self.optimizer.zero_grad()
 
 

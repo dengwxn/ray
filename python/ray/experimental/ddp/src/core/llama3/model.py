@@ -502,7 +502,8 @@ class BucketParameter(nn.Module):
                 offset += size
 
     def step(self) -> None:
-        self.optimizer.step()
+        logger.warning("Disabling optimizer step")
+        # self.optimizer.step()
         self.optimizer.zero_grad()
 
     def _log_versions(self, prompt: str, grad_is_none: bool):
