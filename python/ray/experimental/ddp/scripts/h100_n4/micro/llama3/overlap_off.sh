@@ -30,6 +30,8 @@ output_path=results/h100_n4/micro/llama3/overlap_off/$timestamp
 mkdir -p $output_path
 
 num_partitions=18
+# num_partitions=30
+# num_partitions=34
 num_actors=4
 num_iters=50
 latency_prefix=latency

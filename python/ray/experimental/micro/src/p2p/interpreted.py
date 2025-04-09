@@ -2,6 +2,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+import fire
 import torch
 
 import ray
@@ -32,22 +33,29 @@ class Actor:
         tensor += 1
 
 
-def benchmark(args):
-    actors = [Actor.remote(args["size"]) for _ in range(2)]
+def benchmark(
+    num_iters: int = 50,
+    size: int = 2**20,
+):
+    actors = [Actor.remote(size) for _ in range(2)]
 
-    for iter in range(args["num_iters"]):
+    elapses_us = []
+    for iter in range(num_iters):
         start = time.perf_counter()
         init_tensor = ray.get(actors[0].init_tensor.remote(0))
         send_tensor = ray.get(actors[0].send_tensor.remote(init_tensor))
         recv_tensor = ray.get(actors[1].recv_tensor.remote(send_tensor))
         end = time.perf_counter()
         elapse_us = round((end - start) * 1e6)
-        logger.info(f"Iteration: {iter}, elapse: {elapse_us} us")
+        elapses_us.append(elapse_us)
+        if iter % 10 == 0:
+            logger.info(f"Iteration: {iter}, elapse: {elapse_us} us")
+
+    elapses_us = elapses_us[int(len(elapses_us) * 0.2) :]
+    elapse_us_avg = round(sum(elapses_us) / len(elapses_us))
+    logger.info(f"Elapse avg: {elapse_us_avg} us")
 
 
 if __name__ == "__main__":
-    args = dict()
-    args["num_iters"] = 50
-    args["size"] = 2**20
     ray.init()
-    benchmark(args)
+    fire.Fire(benchmark)
