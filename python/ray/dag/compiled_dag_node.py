@@ -805,6 +805,7 @@ class ExecutableTask:
                 input_values = [input_exc]
                 input_exc = None
 
+        start, end = None, None
         # Write the exception to the downstream task.
         if input_exc is not None:
             try:
@@ -845,7 +846,6 @@ class ExecutableTask:
                 self.output_writer.write(output_val)
             except RayChannelError:
                 return True
-
         return False, start, end
 
 

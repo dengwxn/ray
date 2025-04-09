@@ -16,9 +16,8 @@ logger = logging.getLogger(__name__)
 class LlamaActor:
     @dataclass
     class BatchParameter:
-        model: Transformer
-        criterion: torch.nn.CrossEntropyLoss
-        optimizer: torch.optim.AdamW
+        # criterion: torch.nn.CrossEntropyLoss
+        # optimizer: torch.optim.AdamW
         logits_as_input: Optional[torch.Tensor] = None
         logits_as_output: Optional[torch.Tensor] = None
 
@@ -34,28 +33,45 @@ class LlamaActor:
         tracing: bool,
     ):
         self.seed = 998244353
-        self.device = torch.device("cuda:0")
+        self.device = torch.device(f"cuda:0")
 
+        logger.info(f"Rank {rank}: device {self.device}")
         logger.info(f"model_args: {model_args}")
         self.model_args = model_args
         self.batch_size = batch_size
         self.seq_len = seq_len
         self.rank = rank
         self.num_batches = num_batches
-        # self.num_partitions = num_partitions
-        # self.num_actors = num_actors
+        self.num_partitions = num_partitions
+        self.num_actors = num_actors
         self.tracing = tracing
 
         self.input: Optional[torch.Tensor] = None
         self.target: Optional[torch.Tensor] = None
 
+        # manual pipeline
+        model = Transformer(model_args, rank)
+        layers_per_rank = model_args.n_layers // num_partitions
+        if rank == 0:
+            for _ in range(layers_per_rank):
+                del model.layers[0]
+            model.norm = None
+            model.output = None
+        else:
+            model.tok_embeddings = None
+            for _ in range(layers_per_rank):
+                del model.layers[layers_per_rank]
+        model.to(self.device)
+        self.model = model
+
+        self.criterion = torch.nn.CrossEntropyLoss()
+        self.optimizer = torch.optim.AdamW(model.parameters(), lr=1e-6)
+
+        # microbatch metadata
         self.bparams: List[LlamaActor.BatchParameter] = []
         for i in range(num_batches):
             torch.manual_seed(2025 + i)
-            model = Transformer(model_args, rank).to(self.device)
-            criterion = torch.nn.CrossEntropyLoss()
-            optimizer = torch.optim.AdamW(model.parameters(), lr=1e-6)
-            bparam = self.BatchParameter(model, criterion, optimizer)
+            bparam = self.BatchParameter()
             self.bparams.append(bparam)
 
         self.it = 0
@@ -85,6 +101,8 @@ class LlamaActor:
         for bparam in self.bparams:
             bparam.logits_as_input = None
             bparam.logits_as_output = None
+        
+        self.grad_acc = None
 
         self.events: Dict[str, Any] = {
             "start": [],
@@ -135,6 +153,7 @@ class LlamaActor:
         assert len(self.events["start"]) == 1
         assert len(self.events["end"]) == 1
         total = self.events["start"][0].elapsed_time(self.events["end"][0])
+        print("iter total: ", round(total))
 
         def log(key: str, total_ms: float, count: int = 1) -> None:
             total_us = millis_to_micros(total_ms)
@@ -196,11 +215,13 @@ class LlamaActor:
         if self.tracing:
             self.update_tracing("fw.starts")
 
+        print(f"rank_{self.rank}.fwd batch {idx}, {self.num_batches_forwarded}")
+
         assert idx < len(self.bparams)
         bparam = self.bparams[idx]
 
         if self.rank == 0:
-            logits_as_output = bparam.model.forward_first(self.input, 0)
+            logits_as_output = self.model.forward_first(self.input)
             bparam.logits_as_output = logits_as_output
             logits_as_input = logits_as_output.detach()
             output = logits_as_input
@@ -208,8 +229,8 @@ class LlamaActor:
             assert logits_as_input is not None
             logits_as_input = logits_as_input.to(self.device).requires_grad_(True)
             bparam.logits_as_input = logits_as_input
-            logits_as_output = bparam.model.forward_second(
-                self.input, 0, logits_as_input
+            logits_as_output = self.model.forward_second(
+                self.input, logits_as_input
             )
             output = logits_as_output
 
@@ -221,48 +242,62 @@ class LlamaActor:
         assert idx < len(self.bparams)
         bparam = self.bparams[idx]
 
-        loss = bparam.criterion(logits, self.target)
+        loss = self.criterion(logits, self.target)
         loss.backward()
         grad = bparam.logits_as_input.grad
 
         assert grad is not None
         return grad
 
-    def backward_intra(self, idx: int, grad: torch.Tensor) -> None:
+    def backward_intra(self, idx: int, prev_grad: torch.Tensor) -> None:
         assert idx < len(self.bparams)
         bparam = self.bparams[idx]
-        assert grad is not None
-        grad = grad.to(self.device)
 
-        bparam.logits_as_output.backward(grad)
+        assert prev_grad is not None
+        prev_grad = prev_grad.to(self.device)
+
+        bparam.logits_as_output.backward(prev_grad)
+        grad = bparam.logits_as_input.grad
+
+        assert grad is not None
+        return grad
 
     def backward(self, idx: int, data: torch.Tensor) -> Optional[torch.Tensor]:
         if self.tracing:
             self.update_tracing("bw.starts")
 
-        if self.rank == 0:
-            output = self.backward_intra(idx, data)
-        else:
+        if self.rank == self.num_actors - 1:
             output = self.backward_loss(idx, data)
+        else:
+            output = self.backward_intra(idx, data)
 
+        if self.grad_acc:
+            self.grad_acc += output
+        else:
+            self.grad_acc = output
+        self.optimizer.step()
+        
         if self.tracing:
             self.update_tracing("bw.ends")
         return output
 
-    def update(self, idx: int, _backward) -> None:
+    def update(self, _backward) -> None:
         if self.tracing:
             self.update_tracing("upd.starts")
 
-        assert idx < len(self.bparams)
-        bparam = self.bparams[idx]
+        # assert idx < len(self.bparams)
+        # bparam = self.bparams[idx]
 
-        bparam.optimizer.step()
-        bparam.optimizer.zero_grad()
+        assert self.grad_acc is not None
+
+        # self.optimizer.step()
+        self.optimizer.zero_grad()
 
         if self.tracing:
             self.update_tracing("upd.ends")
         self.num_batches_updated += 1
         if self.num_batches_updated == self.num_batches:
+            print("UPDATING END")
             self.update_tracing("end")
 
 

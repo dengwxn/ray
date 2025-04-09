@@ -48,8 +48,56 @@ def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
     return actors
 
 
+def build_1f1b_dag(actors: List[LlamaActor], num_microbatches=4, num_lead_microbatches=4):
+    """
+    Constructs and compiles a 1F1B DAG for pipeline parallelism.
+
+    Args:
+        workers (list): List of Ray actor handles, each representing a pipeline stage.
+        num_microbatches (int): Number of microbatches to pipeline per batch.
+        num_lead_microbatches (int): Number of leading microbatches to maintain pipeline balance.
+
+    Returns:
+        A compiled DAG ready for execution.
+    """
+    x_idx = 0
+    y_idx = 1
+    num_workers = len(actors)
+    fwd_queues = [[] for _ in range(num_workers)]
+    bwd_queues = [[] for _ in range(num_workers)]
+    fwd_counter = [num_lead_microbatches - p for p in range(num_workers)]
+    done = []
+    with ray.dag.InputNode() as inp:
+      # Load the queue for worker 0 with all input micro-batches
+      for idx in range(num_microbatches):
+        fwd_queues[0].append([idx, inp])
+      while len(done) < num_microbatches:
+        for k, worker in enumerate(actors):
+            if fwd_counter[k] > 0 and fwd_queues[k]:
+                idx, mb = fwd_queues[k].pop(0) 
+                if k < num_workers - 1:
+                    mb = worker.forward.bind(idx, mb).with_tensor_transport(transport="nccl")
+                    fwd_queues[k + 1].append([idx, mb])
+                else:  
+                    mb = worker.forward.bind(idx, mb)
+                    bwd_queues[k].append([idx, mb])
+                fwd_counter[k] -= 1
+            elif bwd_queues[k]:
+                idx, mb = bwd_queues[k].pop()
+                if k > 0:
+                    mb = worker.backward.bind(idx, mb).with_tensor_transport(transport="nccl")
+                    bwd_queues[k - 1].append([idx, mb])
+                else:
+                    mb = worker.backward.bind(idx, mb)
+                    mb = worker.update.bind(mb)
+                    done.append(mb)
+      dag = ray.dag.MultiOutputNode(done)
+    return dag.experimental_compile()
+
+
 def train(
     actors: List[LlamaActor],
+    num_microbatches: int,
     num_partitions: int,
     num_iters: int,
     output_path: str,
@@ -58,39 +106,39 @@ def train(
     model_prefix: str,
     tracing: bool,
 ) -> None:
-    assert len(actors) == 2
+    # with InputNode() as inp:
+    #     b1_fw1 = actors[0].forward.bind(0, inp).with_tensor_transport(transport="nccl")
 
-    with InputNode() as inp:
-        b1_fw1 = actors[0].forward.bind(0, inp).with_tensor_transport(transport="nccl")
+    #     # PP
+    #     b2_fw1 = actors[0].forward.bind(1, inp).with_tensor_transport(transport="nccl")
+    #     b1_fw2 = actors[1].forward.bind(0, b1_fw1)
 
-        # PP
-        b2_fw1 = actors[0].forward.bind(1, inp).with_tensor_transport(transport="nccl")
-        b1_fw2 = actors[1].forward.bind(0, b1_fw1)
+    #     b1_bw1 = (
+    #         actors[1].backward.bind(0, b1_fw2).with_tensor_transport(transport="nccl")
+    #     )
+    #     b1_upd1 = actors[1].update.bind(0, inp)
 
-        b1_bw1 = (
-            actors[1].backward.bind(0, b1_fw2).with_tensor_transport(transport="nccl")
-        )
-        b1_upd1 = actors[1].update.bind(0, inp)
+    #     # PP
+    #     b1_bw2 = actors[0].backward.bind(0, b1_bw1)
+    #     b1_upd2 = actors[0].update.bind(0, b1_bw2)
+    #     b2_fw2 = actors[1].forward.bind(1, b2_fw1)
 
-        # PP
-        b1_bw2 = actors[0].backward.bind(0, b1_bw1)
-        b1_upd2 = actors[0].update.bind(0, b1_bw2)
-        b2_fw2 = actors[1].forward.bind(1, b2_fw1)
+    #     b2_bw1 = (
+    #         actors[1].backward.bind(1, b2_fw2).with_tensor_transport(transport="nccl")
+    #     )
+    #     b2_upd1 = actors[1].update.bind(1, inp)
 
-        b2_bw1 = (
-            actors[1].backward.bind(1, b2_fw2).with_tensor_transport(transport="nccl")
-        )
-        b2_upd1 = actors[1].update.bind(1, inp)
+    #     b2_bw2 = actors[0].backward.bind(1, b2_bw1)
+    #     b2_upd2 = actors[0].update.bind(1, b2_bw2)
 
-        b2_bw2 = actors[0].backward.bind(1, b2_bw1)
-        b2_upd2 = actors[0].update.bind(1, b2_bw2)
+    #     updates = [b1_upd1, b1_upd2, b2_upd1, b2_upd2]
+    #     dag = MultiOutputNode(updates)
 
-        updates = [b1_upd1, b1_upd2, b2_upd1, b2_upd2]
-        dag = MultiOutputNode(updates)
-
-    compiled_dag = dag.experimental_compile()
-    # compiled_dag.visualize(channel_details=True)
-
+    # compiled_dag = dag.experimental_compile()
+    compiled_dag = build_1f1b_dag(actors, num_microbatches=num_microbatches, num_lead_microbatches=num_microbatches)
+    compiled_dag.visualize(filename="compiled_graph",channel_details=True)
+    exit(1)
+    
     total_elapses: List[int] = []
     for iter in range(num_iters):
         for actor in actors:
@@ -126,6 +174,7 @@ def main(args: Dict[str, Any]) -> None:
 
     train(
         actors,
+        args["num_batches"],
         args["num_partitions"],
         args["num_iters"],
         args["output_path"],

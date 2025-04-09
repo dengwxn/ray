@@ -400,11 +400,13 @@ class Transformer(nn.Module):
             params.rope_theta,
         )
 
-    def forward(self, tokens: torch.Tensor, start_pos: int):
-        _bsz, seqlen = tokens.shape
-        h = self.tok_embeddings(tokens)
-        self.freqs_cis = self.freqs_cis.to(h.device)
-        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+    def forward(self, tokens: torch.Tensor):
+        seqlen = tokens.shape[1]
+        h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
+
+        # self.freqs_cis = self.freqs_cis.to(h.device)
+        start_pos = 0
+        freqs_cis = self.freqs_cis.to(h.device)[start_pos : start_pos + seqlen]
 
         mask = None
         if seqlen > 1:
@@ -422,8 +424,8 @@ class Transformer(nn.Module):
 
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask)
-        h = self.norm(h)
-        output = self.output(h).float()
+        h = self.norm(h) if self.norm else h
+        output = self.output(h).float() if self.output else h
         return output
 
 
@@ -476,11 +478,12 @@ class TransformerPP(nn.Module):
         self.pidx = 9
         self.rank = rank
 
-    def forward_first(self, tokens: torch.Tensor, start_pos: int):
+    def forward_first(self, tokens: torch.Tensor):
         assert self.rank == 0
 
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
+        start_pos = 0
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
         mask = None
@@ -495,10 +498,11 @@ class TransformerPP(nn.Module):
             h = layer(h, start_pos, freqs_cis, mask)
         return h
 
-    def forward_second(self, tokens: torch.Tensor, start_pos: int, h: torch.Tensor):
+    def forward_second(self, tokens: torch.Tensor, h: torch.Tensor):
         assert self.rank == 1
 
         _bsz, seqlen = tokens.shape
+        start_pos = 0
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
         mask = None

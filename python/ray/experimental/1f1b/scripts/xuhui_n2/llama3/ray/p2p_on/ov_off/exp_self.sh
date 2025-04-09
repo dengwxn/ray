@@ -25,19 +25,20 @@ export TZ="America/Los_Angeles"
 timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
+export CUDA_VISIBLE_DEVICES=1
 
-output_path=results/xuhui_n2/llama3/ray/p2p_on/ov_off/exp_self
+output_path=results/mfris/
 mkdir -p $output_path
 rm -f ${output_path}/*.csv
 rm -f ${output_path}/*.log
 echo "Running $output_path..."
 
-batch_size=1
-seq_len=1024
+batch_size=4
+seq_len=32
 num_batches=2
-num_partitions=18
+num_partitions=2
 num_actors=2
-num_iters=20
+num_iters=2
 latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
@@ -53,8 +54,8 @@ python -m ray.experimental.1f1b.src.main.llama3.ray.p2p_on.ov_off \
 	--output-path $output_path \
 	--latency-prefix $latency_prefix \
 	--model-prefix $model_prefix \
-	--tracing \
-	>$log_file 2>&1
+	--tracing 
+	# >$log_file 2>&1
 # --save-model \
 status=$?
 
