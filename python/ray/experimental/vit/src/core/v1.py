@@ -19,11 +19,11 @@ logger.info("Welcome to Downton Abbey!")
 
 def main(
     # https://github.com/mlfoundations/open_clip/blob/main/docs/model_profile.csv
-    # model_name: str = "ViT-L-14",
-    model_name: str = "ViT-bigG-14",
+    model_name: str = "ViT-L-14",
+    # model_name: str = "ViT-bigG-14",
     bs_single: int = 16,
     num_tp_vision: int = 1,
-    num_dp_vision: int = 3,
+    num_dp_vision: int = 1,
     num_tp_text: int = 1,
     num_dp_text: int = 1,
     num_iters: int = 50,
@@ -39,14 +39,24 @@ def main(
     )
 
     vision_actors = [
-        VisionWorker.remote(model_name, num_dp_vision, num_tp_vision, num_dp_text)
-        for _ in range(num_dp_vision * num_tp_vision)
+        VisionWorker.options(
+            accelerator_type="H100",
+            num_gpus=1,
+            runtime_env={"env_vars": {"CUDA_VISIBLE_DEVICES": "1"}},
+        ).remote(model_name, num_dp_vision, num_tp_vision, num_dp_text),
     ]
+    assert len(vision_actors) == num_dp_vision
     init_torch_distributed(vision_actors)
     ray.get([worker.init_fsdp_model.remote() for worker in vision_actors])
 
     text_actors = [
-        TextWorker.remote(model_name, num_dp_text, num_tp_text, num_dp_vision)
+        TextWorker.options(accelerator_type="TITAN").remote(
+            # TextWorker.options().remote(
+            model_name,
+            num_dp_text,
+            num_tp_text,
+            num_dp_vision,
+        )
         for _ in range(num_dp_text * num_tp_text)
     ]
     init_torch_distributed(text_actors)
@@ -87,11 +97,13 @@ def main(
 
         # with_tensor_transport for NCCL transport
         scattered_text_acts = [
-            to_vision_act.with_tensor_transport("nccl")
+            # to_vision_act.with_tensor_transport("nccl")
+            to_vision_act
             for to_vision_act in scattered_text_acts
         ]
         scattered_vision_acts = [
-            to_text_act.with_tensor_transport("nccl")
+            # to_text_act.with_tensor_transport("nccl")
+            to_text_act
             for to_text_act in scattered_vision_acts
         ]
 
