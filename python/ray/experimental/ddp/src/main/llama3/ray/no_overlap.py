@@ -8,7 +8,7 @@ import ray
 from ....core.common import log_elapses_to_csv
 from ....core.config import parse_args
 from ....core.llama3.actor import LlamaActor
-from ....core.llama3.model import LLAMA_1B
+from ....core.llama3.model import LLAMA_1B as LLAMA
 from ray.dag import InputNode, MultiOutputNode
 from ray.experimental.collective import allreduce
 
@@ -21,7 +21,7 @@ logger.info("Welcome to Downton Abbey!")
 
 
 def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
-    model_args = LLAMA_1B
+    model_args = LLAMA
     num_partitions = args["num_partitions"]
     num_actors = args["num_actors"]
     tracing = args["tracing"]
