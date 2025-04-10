@@ -34,13 +34,13 @@ deepspeed_config_dict = {
     "gradient_clipping": 1.0,
     "zero_optimization": {
         "stage": 3,
-        "offload_optimizer": {"device": "none"},
-        "offload_param": {"device": "none"},
     },
-    "bf16": {"enabled": True},
-    "fp16": {"enabled": False},  # Explicitly disabled since using bf16
-    "zero_allow_untested_optimizer": True,  # Required for non-standard opt
-    "wall_clock_breakdown": False,  # Optional, useful for profiling
+    "bf16": {"enabled": False},
+    "fp16": {"enabled": True},
+    "zero_allow_untested_optimizer": True,
+    "wall_clock_breakdown": False,
+    # "overlap_comm": True,
+    # "use_all_reduce_for_fetch_params": True,
 }
 
 
