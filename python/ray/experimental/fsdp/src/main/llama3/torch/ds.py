@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 logger.info("Welcome to Downton Abbey!")
 
 deepspeed_config_dict = {
-    "train_batch_size": 2,  # Will be overwritten by training loop logic
+    "train_batch_size": 4,  # Will be overwritten by training loop logic
     "train_micro_batch_size_per_gpu": 1,
     "gradient_accumulation_steps": 1,
     "gradient_clipping": 1.0,
@@ -125,6 +125,7 @@ def run_torch_fsdp(args: Dict[str, Any]) -> None:
 
     # For tracking time
     elapses = defaultdict(list)
+    elapses_us = []
 
     # Training loop
     for i in range(args["num_iters"]):
@@ -174,11 +175,12 @@ def run_torch_fsdp(args: Dict[str, Any]) -> None:
 
         def log(key: str, elapse_ms: float):
             elapse_us = millis_to_micros(elapse_ms)
+            if key == "actor.total":
+                elapses_us.append(elapse_us)
             elapses[key].append(elapse_us)
-            if comm.get_rank() == 0:
-                logger.warning(
-                    f"rank: {comm.get_rank()}, {key} elapse: {elapse_us} us, percent: {round(elapse_ms / total_ms * 100, 1)}%"
-                )
+            logger.warning(
+                f"rank: {comm.get_rank()}, {key} elapse: {elapse_us} us, percent: {round(elapse_ms / total_ms * 100, 1)}%"
+            )
 
         if i > 0:
             log("total", total_ms)
@@ -192,11 +194,15 @@ def run_torch_fsdp(args: Dict[str, Any]) -> None:
             if comm.get_rank() == 0:
                 logger.warning("")
 
+    elapses_us = elapses_us[int(len(elapses) * 0.2) :]
+    elapse_avg = round(sum(elapses_us) / len(elapses_us))
+    logger.warning(f"Elapse avg: {elapse_avg}")
+
 
 if __name__ == "__main__":
     args = {
         "batch_size": 1,
         "seq_len": 1024,
-        "num_iters": 20,
+        "num_iters": 50,
     }
     run_torch_fsdp(args)
