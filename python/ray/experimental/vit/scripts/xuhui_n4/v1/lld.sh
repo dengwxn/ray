@@ -34,7 +34,6 @@ num_iters=20
 log_file=$output_path/actors.log
 
 python src/core/v1.py \
-	--num_iters $num_iters \
 	>$log_file 2>&1
 status=$?
 

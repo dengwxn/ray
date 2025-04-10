@@ -290,6 +290,7 @@ class TextWorker(BaseWorker):
 
     def reduce_activations(self, *activations):
         # Concat the activations of DP workers
+        activations = [act.to(self.device) for act in activations]
         return torch.cat(activations, dim=0)
 
     def scatter_activations(self, activations):
@@ -575,6 +576,7 @@ class VisionWorker(BaseWorker):
 
     def reduce_activations(self, *activations):
         # Concat the activations of DP workers
+        activations = [act.to(self.device) for act in activations]
         return torch.cat(activations, dim=0)
 
     def scatter_activations(self, activations):

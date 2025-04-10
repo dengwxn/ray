@@ -12,6 +12,7 @@ docker push dengwxn/ray-shunfeng:latest
 ## Run
 ```bash
 docker run -d --name ray-shunfeng-run \
+  --network=host
   --shm-size=128gb \
   --gpus all \
   --cap-add SYS_PTRACE \

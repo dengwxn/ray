@@ -19,13 +19,13 @@ logger.info("Welcome to Downton Abbey!")
 
 def main(
     # https://github.com/mlfoundations/open_clip/blob/main/docs/model_profile.csv
-    model_name: str = "ViT-L-14",
-    # model_name: str = "ViT-bigG-14",
+    # model_name: str = "ViT-L-14",
+    model_name: str = "ViT-bigG-14",
     bs_single: int = 16,
     num_tp_vision: int = 1,
-    num_dp_vision: int = 1,
+    num_dp_vision: int = 2,
     num_tp_text: int = 1,
-    num_dp_text: int = 1,
+    num_dp_text: int = 2,
     num_iters: int = 50,
 ):
     random_seed(998244353)
@@ -39,13 +39,11 @@ def main(
     )
 
     vision_actors = [
-        VisionWorker.options(
-            accelerator_type="H100",
-            num_gpus=1,
-            runtime_env={"env_vars": {"CUDA_VISIBLE_DEVICES": "1"}},
-        ).remote(model_name, num_dp_vision, num_tp_vision, num_dp_text),
+        VisionWorker.options(accelerator_type="H100").remote(
+            model_name, num_dp_vision, num_tp_vision, num_dp_text
+        )
+        for _ in range(num_dp_vision)
     ]
-    assert len(vision_actors) == num_dp_vision
     init_torch_distributed(vision_actors)
     ray.get([worker.init_fsdp_model.remote() for worker in vision_actors])
 
@@ -57,7 +55,7 @@ def main(
             num_tp_text,
             num_dp_vision,
         )
-        for _ in range(num_dp_text * num_tp_text)
+        for _ in range(num_dp_text)
     ]
     init_torch_distributed(text_actors)
     ray.get([worker.init_fsdp_model.remote() for worker in text_actors])
