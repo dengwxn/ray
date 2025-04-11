@@ -15,6 +15,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.info("Welcome to Downton Abbey!")
 
+# [TODO] Merge `compiled.Actor` and `interpreted.Actor` into one class.
+# [NOTE] `interpreted` is developing a version of interpreted NCCL calls.
+
 
 @ray.remote(num_gpus=1)
 class Actor:

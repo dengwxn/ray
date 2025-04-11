@@ -262,14 +262,15 @@ def do_exec_tasks(
         def log_op(
             method: str, sum: float, percent: float, avg: Optional[float] = None
         ):
-            if avg is None:
+            # if avg is None:
+            if True:
                 logger.warning(
                     f"{method} sum: {round(1.25 * sum)} us, sum/50: {round(1.25 * sum / 50)} us, percent: {percent}%"
                 )
-            else:
-                logger.warning(
-                    f"{method} sum: {round(1.25 * sum)} us, sum/50: {round(1.25 * sum / 50)} us, avg: {avg} us, percent: {percent}%"
-                )
+            # else:
+            #     logger.warning(
+            #         f"{method} sum: {round(1.25 * sum)} us, sum/50: {round(1.25 * sum / 50)} us, avg: {avg} us, percent: {percent}%"
+            #     )
 
         method_to_percent: Dict[str, float] = {}
         total_us = sum(method_to_elapse.values())
