@@ -1,4 +1,8 @@
+import csv
 import logging
+import os
+from collections import defaultdict
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import fire
@@ -25,6 +29,11 @@ def get_timing_event() -> torch.cuda.Event:
 def get_elapse_us(start: torch.cuda.Event, end: torch.cuda.Event) -> int:
     elapse_us = round(start.elapsed_time(end) * 1e3)
     return elapse_us
+
+
+def get_avg(data: List[int]) -> int:
+    avg = round(sum(data) / len(data))
+    return avg
 
 
 @ray.remote(num_gpus=1)
@@ -64,13 +73,14 @@ class Actor:
         return elapses
 
 
-def benchmark(
+def benchmark_container(
     overlap: bool = False,
     num_iters: int = 50,
     size_comp: int = 1_00_000,
     num_comp: int = 12_000,
     size_comm: int = 1_000_000_000,
 ):
+    ray.init()
     num_iters_warmup = int(num_iters * 0.2)
     actors = [Actor.remote(size_comp, num_comp, size_comm) for _ in range(2)]
 
@@ -97,20 +107,109 @@ def benchmark(
 
     compiled_dag = dag.experimental_compile(_overlap_gpu_communication=overlap)
 
-    # elapses_us = []
+    key_to_elapses = defaultdict(list)
     for iter in range(num_iters):
-        elapses = ray.get(compiled_dag.execute(None))
+        actor_to_elapses = ray.get(compiled_dag.execute(None))
         if iter > num_iters_warmup and iter % 10 == 0:
-            logger.info(f"Iteration: {iter}, elapses: {elapses}")
-        # elapses_us.append(max(elapse_us))
+            logger.info(f"Iteration: {iter}, elapses: {actor_to_elapses}")
+        actor_elapse = {
+            key: get_avg([elapses[key] for elapses in actor_to_elapses])
+            for key in actor_to_elapses[0]
+        }
+        for key, value in actor_elapse.items():
+            key_to_elapses[key].append(value)
 
     compiled_dag.teardown()
 
-    # elapses_us = elapses_us[int(len(elapses_us) * 0.2) :]
-    # elapse_us_avg = round(sum(elapses_us) / len(elapses_us))
-    # logger.info(f"Elapse avg: {elapse_us_avg} us")
+    results = {
+        "overlap": overlap,
+        "num_iters": num_iters,
+        "size_comp": size_comp,
+        "num_comp": num_comp,
+        "size_comm": size_comm,
+    }
+    for key, elapses in key_to_elapses.items():
+        elapses = elapses[int(len(elapses) * 0.2) :]
+        elapse_avg = get_avg(elapses)
+        results[key] = elapse_avg
+    logger.info(f"results: {results}")
+
+    ray.shutdown()
+    return results
+
+
+def benchmark_single():
+    fire.Fire(benchmark_container)
+
+
+def benchmark_multi():
+    # Create a timestamped filename for the CSV
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    csv_filename = f"results/titan_n2/overlap/{timestamp}.csv"
+    os.makedirs(os.path.dirname(csv_filename), exist_ok=True)
+
+    # Create/open the CSV file
+    with open(csv_filename, "w", newline="") as csvfile:
+        # Define the CSV header
+        fieldnames = [
+            "num_iters",
+            "size_comp",
+            "num_comp",
+            "size_comm",
+            "overlap_off",
+            "overlap_off_comp",
+            "overlap_on",
+            "ratio_off_comp",
+            "ratio_off_comm",
+            "ratio_overlap_theory",
+            "ratio_overlap",
+        ]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        num_comps = [3_000 * i for i in range(1, 11)]
+        for num_comp in num_comps:
+            results_ov_off = benchmark_container(
+                overlap=False,
+                num_comp=num_comp,
+            )
+            results_ov_on = benchmark_container(
+                overlap=True,
+                num_comp=num_comp,
+            )
+            ratio_off_comp = round(
+                results_ov_off["comp"] / results_ov_off["e2e"] * 100, 2
+            )
+            ratio_off_comm = round(100 - ratio_off_comp, 2)
+            ratio_overlap_theory = round(
+                100 / max(ratio_off_comp, ratio_off_comm) * 100, 2
+            )
+            ratio_overlap = round(results_ov_off["e2e"] / results_ov_on["e2e"] * 100, 2)
+
+            # Organize results
+            results = {
+                "num_iters": results_ov_off["num_iters"],
+                "size_comp": results_ov_off["size_comp"],
+                "num_comp": results_ov_off["num_comp"],
+                "size_comm": results_ov_off["size_comm"],
+                "overlap_off": results_ov_off["e2e"],
+                "overlap_off_comp": results_ov_off["comp"],
+                "overlap_on": results_ov_on["e2e"],
+                "ratio_off_comp": ratio_off_comp,
+                "ratio_off_comm": ratio_off_comm,
+                "ratio_overlap_theory": ratio_overlap_theory,
+                "ratio_overlap": ratio_overlap,
+            }
+
+            # Write the results to CSV
+            writer.writerow(results)
+
+            # Still log to console for visibility
+            logger.info(f"results overlap: {results}")
+
+        logger.info(f"Benchmark results written to {os.path.abspath(csv_filename)}")
 
 
 if __name__ == "__main__":
-    ray.init()
-    fire.Fire(benchmark)
+    # benchmark_single()
+    benchmark_multi()
