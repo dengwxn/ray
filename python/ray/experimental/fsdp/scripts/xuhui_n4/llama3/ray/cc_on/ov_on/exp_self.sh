@@ -66,28 +66,28 @@ if [ $status -ne 0 ]; then
 	exit 1
 fi
 
-compare_files() {
-	local file1="$1"
-	local file2="$2"
+# compare_files() {
+# 	local file1="$1"
+# 	local file2="$2"
 
-	if [ ! -f "$file1" ]; then
-		echo -e "${RED}Error: File '$file1' does not exist${NC}"
-		exit 1
-	fi
-	if [ ! -f "$file2" ]; then
-		echo -e "${RED}Error: File '$file2' does not exist${NC}"
-		exit 1
-	fi
+# 	if [ ! -f "$file1" ]; then
+# 		echo -e "${RED}Error: File '$file1' does not exist${NC}"
+# 		exit 1
+# 	fi
+# 	if [ ! -f "$file2" ]; then
+# 		echo -e "${RED}Error: File '$file2' does not exist${NC}"
+# 		exit 1
+# 	fi
 
-	if ! diff "$file1" "$file2"; then
-		echo -e "${RED}ER${NC}"
-		if $debug; then
-			code "$file1"
-			code "$file2"
-		fi
-		exit 1
-	fi
-}
+# 	if ! diff "$file1" "$file2"; then
+# 		echo -e "${RED}ER${NC}"
+# 		if $debug; then
+# 			code "$file1"
+# 			code "$file2"
+# 		fi
+# 		exit 1
+# 	fi
+# }
 
 # file1="${output_path}/${timestamp}_model_0.log"
 # file2="${output_path}/${timestamp}_model_1.log"

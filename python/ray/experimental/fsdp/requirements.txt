@@ -2,3 +2,6 @@ accelerate
 # apt-get update && apt-get install -y cuda-toolkit
 transformers
 deepspeed
+fairscale
+fire
+tiktoken

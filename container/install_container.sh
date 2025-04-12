@@ -35,3 +35,5 @@ pip install -e . --verbose
 pip install pytest torch graphviz pvtx
 pip install -c requirements_compiled.txt -r requirements/lint-requirements.txt
 pip install --upgrade typing-extensions
+apt-get update && apt-get install -y cuda-toolkit
+pip install -r ray/experimental/fsdp/requirements.txt
