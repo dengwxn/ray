@@ -2,8 +2,9 @@ import functools
 import logging
 import os
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
+import fire
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
@@ -16,9 +17,12 @@ from ......core.common import (
     log_elapses_to_csv,
     millis_to_micros,
 )
-from ......core.config import parse_args
-from ......core.llama3.model import LLAMA_8B as LLAMA
-from ......core.llama3.model import BucketParameterBase, TransformerWrapped
+from ......core.llama3.model import (
+    LLAMA_1B,
+    LLAMA_8B,
+    BucketParameterBase,
+    TransformerWrapped,
+)
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(filename)s:%(lineno)d -- %(message)s",
@@ -29,11 +33,17 @@ logger.info("Welcome to Downton Abbey!")
 
 
 def run_torch_fsdp(
-    args: Dict[str, Any],
-) -> Tuple[Optional[List[List[torch.Tensor]]], int]:
+    output_path: str = "results/example",
+    latency_prefix: str = "latency",
+    model: str = "LLAMA_1B",
+    num_actors: int = 2,
+    num_iters: int = 50,
+    batch_size: int = 1,
+    seq_len: int = 1024,
+) -> None:
     num_gpus = torch.cuda.device_count()
-    assert num_gpus >= args["num_actors"]
-    world_size = args["num_actors"]
+    assert num_gpus >= num_actors
+    world_size = num_actors
 
     mp.set_start_method("spawn", force=True)
 
@@ -42,15 +52,22 @@ def run_torch_fsdp(
 
         mp.spawn(
             spawn_torch_fsdp,
-            args=(world_size, ranks_to_elapses, args),
+            args=(
+                world_size,
+                ranks_to_elapses,
+                model,
+                num_iters,
+                batch_size,
+                seq_len,
+            ),
             nprocs=world_size,
             join=True,
         )
 
         ranks_to_elapses_list = list(ranks_to_elapses[i] for i in range(world_size))
 
-    output_path = args["output_path"]
-    latency_prefix = args["latency_prefix"]
+    output_path = output_path
+    latency_prefix = latency_prefix
     metrics = [
         "total",
         "actor.total",
@@ -73,7 +90,10 @@ def spawn_torch_fsdp(
     rank: int,
     world_size: int,
     ranks_to_elapses: Dict[int, int],
-    args: Dict[str, Any],
+    model: str,
+    num_iters,
+    batch_size,
+    seq_len,
 ) -> None:
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "8888"
@@ -87,7 +107,7 @@ def spawn_torch_fsdp(
         torch.cuda.set_device(rank)
         torch.manual_seed(998244353)
 
-        model_args = LLAMA
+        model_args = LLAMA_1B if model == "LLAMA_1B" else LLAMA_8B
         logger.info(f"model_args: {model_args}")
         model = TransformerWrapped(model_args).to("cuda").half()
         size_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
@@ -106,13 +126,11 @@ def spawn_torch_fsdp(
         if rank == 0:
             logger.info(f"FSDP model: {fsdp_model}")
 
-        batch_size = args["batch_size"]
-        seq_len = args["seq_len"]
         criterion = torch.nn.CrossEntropyLoss()
         optimizer = torch.optim.AdamW(fsdp_model.parameters(), lr=1e-6)
         elapses = defaultdict(list)
 
-        for iter in range(args["num_iters"]):
+        for iter in range(num_iters):
             input_ids = torch.randint(
                 0,
                 model_args.vocab_size,
@@ -183,5 +201,4 @@ def spawn_torch_fsdp(
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    run_torch_fsdp(args)
+    fire.Fire(run_torch_fsdp)

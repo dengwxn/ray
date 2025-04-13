@@ -1,10 +1,11 @@
-import argparse
 import json
 import logging
 import os
 import subprocess
 import sys
 from datetime import datetime
+
+import fire
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(filename)s:%(lineno)d -- %(message)s",
@@ -36,15 +37,11 @@ def run_experiment(config):
     output_path = config["output_path"]
     os.makedirs(output_path, exist_ok=True)
 
-    # Clean existing files
-    for file in os.listdir(output_path):
-        if file.endswith(".csv") or file.endswith(".log"):
-            os.remove(os.path.join(output_path, file))
-
     # Save config to a JSON file in output_path
     config_file = os.path.join(output_path, "config.json")
     with open(config_file, "w") as f:
         json.dump(config, f, indent=4)
+    logger.info(f"Config: {config}")
     logger.info(f"Saved config to {config_file}")
 
     logger.info(f"Running {output_path}...")
@@ -52,7 +49,6 @@ def run_experiment(config):
     # Set up experiment parameters
     batch_size = config["batch_size"]
     seq_len = config["seq_len"]
-    num_partitions = config["num_partitions"]
     num_actors = config["num_actors"]
     num_iters = config["num_iters"]
     latency_prefix = "latency"
@@ -68,8 +64,6 @@ def run_experiment(config):
         str(batch_size),
         "--seq-len",
         str(seq_len),
-        "--num-partitions",
-        str(num_partitions),
         "--num-actors",
         str(num_actors),
         "--num-iters",
@@ -78,7 +72,6 @@ def run_experiment(config):
         output_path,
         "--latency-prefix",
         latency_prefix,
-        "--tracing",
     ]
 
     # Redirect output to log file
@@ -99,52 +92,14 @@ def run_experiment(config):
     return True, output_path, log_file
 
 
-def parse_args() -> argparse.Namespace:
-    # Parse command line arguments
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--folder",
-        type=str,
-        required=True,
-        help="Folder for experiments",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=1,
-        help="Batch size for experiments",
-    )
-    parser.add_argument(
-        "--seq-len",
-        type=int,
-        default=1024,
-        help="Sequence length for experiments",
-    )
-    parser.add_argument(
-        "--num-partitions",
-        type=int,
-        default=34,
-        help="Number of partitions",
-    )
-    parser.add_argument(
-        "--num-actors",
-        type=int,
-        default=2,
-        help="Number of actors",
-    )
-    parser.add_argument(
-        "--num-iters",
-        type=int,
-        default=20,
-        help="Number of iterations",
-    )
-    args = parser.parse_args()
-    return args
-
-
-def main():
-    args = parse_args()
-
+def benchmark_multi(
+    folder: str = "titan_n2",
+    model: str = "LLAMA_1B",
+    num_actors: int = 2,
+    num_iters: int = 50,
+    batch_size: int = 1,
+    seq_len: int = 1024,
+):
     # Get current working directory for debugging
     current_dir = os.getcwd()
     logger.info(f"Current working directory: {current_dir}")
@@ -160,16 +115,16 @@ def main():
             "settings": [
                 # {"cc": "off", "fp": "off", "num_actors": 1},
                 # {"cc": "off", "fp": "on", "num_actors": 1},
-                {"cc": "on", "fp": "on", "pf": "on", "num_actors": args.num_actors},
+                {"cc": "on", "fp": "on", "pf": "on", "num_actors": num_actors},
             ],
         },
         # Ray configurations
         {
             "framework": "ray",
             "settings": [
-                {"cc": "off", "ov": "off", "num_actors": 1},
-                {"cc": "on", "ov": "off", "num_actors": args.num_actors},
-                {"cc": "on", "ov": "on", "num_actors": args.num_actors},
+                # {"cc": "off", "ov": "off", "num_actors": 1},
+                # {"cc": "on", "ov": "off", "num_actors": num_actors},
+                {"cc": "on", "ov": "on", "num_actors": num_actors},
             ],
         },
     ]
@@ -181,27 +136,23 @@ def main():
         for setting in variant["settings"]:
             # Build path components based on settings
             components = []
-
-            # Add all available settings to path and module
             for key, value in setting.items():
                 if key != "num_actors":  # num_actors is not part of the path
                     components.append(f"{key}_{value}")
 
             # Construct paths
-            output_path = (
-                f"results/{args.folder}/llama3/{framework}/{'/'.join(components)}"
-            )
+            output_path = f"results/{folder}/llama3/{framework}/{'/'.join(components)}"
             module_path = f"ray.experimental.fsdp.src.main.llama3.{framework}.{'.'.join(components)}"
 
             # Create experiment config
             experiment = {
                 "output_path": output_path,
                 "module_path": module_path,
-                "batch_size": args.batch_size,
-                "seq_len": args.seq_len,
-                "num_partitions": args.num_partitions,
-                "num_actors": setting["num_actors"],
-                "num_iters": args.num_iters,
+                "model": model,
+                "batch_size": batch_size,
+                "seq_len": seq_len,
+                "num_actors": num_actors,
+                "num_iters": num_iters,
             }
 
             experiments.append(experiment)
@@ -212,4 +163,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    fire.Fire(benchmark_multi)
