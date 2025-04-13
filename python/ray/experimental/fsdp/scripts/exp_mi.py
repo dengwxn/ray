@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 from datetime import datetime
+from typing import List
 
 import fire
 
@@ -162,5 +163,25 @@ def benchmark_multi(
         run_experiment(config)
 
 
+def benchmark_v1(
+    folder: str = "v1",
+    model: str = "LLAMA_8B",
+    num_actors_l: List[int] = [2, 4, 6],
+    num_iters: int = 50,
+    batch_size: int = 1,
+    seq_len: int = 1024,
+):
+    for num_actors in num_actors_l:
+        benchmark_multi(
+            folder=folder,
+            model=model,
+            num_actors=num_actors,
+            num_iters=num_iters,
+            batch_size=batch_size,
+            seq_len=seq_len,
+        )
+
+
 if __name__ == "__main__":
-    fire.Fire(benchmark_multi)
+    # fire.Fire(benchmark_multi)
+    fire.Fire(benchmark_v1)
