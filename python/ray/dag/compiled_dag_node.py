@@ -241,6 +241,9 @@ def do_exec_tasks(
         if RAY_CGRAPH_ENABLE_NVTX_PROFILING:
             nvtx_profile.disable()
 
+        # [HACK] disable cupy timing for scalability benchmark
+        return
+
         if len(events) <= 1:
             return
 
@@ -770,6 +773,8 @@ class ExecutableTask:
         import cupy as cp
 
         def get_timing_event_cp() -> cp.cuda.Event:
+            # [HACK] disable cupy timing for scalability benchmark
+            return None
             ev = cp.cuda.Event()
             ev.record()
             return ev
