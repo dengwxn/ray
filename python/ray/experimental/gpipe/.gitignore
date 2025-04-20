@@ -1,3 +1,5 @@
 *.csv
 *.json
 *.log
+compiled_graph_schedule
+compiled_graph_schedule.png

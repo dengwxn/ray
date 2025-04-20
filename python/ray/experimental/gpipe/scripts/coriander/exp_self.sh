@@ -22,7 +22,7 @@ stage=(16 32 64)
 nbatch=(1 2 4 8 16 32 64 128 256)
 
 batch=(16 64 128)
-nstage=(1 2 4 8 16 32 64)
+nstage=(1 2 4 8 16 32 64 128 256)
 
 # nbatch_nstage=(
 # 	"1 1"
@@ -50,21 +50,24 @@ nstage=(1 2 4 8 16 32 64)
 # "2 2"
 # "3 3"
 # )
+nbatch_nstage=(
+	"1 1"
+)
 num_trials=10
 tensor_size=8192
 
-# for pair in "${nbatch_nstage[@]}"; do
-# 	read -r num_batches num_stages <<<"$pair"
-# 	log_file=$output_path/${num_batches}batch_${num_stages}stage.log
-# 	echo "Running $log_file..."
+for pair in "${nbatch_nstage[@]}"; do
+	read -r num_batches num_stages <<<"$pair"
+	log_file=$output_path/${num_batches}batch_${num_stages}stage.log
+	echo "Running $log_file..."
 
-# 	python -m ray.experimental.gpipe.src.main \
-# 		--num_microbatches $num_batches \
-# 		--num_stages $num_stages \
-# 		--num_trials $num_trials \
-# 		--tensor_size $tensor_size \
-# 		--verbose >$log_file 2>&1
-# done
+	python -m ray.experimental.gpipe.src.main \
+		--num_microbatches $num_batches \
+		--num_stages $num_stages \
+		--num_trials $num_trials \
+		--tensor_size $tensor_size \
+		--verbose >$log_file 2>&1
+done
 
 for num_stages in "${stage[@]}"; do
 	stage_dir=$output_path/${num_stages}stage
