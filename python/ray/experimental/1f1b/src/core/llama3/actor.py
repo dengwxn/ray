@@ -32,6 +32,8 @@ class LlamaActor:
         num_actors: int,
         tracing: bool,
     ):
+        torch.autograd.set_detect_anomaly(True)
+
         self.seed = 998244353
         self.device = torch.device(f"cuda:0")
 
@@ -209,13 +211,14 @@ class LlamaActor:
     def forward(
         self, idx: int, logits_as_input: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
+        print(f"rank_{self.rank}.fwd batch {idx}")
+
         self.num_batches_forwarded += 1
         if self.num_batches_forwarded == 1:
             self.update_tracing("start")
         if self.tracing:
             self.update_tracing("fw.starts")
 
-        print(f"rank_{self.rank}.fwd batch {idx}, {self.num_batches_forwarded}")
 
         assert idx < len(self.bparams)
         bparam = self.bparams[idx]
@@ -238,7 +241,8 @@ class LlamaActor:
             self.update_tracing("fw.ends")
         return output
 
-    def backward_loss(self, idx: int, logits: torch.Tensor) -> torch.Tensor:
+    def backward_first(self, idx: int, logits: torch.Tensor) -> torch.Tensor:
+        print(f"rank_{self.rank}.bwd_first batch {idx}")
         assert idx < len(self.bparams)
         bparam = self.bparams[idx]
 
@@ -250,6 +254,7 @@ class LlamaActor:
         return grad
 
     def backward_intra(self, idx: int, prev_grad: torch.Tensor) -> None:
+        print(f"rank_{self.rank}.bwd_intra batch {idx}")
         assert idx < len(self.bparams)
         bparam = self.bparams[idx]
 
@@ -262,43 +267,60 @@ class LlamaActor:
         assert grad is not None
         return grad
 
+    def backward_last(self, idx: int, prev_grad: torch.Tensor) -> None:
+        print(f"rank_{self.rank}.bwd_last batch {idx}")
+        assert idx < len(self.bparams)
+        bparam = self.bparams[idx]
+
+        assert prev_grad is not None
+        prev_grad = prev_grad.to(self.device)
+
+        bparam.logits_as_output.backward(prev_grad)
+
+        return None
+
     def backward(self, idx: int, data: torch.Tensor) -> Optional[torch.Tensor]:
+        print(f"rank_{self.rank}.fwd batch {idx}")
+
         if self.tracing:
             self.update_tracing("bw.starts")
 
         if self.rank == self.num_actors - 1:
-            output = self.backward_loss(idx, data)
+            output = self.backward_first(idx, data)
+        elif self.rank == 0:
+            output = self.backward_last(idx, data)
         else:
             output = self.backward_intra(idx, data)
 
-        if self.grad_acc:
-            self.grad_acc += output
-        else:
-            self.grad_acc = output
-        self.optimizer.step()
+        # if self.grad_acc:
+        #     self.grad_acc += output
+        # else:
+        #     self.grad_acc = output
+        # self.optimizer.step()
         
         if self.tracing:
             self.update_tracing("bw.ends")
         return output
 
-    def update(self, _backward) -> None:
+    def update(self, idx, data) -> None:
+        print(f"rank_{self.rank}.upd batch {idx}")
+
         if self.tracing:
             self.update_tracing("upd.starts")
 
         # assert idx < len(self.bparams)
         # bparam = self.bparams[idx]
-
-        assert self.grad_acc is not None
-
-        # self.optimizer.step()
-        self.optimizer.zero_grad()
+    
+        self.num_batches_updated += 1
+        if self.num_batches_updated == self.num_batches:
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+            self.update_tracing("end")
 
         if self.tracing:
             self.update_tracing("upd.ends")
-        self.num_batches_updated += 1
-        if self.num_batches_updated == self.num_batches:
-            print("UPDATING END")
-            self.update_tracing("end")
+
+        return data
 
 
 class LlamaActorOff:

@@ -85,12 +85,14 @@ def build_1f1b_dag(actors: List[LlamaActor], num_microbatches=4, num_lead_microb
             elif bwd_queues[k]:
                 idx, mb = bwd_queues[k].pop()
                 if k > 0:
-                    mb = worker.backward.bind(idx, mb).with_tensor_transport(transport="nccl")
+                    mb = worker.backward.bind(idx, mb)
+                    mb = worker.update.bind(idx, mb).with_tensor_transport(transport="nccl")
                     bwd_queues[k - 1].append([idx, mb])
                 else:
                     mb = worker.backward.bind(idx, mb)
-                    mb = worker.update.bind(mb)
+                    mb = worker.update.bind(idx, mb)
                     done.append(mb)
+                fwd_counter[k] += 1
       dag = ray.dag.MultiOutputNode(done)
     return dag.experimental_compile()
 
@@ -106,46 +108,16 @@ def train(
     model_prefix: str,
     tracing: bool,
 ) -> None:
-    # with InputNode() as inp:
-    #     b1_fw1 = actors[0].forward.bind(0, inp).with_tensor_transport(transport="nccl")
-
-    #     # PP
-    #     b2_fw1 = actors[0].forward.bind(1, inp).with_tensor_transport(transport="nccl")
-    #     b1_fw2 = actors[1].forward.bind(0, b1_fw1)
-
-    #     b1_bw1 = (
-    #         actors[1].backward.bind(0, b1_fw2).with_tensor_transport(transport="nccl")
-    #     )
-    #     b1_upd1 = actors[1].update.bind(0, inp)
-
-    #     # PP
-    #     b1_bw2 = actors[0].backward.bind(0, b1_bw1)
-    #     b1_upd2 = actors[0].update.bind(0, b1_bw2)
-    #     b2_fw2 = actors[1].forward.bind(1, b2_fw1)
-
-    #     b2_bw1 = (
-    #         actors[1].backward.bind(1, b2_fw2).with_tensor_transport(transport="nccl")
-    #     )
-    #     b2_upd1 = actors[1].update.bind(1, inp)
-
-    #     b2_bw2 = actors[0].backward.bind(1, b2_bw1)
-    #     b2_upd2 = actors[0].update.bind(1, b2_bw2)
-
-    #     updates = [b1_upd1, b1_upd2, b2_upd1, b2_upd2]
-    #     dag = MultiOutputNode(updates)
-
-    # compiled_dag = dag.experimental_compile()
     compiled_dag = build_1f1b_dag(actors, num_microbatches=num_microbatches, num_lead_microbatches=num_microbatches)
     compiled_dag.visualize(filename="compiled_graph",channel_details=True)
-    exit(1)
-    
+
     total_elapses: List[int] = []
     for iter in range(num_iters):
         for actor in actors:
             ray.get(actor.init_training.remote())
 
         start = get_start_time()
-        compiled_dag.execute(None)
+        ray.get(compiled_dag.execute(None))
         end = get_end_time()
         elapse_us = round((end - start) * 1e6)
 

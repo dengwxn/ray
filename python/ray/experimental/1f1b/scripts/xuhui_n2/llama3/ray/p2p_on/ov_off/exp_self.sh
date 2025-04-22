@@ -25,7 +25,7 @@ export TZ="America/Los_Angeles"
 timestamp=$(date '+%Y%m%d_%H%M%S')
 
 export RAY_DEDUP_LOGS=0
-export CUDA_VISIBLE_DEVICES=1
+# export CUDA_VISIBLE_DEVICES=1
 
 output_path=results/mfris/
 mkdir -p $output_path
@@ -33,7 +33,7 @@ rm -f ${output_path}/*.csv
 rm -f ${output_path}/*.log
 echo "Running $output_path..."
 
-batch_size=4
+batch_size=128
 seq_len=32
 num_batches=2
 num_partitions=2
