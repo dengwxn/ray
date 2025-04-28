@@ -36,6 +36,7 @@ def train(
     num_iters: int = 50,
     batch_size: int = 1,
     seq_len: int = 1024,
+    overlap: bool = True,
 ) -> None:
     ray.init()
 
@@ -129,7 +130,7 @@ def train(
 
         dag = MultiOutputNode(updates)
 
-    compiled_dag = dag.experimental_compile(_overlap_gpu_communication=True)
+    compiled_dag = dag.experimental_compile(_overlap_gpu_communication=overlap)
     ray.get([actor.init_and_set_shard_model.remote() for actor in actors])
 
     total_elapses: List[int] = []

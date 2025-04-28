@@ -34,7 +34,7 @@ echo "Running $output_path..."
 log_file=$output_path/actors.log
 
 deepspeed \
-	--num_gpus=2 \
+	--num_gpus=4 \
 	src/main/llama3/torch/ds.py \
 	>$log_file 2>&1
 status=$?

@@ -7,10 +7,11 @@ from typing import Any, Dict
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../..")))
 
 import deepspeed
+import fire
 import torch
 from deepspeed import comm
 from src.core.common import get_timing_event_torch, millis_to_micros
-from src.core.llama3.model import LLAMA_3B as LLAMA
+from src.core.llama3.model import LLAMA_1B, LLAMA_8B
 from src.core.llama3.model import (
     BucketParameterFirst,
     BucketParameterLast,
@@ -27,22 +28,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.info("Welcome to Downton Abbey!")
 
-deepspeed_config_dict = {
-    "train_batch_size": 4,  # Will be overwritten by training loop logic
-    "train_micro_batch_size_per_gpu": 1,
-    "gradient_accumulation_steps": 1,
-    "gradient_clipping": 1.0,
-    "zero_optimization": {
-        "stage": 3,
-    },
-    "bf16": {"enabled": False},
-    "fp16": {"enabled": True},
-    "zero_allow_untested_optimizer": True,
-    "wall_clock_breakdown": False,
-    # "overlap_comm": True,
-    # "use_all_reduce_for_fetch_params": True,
-}
-
 
 def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
@@ -52,12 +37,36 @@ def set_seed(seed: int) -> None:
     torch.backends.cudnn.benchmark = False
 
 
-def run_torch_fsdp(args: Dict[str, Any]) -> None:
+def run_torch_fsdp(
+    output_path: str = "results/example",
+    latency_prefix: str = "latency",
+    local_rank: int = 0,
+    model: str = "LLAMA_1B",
+    num_actors: int = 2,
+    num_iters: int = 50,
+    batch_size: int = 1,
+    seq_len: int = 1024,
+) -> None:
     logger = logging.getLogger(__name__)
     set_seed(998244353)
 
-    model_args = LLAMA
-    logger.info(f"model_args: {model_args}")
+    deepspeed_config_dict = {
+        "train_batch_size": num_actors,
+        "train_micro_batch_size_per_gpu": 1,
+        "gradient_accumulation_steps": 1,
+        "gradient_clipping": 1.0,
+        "zero_optimization": {
+            "stage": 3,
+        },
+        "bf16": {"enabled": False},
+        "fp16": {"enabled": True},
+        "zero_allow_untested_optimizer": True,
+        "wall_clock_breakdown": False,
+        "overlap_comm": True,
+        # "use_all_reduce_for_fetch_params": True,
+    }
+
+    model_args = LLAMA_1B if model == "LLAMA_1B" else LLAMA_8B
 
     # Create model
     model = TransformerWrapped(model_args).half()
@@ -67,12 +76,8 @@ def run_torch_fsdp(args: Dict[str, Any]) -> None:
 
     # Create a simple scheduler
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=args["num_iters"], eta_min=1e-7
+        optimizer, T_max=num_iters, eta_min=1e-7
     )
-
-    # Create random data for training
-    batch_size = args["batch_size"]
-    seq_len = args["seq_len"]
 
     # Creating random dataset
     def get_random_batch():
@@ -128,7 +133,7 @@ def run_torch_fsdp(args: Dict[str, Any]) -> None:
     elapses_us = []
 
     # Training loop
-    for i in range(args["num_iters"]):
+    for i in range(num_iters):
         # Get batch from dataloader (it will cycle through if needed)
         try:
             input_ids, target_ids = next(train_iter)
@@ -200,9 +205,4 @@ def run_torch_fsdp(args: Dict[str, Any]) -> None:
 
 
 if __name__ == "__main__":
-    args = {
-        "batch_size": 1,
-        "seq_len": 1024,
-        "num_iters": 50,
-    }
-    run_torch_fsdp(args)
+    fire.Fire(run_torch_fsdp)

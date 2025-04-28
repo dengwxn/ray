@@ -4,7 +4,7 @@ import os
 import subprocess
 import sys
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 import fire
 
@@ -74,6 +74,8 @@ def run_experiment(config):
         "--latency-prefix",
         latency_prefix,
     ]
+    if "overlap" in config:
+        command += ["--overlap", str(config["overlap"])]
 
     # Redirect output to log file
     with open(log_file, "w") as f:
@@ -100,6 +102,7 @@ def benchmark_multi(
     num_iters: int = 50,
     batch_size: int = 1,
     seq_len: int = 1024,
+    overlap: Optional[bool] = None,
 ):
     # Get current working directory for debugging
     current_dir = os.getcwd()
@@ -110,15 +113,15 @@ def benchmark_multi(
 
     # Define template variations
     variations = [
-        # Torch configurations
-        {
-            "framework": "torch",
-            "settings": [
-                # {"cc": "off", "fp": "off", "num_actors": 1},
-                # {"cc": "off", "fp": "on", "num_actors": 1},
-                {"cc": "on", "fp": "on", "pf": "on", "num_actors": num_actors},
-            ],
-        },
+        # # Torch configurations
+        # {
+        #     "framework": "torch",
+        #     "settings": [
+        #         # {"cc": "off", "fp": "off", "num_actors": 1},
+        #         # {"cc": "off", "fp": "on", "num_actors": 1},
+        #         {"cc": "on", "fp": "on", "pf": "on", "num_actors": num_actors},
+        #     ],
+        # },
         # Ray configurations
         {
             "framework": "ray",
@@ -128,6 +131,13 @@ def benchmark_multi(
                 {"cc": "on", "ov": "on", "num_actors": num_actors},
             ],
         },
+        # # Deepspeed configurations
+        # {
+        #     "framework": "deepspeed",
+        #     "settings": [
+        #         {"zero": "on", "num_actors": num_actors},
+        #     ],
+        # },
     ]
 
     # Generate experiments from template
@@ -156,7 +166,14 @@ def benchmark_multi(
                 "num_iters": num_iters,
             }
 
-            experiments.append(experiment)
+            if overlap is not None:
+                # Add overlap if specified
+                # for o in [True, False]:
+                for o in [False]:
+                    experiment["overlap"] = o
+                    experiments.append(experiment)
+            else:
+                experiments.append(experiment)
 
     # Run experiments sequentially
     for config in experiments:
@@ -179,9 +196,31 @@ def benchmark_v1(
             num_iters=num_iters,
             batch_size=batch_size,
             seq_len=seq_len,
+            overlap=False,
+        )
+
+
+def benchmark_v2(
+    folder: str = "v2",
+    model: str = "LLAMA_1B",
+    # num_actors_l: List[int] = [2, 4, 6],
+    num_actors_l: List[int] = [2],
+    num_iters: int = 50,
+    batch_size: int = 1,
+    seq_len: int = 1024,
+):
+    for num_actors in num_actors_l:
+        benchmark_multi(
+            folder=folder,
+            model=model,
+            num_actors=num_actors,
+            num_iters=num_iters,
+            batch_size=batch_size,
+            seq_len=seq_len,
         )
 
 
 if __name__ == "__main__":
     # fire.Fire(benchmark_multi)
     fire.Fire(benchmark_v1)
+    # fire.Fire(benchmark_v2)

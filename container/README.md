@@ -3,28 +3,28 @@
 ## Build
 ```bash
 cd ray
-docker build -t ray-shunfeng .
-docker images | grep ray-shunfeng
-docker tag ray-shunfeng:latest dengwxn/ray-shunfeng:latest
-docker push dengwxn/ray-shunfeng:latest
+docker build -t ray-blacklist .
+docker images | grep ray-blacklist
+docker tag ray-blacklist:latest dengwxn/ray-blacklist:latest
+docker push dengwxn/ray-blacklist:latest
 ```
 
 ## Run
 ```bash
-docker run -d --name ray-shunfeng-run \
+docker run -d --name ray-blacklist-run \
   --network=host \
   --shm-size=128gb \
   --gpus all \
   --cap-add SYS_PTRACE \
   -v $(pwd):/app \
-  -it ray-shunfeng
-docker exec -it ray-shunfeng-run zsh
+  -it ray-blacklist
+docker exec -it ray-blacklist-run zsh
 ```
 
 ## Clean
 ```bash
-docker stop ray-shunfeng-run
-docker rm ray-shunfeng-run
+docker stop ray-blacklist-run
+docker rm ray-blacklist-run
 ```
 
 ## Install
