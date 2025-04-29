@@ -33,18 +33,18 @@ rm -f ${output_path}/*.csv
 rm -f ${output_path}/*.log
 echo "Running $output_path..."
 
-batch_size=128
+batch_size=64
 seq_len=32
 num_batches=2
 num_partitions=2
 num_actors=2
-num_iters=10
+num_iters=3
 latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
 
 # RAY_CGRAPH_VISUALIZE_SCHEDULE=1 \
-python -m ray.experimental.1f1b.src.main.llama3.ray.p2p_on.ov_off \
+python -m ray.experimental.1f1b.src.main.llama3.ray.p2p_on.single \
 	--batch-size $batch_size \
 	--seq-len $seq_len \
 	--num-batches $num_batches \

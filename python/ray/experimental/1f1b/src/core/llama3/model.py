@@ -342,7 +342,7 @@ class TransformerBlock(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, params: ModelArgs):
+    def __init__(self, params: ModelArgs, device):
         super().__init__()
         self.params = params
         self.vocab_size = params.vocab_size
@@ -376,15 +376,16 @@ class Transformer(nn.Module):
             params.dim,
             # init_method=lambda x: x,
         )
-        log_size(self.tok_embeddings)
-
+        # log_size(self.tok_embeddings)
+        
+        print(f"Building transformer with {params.n_layers} layers")
         self.layers = torch.nn.ModuleList()
         for layer_id in range(params.n_layers):
             self.layers.append(TransformerBlock(layer_id, params))
-        log_size(self.layers[0])
+        # log_size(self.layers[0])
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
-        log_size(self.norm)
+        # log_size(self.norm)
         # self.output = ColumnParallelLinear(
         self.output = torch.nn.Linear(
             params.dim,
@@ -392,13 +393,13 @@ class Transformer(nn.Module):
             bias=False,
             # init_method=lambda x: x,
         )
-        log_size(self.output)
+        # log_size(self.output)
 
         self.freqs_cis = precompute_freqs_cis(
             params.dim // params.n_heads,
             params.max_seq_len * 2,
             params.rope_theta,
-        )
+        ).to(device)
 
     def forward(self, tokens: torch.Tensor):
         seqlen = tokens.shape[1]
@@ -406,7 +407,7 @@ class Transformer(nn.Module):
 
         # self.freqs_cis = self.freqs_cis.to(h.device)
         start_pos = 0
-        freqs_cis = self.freqs_cis.to(h.device)[start_pos : start_pos + seqlen]
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
         mask = None
         if seqlen > 1:

@@ -10,7 +10,7 @@ from .....core.common import (
 )
 from .....core.config import parse_args
 from .....core.llama3.actor import LlamaActor
-from .....core.llama3.model import LLAMA_DEBUG as LLAMA
+from .....core.llama3.model import LLAMA_3B as LLAMA
 from ray.dag import InputNode, MultiOutputNode
 
 logging.basicConfig(
@@ -76,7 +76,7 @@ def build_1f1b_dag(actors: List[LlamaActor], num_microbatches=4, num_lead_microb
             if fwd_counter[k] > 0 and fwd_queues[k]:
                 idx, mb = fwd_queues[k].pop(0) 
                 if k < num_workers - 1:
-                    mb = worker.forward.bind(idx, mb).with_tensor_transport(transport="nccl")
+                    mb = worker.forward.bind(idx, mb) #.with_tensor_transport(transport="nccl")
                     fwd_queues[k + 1].append([idx, mb])
                 else:  
                     mb = worker.forward.bind(idx, mb)
@@ -86,7 +86,7 @@ def build_1f1b_dag(actors: List[LlamaActor], num_microbatches=4, num_lead_microb
                 idx, mb = bwd_queues[k].pop()
                 if k > 0:
                     mb = worker.backward.bind(idx, mb)
-                    mb = worker.update.bind(idx, mb).with_tensor_transport(transport="nccl")
+                    mb = worker.update.bind(idx, mb) #.with_tensor_transport(transport="nccl")
                     bwd_queues[k - 1].append([idx, mb])
                 else:
                     mb = worker.backward.bind(idx, mb)
@@ -115,15 +115,13 @@ def train(
     for iter in range(num_iters):
         for actor in actors:
             ray.get(actor.init_training.remote())
-
+        
         start = get_start_time()
-        ray.get(compiled_dag.execute(None))
+        compiled_dag.execute(None)
         end = get_end_time()
         elapse_us = round((end - start) * 1e6)
-
-        if iter > 0:
-            logger.warning(f"iter: {iter}, elapse: {elapse_us} us")
-            total_elapses.append(elapse_us)
+        logger.warning(f"iter: {iter}, elapse: {elapse_us} us")
+        total_elapses.append(elapse_us)
 
         for actor in actors:
             ray.get(actor.finish_tracing.remote())
