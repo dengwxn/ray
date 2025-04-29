@@ -491,67 +491,50 @@ class SingleLlamaActor:
     ) -> torch.Tensor:
         # print(f"rank_{self.rank}.fwd batch {idx}")
 
-        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
-                record_shapes=True, 
-                profile_memory=True,
-                with_stack=True) as prof:
-            with record_function("forward"):
+        # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
+        #         record_shapes=True, 
+        #         profile_memory=True,
+        #         with_stack=True) as prof:
+        #     with record_function("forward"):
 
-                self.update_tracing("start")
-                if self.tracing:
-                    self.update_tracing("fw.starts")
+        self.update_tracing("start")
+        if self.tracing:
+            self.update_tracing("fw.starts")
+            
+        output = self.model.forward(self.input)
 
-                # output = self.model.forward(self.input)
+        if self.tracing:
+            self.update_tracing("fw.ends")
 
-                tokens = self.input
-                seqlen = tokens.shape[1]
-                h = self.model.tok_embeddings(tokens) if self.model.tok_embeddings else tokens
-                start_pos = 0
-                freqs_cis = self.model.freqs_cis[start_pos : start_pos + seqlen]
-                mask = None
-                if seqlen > 1:
-                    mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
-                    mask = torch.triu(mask, diagonal=1)
-                    mask = torch.hstack(
-                        [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
-                    ).type_as(h)
-                for layer in self.model.layers:
-                    h = layer(h, start_pos, freqs_cis, mask)
-                h = self.model.norm(h) if self.model.norm else h
-                output = self.model.output(h).float() if self.model.output else h
-
-                if self.tracing:
-                    self.update_tracing("fw.ends")
-
-        prof.export_chrome_trace(f"forward_single_ray_cg.json")
+        # prof.export_chrome_trace(f"forward_single_ray_cg.json")
         return output
 
     def backward(self, data: torch.Tensor) -> Optional[torch.Tensor]:
         # print(f"rank_{self.rank}.fwd batch {idx}")
-        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
-                record_shapes=True, 
-                profile_memory=True,
-                with_stack=True) as prof:
-            with record_function("backward"):
+        # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
+        #         record_shapes=True, 
+        #         profile_memory=True,
+        #         with_stack=True) as prof:
+        #     with record_function("backward"):
 
-                if self.tracing:
-                    self.update_tracing("bw.starts")
-                
-                grad = torch.randn(
-                    self.batch_size,
-                    self.seq_len,
-                    self.model_args.dim,
-                    device=data.device,
-                )
-                data.backward(grad)
-                self.optimizer.step()
-                self.optimizer.zero_grad()
+        if self.tracing:
+            self.update_tracing("bw.starts")
+        
+        grad = torch.randn(
+            self.batch_size,
+            self.seq_len,
+            self.model_args.dim,
+            device=data.device,
+        )
+        data.backward(grad)
+        self.optimizer.step()
+        self.optimizer.zero_grad()
 
-                if self.tracing:
-                    self.update_tracing("bw.ends")
-                self.update_tracing("end")
+        if self.tracing:
+            self.update_tracing("bw.ends")
+        self.update_tracing("end")
 
-        prof.export_chrome_trace(f"backward_single_ray_cg.json")
+        # prof.export_chrome_trace(f"backward_single_ray_cg.json")
         return
 
 

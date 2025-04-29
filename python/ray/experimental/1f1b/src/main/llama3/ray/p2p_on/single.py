@@ -48,10 +48,10 @@ def train(
     model_prefix: str,
     tracing: bool,
 ) -> None:
-    with InputNode() as inp:
-        dag = actor.forward.bind(inp)
-        dag = actor.backward.bind(dag)
-    compiled_dag = dag.experimental_compile()
+    # with InputNode() as inp:
+    #     dag = actor.forward.bind(inp)
+    #     dag = actor.backward.bind(dag)
+    # compiled_dag = dag.experimental_compile()
 
     total_elapses: List[int] = []
     for iter in range(num_iters):
@@ -59,9 +59,9 @@ def train(
         
         start = get_start_time()
         # ray cg
-        compiled_dag.execute(None)
+        # compiled_dag.execute(None)
         # ray
-        # out = actor.backward.remote(actor.forward.remote(None))
+        out = actor.backward.remote(actor.forward.remote(None))
         end = get_end_time()
         elapse_us = round((end - start) * 1e6)
         logger.warning(f"iter: {iter}, elapse: {elapse_us} us")
