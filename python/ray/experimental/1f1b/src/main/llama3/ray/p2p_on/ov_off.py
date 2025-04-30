@@ -158,7 +158,7 @@ def train(
 
     actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
     for actor_elapses in actors_to_elapses:
-        actor_elapses["total"] = total_elapses
+        actor_elapses["controller_total"] = total_elapses
 
     for rank, elapses in enumerate(actors_to_elapses):
         print(f"Actor {rank}")

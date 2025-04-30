@@ -35,10 +35,10 @@ echo "Running $output_path..."
 
 batch_size=64
 seq_len=32
-num_batches=2
+num_batches=4
 num_partitions=2
 num_actors=2
-num_iters=10
+num_iters=25
 latency_prefix=${timestamp}
 model_prefix=$output_path/${timestamp}_model
 log_file=$output_path/${timestamp}.log
