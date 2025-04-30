@@ -1,7 +1,9 @@
 import logging
 from typing import Any, Dict, List
 
+import torch
 import ray
+import numpy as np
 from .....core.common import (
     generate_1f1b_dag,
     get_end_time,
@@ -20,6 +22,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.info("Welcome to Downton Abbey!")
 
+
+def print_elapses(elapses, warmup=0.2):
+    for key, vals in elapses.items():
+        elapses[key] = vals[int(warmup * len(vals)):]
+    total_mean = np.mean(elapses["total"])
+
+    for key, vals in elapses.items():
+        # print(f"Rank {TEST_RANK} {key} last elapse: {vals[-1]}")
+        mean = np.mean(vals)
+        std = np.std(vals)
+        pct = (mean / total_mean * 100)
+        print(key, round(mean), round(std), round(pct))
 
 def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
     model_args = LLAMA
@@ -45,7 +59,7 @@ def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
         for i in range(num_actors)
     ]
 
-    return actors
+    return actors, model_args
 
 
 def build_1f1b_dag(actors: List[LlamaActor], num_microbatches=4, num_lead_microbatches=4):
@@ -99,6 +113,9 @@ def build_1f1b_dag(actors: List[LlamaActor], num_microbatches=4, num_lead_microb
 
 def train(
     actors: List[LlamaActor],
+    model_args,
+    batch_size,
+    seq_len,
     num_microbatches: int,
     num_partitions: int,
     num_iters: int,
@@ -111,16 +128,29 @@ def train(
     compiled_dag = build_1f1b_dag(actors, num_microbatches=num_microbatches, num_lead_microbatches=num_microbatches)
     compiled_dag.visualize(filename="compiled_graph",channel_details=True)
 
+    assert len(actors) == 2
+    actor1, actor2 = actors[0], actors[1]
+
     total_elapses: List[int] = []
     for iter in range(num_iters):
         for actor in actors:
             ray.get(actor.init_training.remote())
         
         start = get_start_time()
-        compiled_dag.execute(None)
+        out = compiled_dag.execute(None)
+        ray.get(out)
+        # mb1_fw = actor1.forward.remote(0, None)
+        # mb2_fw = actor1.forward.remote(1, None)
+        # mb1_bw = actor2.backward.remote(0, actor2.forward.remote(0, mb1_fw))
+        # mb2_bw = actor2.backward.remote(1, actor2.forward.remote(1, mb2_fw))
+        # mb1_out = actor1.backward.remote(0, mb1_bw)
+        # mb2_out = actor1.backward.remote(1, mb2_bw)
+        # ray.get(mb1_out)
+        # ray.get(mb2_out)
         end = get_end_time()
+
         elapse_us = round((end - start) * 1e6)
-        logger.warning(f"iter: {iter}, elapse: {elapse_us} us")
+        if iter % 5 == 0: logger.warning(f"iter: {iter}, elapse: {elapse_us} us")
         total_elapses.append(elapse_us)
 
         for actor in actors:
@@ -129,21 +159,20 @@ def train(
     actors_to_elapses = [ray.get(actor.fetch_traces.remote()) for actor in actors]
     for actor_elapses in actors_to_elapses:
         actor_elapses["total"] = total_elapses
-    metrics = LlamaActor.get_metrics(tracing)
-    log_elapses_to_csv(
-        actors_to_elapses,
-        output_path,
-        latency_prefix,
-        metrics,
-    )
 
+    for rank, elapses in enumerate(actors_to_elapses):
+        print(f"Actor {rank}")
+        print_elapses(elapses)
 
 def main(args: Dict[str, Any]) -> None:
     ray.init()
-    actors = init_actors(args)
+    actors, model_args = init_actors(args)
 
     train(
         actors,
+        model_args,
+        args["batch_size"],
+        args["seq_len"],
         args["num_batches"],
         args["num_partitions"],
         args["num_iters"],

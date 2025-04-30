@@ -33,8 +33,6 @@ class LlamaActor:
         num_actors: int,
         tracing: bool,
     ):
-        torch.autograd.set_detect_anomaly(True)
-
         self.seed = 998244353
         self.device = torch.device(f"cuda:0")
 
@@ -49,8 +47,8 @@ class LlamaActor:
         self.num_actors = num_actors
         self.tracing = tracing
 
-        self.input: Optional[torch.Tensor] = None
         self.target: Optional[torch.Tensor] = None
+        self.input: Optional[torch.Tensor] = None
 
         # manual pipeline
         layers_per_rank = model_args.n_layers // num_partitions
@@ -78,10 +76,11 @@ class LlamaActor:
         self.events: Dict[str, Any] = {}
         self.elapses: Dict[str, List] = defaultdict(list)
 
-    def init_training(self) -> None:
+    def init_training(self):
         torch.manual_seed(self.seed)
         self.seed += 1
-
+        self.num_batches_forwarded = 0
+        self.num_batches_updated = 0
         self.input = torch.randint(
             0,
             self.model_args.vocab_size,
@@ -95,119 +94,22 @@ class LlamaActor:
             requires_grad=True,
             device=self.device,
         )
-
-        self.num_batches_forwarded = 0
-        self.num_batches_updated = 0
         for bparam in self.bparams:
             bparam.logits_as_input = None
             bparam.logits_as_output = None
-        
-        self.grad_acc = None
+        self.model.init_tracing()
 
-        self.events: Dict[str, Any] = {
-            "start": [],
-            "end": [],
-            "fw.starts": [],
-            "fw.ends": [],
-            "bw.starts": [],
-            "bw.ends": [],
-            "upd.starts": [],
-            "upd.ends": [],
-        }
+    def fetch_traces(self):
+        return self.model.fetch_traces()
 
-        torch.cuda.synchronize()
+    def update_tracing(self, key):
+        return self.model.update_tracing(key)
 
-    @classmethod
-    def get_metrics(cls, tracing: bool) -> List[str]:
-        if not tracing:
-            return [
-                "total",
-                "actor.total",
-            ]
-        else:
-            return [
-                "total",
-                "actor.total",
-                "fw.total",
-                "bw.total",
-                "upd.total",
-            ]
-
-    def fetch_traces(self) -> Dict[str, List[float]]:
-        return self.elapses
-
-    def update_tracing(self, key: str) -> None:
-        event = torch.cuda.Event(enable_timing=True)
-        event.record()
-        assert key in self.events
-        self.events[key].append(event)
-
-    def finish_tracing(self) -> None:
-        torch.cuda.synchronize()
-        logger = logging.getLogger(__name__)
-        # logger.warning(f"Actor {self.rank} finished iteration {self.it}")
-        self.it += 1
-        if self.it <= 1:
-            return
-
-        assert len(self.events["start"]) == 1
-        assert len(self.events["end"]) == 1
-        total = self.events["start"][0].elapsed_time(self.events["end"][0])
-        # print("iter total: ", round(total))
-
-        def log(key: str, total_ms: float, count: int = 1) -> None:
-            total_us = millis_to_micros(total_ms)
-            self.elapses[key].append(total_us)
-            # if count == 1:
-            #     logger.warning(
-            #         f"{key}: {total_us} us, percent: {round(total_ms / total * 100, 1)}%"
-            #     )
-            # else:
-            #     avg_us = round(total_us / count)
-            #     logger.warning(
-            #         f"{key}: {total_us} us, avg: {avg_us} us, count: {count}, percent: {round(total_ms / total * 100, 1)}%"
-            #     )
-
-        log(
-            "actor.total",
-            total,
-        )
-        if self.tracing:
-            fw_total = sum(
-                [
-                    fw_start.elapsed_time(fw_end)
-                    for fw_start, fw_end in zip(
-                        self.events["fw.starts"],
-                        self.events["fw.ends"],
-                    )
-                ]
-            )
-            bw_total = sum(
-                [
-                    bw_start.elapsed_time(bw_end)
-                    for bw_start, bw_end in zip(
-                        self.events["bw.starts"],
-                        self.events["bw.ends"],
-                    )
-                ]
-            )
-            upd_total = sum(
-                [
-                    bw_upd_start.elapsed_time(bw_upd_end)
-                    for bw_upd_start, bw_upd_end in zip(
-                        self.events["upd.starts"],
-                        self.events["upd.ends"],
-                    )
-                ]
-            )
-
-            log("fw.total", fw_total, len(self.events["fw.starts"]))
-            log("bw.total", bw_total, len(self.events["bw.starts"]))
-            log("upd.total", upd_total, len(self.events["upd.starts"]))
-        # logger.warning("")
+    def finish_tracing(self):
+        return self.model.finish_tracing()
 
     def forward(
-        self, idx: int, logits_as_input: Optional[torch.Tensor] = None
+        self, idx: int, logits_as_input: torch.Tensor
     ) -> torch.Tensor:
         # print(f"rank_{self.rank}.fwd batch {idx}")
 
@@ -220,9 +122,8 @@ class LlamaActor:
         self.num_batches_forwarded += 1
         if self.num_batches_forwarded == 1:
             self.update_tracing("start")
-        if self.tracing:
-            self.update_tracing("fw.starts")
-
+        # if self.tracing:
+        #     self.update_tracing("fw.starts")
 
         assert idx < len(self.bparams)
         bparam = self.bparams[idx]
@@ -239,18 +140,19 @@ class LlamaActor:
             logits_as_output = self.model.forward(logits_as_input)
             output = logits_as_output
 
-        if self.tracing:
-            self.update_tracing("fw.ends")
+        # if self.tracing:
+        #     self.update_tracing("fw.ends")
 
         # prof.export_chrome_trace(f"forward_rank{self.rank}.json")
-        return output
+        return logits_as_output
 
     def backward_first(self, idx: int, logits: torch.Tensor) -> torch.Tensor:
         # print(f"rank_{self.rank}.bwd_first batch {idx}")
 
         assert idx < len(self.bparams)
         bparam = self.bparams[idx]
-
+        
+        bparam.logits_as_input.requires_grad_()
         loss = self.criterion(logits, self.target)
         loss.backward()
         grad = bparam.logits_as_input.grad
@@ -321,12 +223,6 @@ class LlamaActor:
         #         profile_memory=True,
         #         with_stack=True) as prof:
         #     with record_function("update"):
-
-        if self.tracing:
-            self.update_tracing("upd.starts")
-
-        # assert idx < len(self.bparams)
-        # bparam = self.bparams[idx]
     
         self.num_batches_updated += 1
         if self.num_batches_updated == self.num_batches:
@@ -334,208 +230,8 @@ class LlamaActor:
             self.optimizer.zero_grad()
             self.update_tracing("end")
 
-        if self.tracing:
-            self.update_tracing("upd.ends")
-
         # prof.export_chrome_trace(f"update_rank{self.rank}.json")
         return data
-
-@ray.remote
-class SingleLlamaActor:
-    def __init__(
-        self,
-        model_args,
-        batch_size: int,
-        seq_len: int,
-        tracing: bool,
-    ):
-        torch.autograd.set_detect_anomaly(True)
-
-        self.seed = 998244353
-        self.device = torch.device(f"cuda:0")
-
-        logger.info(f"Single rank: device {self.device}")
-        # logger.info(f"model_args: {model_args}")
-        self.model_args = model_args
-        self.batch_size = batch_size
-        self.seq_len = seq_len
-        self.tracing = tracing
-
-        self.input: Optional[torch.Tensor] = None
-        self.target: Optional[torch.Tensor] = None
-
-        # instantiate model
-        model = Transformer(model_args, self.device)
-        model.norm = None
-        model.output = None
-        model.to(self.device)
-        self.model = model
-
-        self.criterion = torch.nn.CrossEntropyLoss()
-        self.optimizer = torch.optim.AdamW(model.parameters(), lr=1e-6)
-
-        self.it = 0
-        self.events: Dict[str, Any] = {}
-        self.elapses: Dict[str, List] = defaultdict(list)
-
-    def init_training(self) -> None:
-        torch.manual_seed(self.seed)
-        self.seed += 1
-
-        self.input = torch.randint(
-            0,
-            self.model_args.vocab_size,
-            (self.batch_size, self.seq_len),
-            device=self.device,
-        )
-        self.target = torch.randn(
-            self.batch_size,
-            self.model_args.dim,
-            requires_grad=True,
-            device=self.device,
-        )
-        
-        self.grad_acc = None
-
-        self.events: Dict[str, Any] = {
-            "start": [],
-            "end": [],
-            "fw.starts": [],
-            "fw.ends": [],
-            "bw.starts": [],
-            "bw.ends": [],
-        }
-
-        torch.cuda.synchronize()
-
-    @classmethod
-    def get_metrics(cls, tracing: bool) -> List[str]:
-        if not tracing:
-            return [
-                "total",
-                "actor.total",
-            ]
-        else:
-            return [
-                "total",
-                "actor.total",
-                "fw.total",
-                "bw.total",
-            ]
-
-    def fetch_traces(self) -> Dict[str, List[float]]:
-        return self.elapses
-
-    def update_tracing(self, key: str) -> None:
-        event = torch.cuda.Event(enable_timing=True)
-        event.record()
-        assert key in self.events
-        self.events[key].append(event)
-
-    def finish_tracing(self) -> None:
-        torch.cuda.synchronize()
-        logger = logging.getLogger(__name__)
-        # logger.warning(f"Actor {self.rank} finished iteration {self.it}")
-        self.it += 1
-        if self.it <= 1:
-            return
-
-        assert len(self.events["start"]) == 1
-        assert len(self.events["end"]) == 1
-        total = self.events["start"][0].elapsed_time(self.events["end"][0])
-        # print("iter total: ", round(total))
-
-        def log(key: str, total_ms: float, count: int = 1) -> None:
-            total_us = millis_to_micros(total_ms)
-            self.elapses[key].append(total_us)
-            # if count == 1:
-            #     logger.warning(
-            #         f"{key}: {total_us} us, percent: {round(total_ms / total * 100, 1)}%"
-            #     )
-            # else:
-            #     avg_us = round(total_us / count)
-            #     logger.warning(
-            #         f"{key}: {total_us} us, avg: {avg_us} us, count: {count}, percent: {round(total_ms / total * 100, 1)}%"
-            #     )
-
-        log(
-            "actor.total",
-            total,
-        )
-        if self.tracing:
-            fw_total = sum(
-                [
-                    fw_start.elapsed_time(fw_end)
-                    for fw_start, fw_end in zip(
-                        self.events["fw.starts"],
-                        self.events["fw.ends"],
-                    )
-                ]
-            )
-            bw_total = sum(
-                [
-                    bw_start.elapsed_time(bw_end)
-                    for bw_start, bw_end in zip(
-                        self.events["bw.starts"],
-                        self.events["bw.ends"],
-                    )
-                ]
-            )
-
-            log("fw.total", fw_total, len(self.events["fw.starts"]))
-            log("bw.total", bw_total, len(self.events["bw.starts"]))
-        # logger.warning("")
-
-    def forward(
-        self, logits_as_input: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
-        # print(f"rank_{self.rank}.fwd batch {idx}")
-
-        # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
-        #         record_shapes=True, 
-        #         profile_memory=True,
-        #         with_stack=True) as prof:
-        #     with record_function("forward"):
-
-        self.update_tracing("start")
-        if self.tracing:
-            self.update_tracing("fw.starts")
-            
-        output = self.model.forward(self.input)
-
-        if self.tracing:
-            self.update_tracing("fw.ends")
-
-        # prof.export_chrome_trace(f"forward_single_ray_cg.json")
-        return output
-
-    def backward(self, data: torch.Tensor) -> Optional[torch.Tensor]:
-        # print(f"rank_{self.rank}.fwd batch {idx}")
-        # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
-        #         record_shapes=True, 
-        #         profile_memory=True,
-        #         with_stack=True) as prof:
-        #     with record_function("backward"):
-
-        if self.tracing:
-            self.update_tracing("bw.starts")
-        
-        grad = torch.randn(
-            self.batch_size,
-            self.seq_len,
-            self.model_args.dim,
-            device=data.device,
-        )
-        data.backward(grad)
-        self.optimizer.step()
-        self.optimizer.zero_grad()
-
-        if self.tracing:
-            self.update_tracing("bw.ends")
-        self.update_tracing("end")
-
-        # prof.export_chrome_trace(f"backward_single_ray_cg.json")
-        return
 
 
 class LlamaActorOff:

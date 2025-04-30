@@ -344,19 +344,14 @@ class TransformerBlock(nn.Module):
 class Transformer(nn.Module):
     def __init__(self, params: ModelArgs, device):
         super().__init__()
+        self.device = device
         self.params = params
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
 
-        # buckets = [
-        #     "VocabParallelEmbedding",
-        #     [
-        #         "Attention",
-        #         "FeedForward",
-        #         "RMSNorm * 2",
-        #     ],
-        #     "ColumnParallelLinear",
-        # ]
+        self.fwd_time = 0
+        self.events: Dict[str, Any] = {}
+        self.elapses: Dict[str, List] = defaultdict(list)
 
         def log_size(layer, indent=0):
             num_params = sum(p.numel() for p in layer.parameters())
@@ -370,30 +365,25 @@ class Transformer(nn.Module):
             for _, child in layer.named_children():
                 log_size(child, indent + 1)
 
-        # self.tok_embeddings = VocabParallelEmbedding(
         self.tok_embeddings = torch.nn.Embedding(
             params.vocab_size,
             params.dim,
-            # init_method=lambda x: x,
         )
-        # log_size(self.tok_embeddings)
-        
-        print(f"Building transformer with {params.n_layers} layers")
+        log_size(self.tok_embeddings)
+
         self.layers = torch.nn.ModuleList()
         for layer_id in range(params.n_layers):
             self.layers.append(TransformerBlock(layer_id, params))
-        # log_size(self.layers[0])
+        log_size(self.layers[0])
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
-        # log_size(self.norm)
-        # self.output = ColumnParallelLinear(
+        log_size(self.norm)
         self.output = torch.nn.Linear(
             params.dim,
             params.vocab_size,
             bias=False,
-            # init_method=lambda x: x,
         )
-        # log_size(self.output)
+        log_size(self.output)
 
         self.freqs_cis = precompute_freqs_cis(
             params.dim // params.n_heads,
@@ -401,24 +391,76 @@ class Transformer(nn.Module):
             params.rope_theta,
         ).to(device)
 
-    def forward(self, tokens: torch.Tensor):
+    def init_tracing(self):
+      self.events: Dict[str, Any] = {
+          "start": [],
+          "end": [],
+          "fw.starts": [],
+          "fw.ends": [],
+          "bw.starts": [],
+          "bw.ends": [],
+          "up.starts": [],
+          "up.ends": [],
+      }
+      self.fwd_total = 0
+      self.fwd_cnt = 0
+      torch.cuda.synchronize()
+
+    def fetch_traces(self) -> Dict[str, List[float]]:
+        return self.elapses
+
+    def update_tracing(self, key: str):
+        event = torch.cuda.Event(enable_timing=True)
+        event.record()
+        assert key in self.events
+        self.events[key].append(event)
+
+    def finish_tracing(self) -> None:
+        torch.cuda.synchronize()
+
+        assert len(self.events["start"]) == 1
+        assert len(self.events["end"]) == 1
+
+        def millis_to_micros(millis: float) -> int:
+            return round(millis * 1e3)
+
+        total = self.events["start"][0].elapsed_time(self.events["end"][0])
+        fw_total = sum(
+            [
+                fw_start.elapsed_time(fw_end)
+                for fw_start, fw_end in zip(
+                    self.events["fw.starts"],
+                    self.events["fw.ends"],
+                )
+            ]
+        )
+        bw_total = sum(
+            [
+                bw_start.elapsed_time(bw_end)
+                for bw_start, bw_end in zip(
+                    self.events["bw.starts"],
+                    self.events["bw.ends"],
+                )
+            ]
+        )
+        self.elapses["total"].append(millis_to_micros(total))
+        self.elapses["fwd_total"].append(millis_to_micros(fw_total))
+        self.elapses["bwd_total"].append(millis_to_micros(bw_total))
+
+    def forward(self, tokens: torch.TensorType):
+
+        self.update_tracing("fw.starts")
+
         seqlen = tokens.shape[1]
         h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
 
-        # self.freqs_cis = self.freqs_cis.to(h.device)
         start_pos = 0
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
         mask = None
         if seqlen > 1:
             mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
-
             mask = torch.triu(mask, diagonal=1)
-
-            # When performing key-value caching, we compute the attention scores
-            # only for the new sequence. Thus, the matrix of scores is of size
-            # (seqlen, cache_len + seqlen), and the only masked entries are (i, j) for
-            # j > cache_len + i, since row i corresponds to token cache_len + i.
             mask = torch.hstack(
                 [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
             ).type_as(h)
@@ -427,6 +469,9 @@ class Transformer(nn.Module):
             h = layer(h, start_pos, freqs_cis, mask)
         h = self.norm(h) if self.norm else h
         output = self.output(h).float() if self.output else h
+
+        self.update_tracing("fw.ends")
+
         return output
 
 
