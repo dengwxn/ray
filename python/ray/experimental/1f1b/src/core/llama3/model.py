@@ -425,6 +425,7 @@ class Transformer(nn.Module):
             return round(millis * 1e3)
 
         total = self.events["start"][0].elapsed_time(self.events["end"][0])
+        # print(f"num fwd calls: {len(self.events['fw.starts'])}")
         fw_total = sum(
             [
                 fw_start.elapsed_time(fw_end)
@@ -443,9 +444,19 @@ class Transformer(nn.Module):
                 )
             ]
         )
+        up_total = sum(
+            [
+                up_start.elapsed_time(up_end)
+                for up_start, up_end in zip(
+                    self.events["up.starts"],
+                    self.events["up.ends"],
+                )
+            ]
+        )
         self.elapses["total"].append(millis_to_micros(total))
         self.elapses["fwd_total"].append(millis_to_micros(fw_total))
         self.elapses["bwd_total"].append(millis_to_micros(bw_total))
+        self.elapses["upd_total"].append(millis_to_micros(up_total))
 
     def forward(self, tokens: torch.TensorType):
 

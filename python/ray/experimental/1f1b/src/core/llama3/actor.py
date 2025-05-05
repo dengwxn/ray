@@ -121,6 +121,7 @@ class LlamaActor:
 
         self.num_batches_forwarded += 1
         if self.num_batches_forwarded == 1:
+            torch.cuda.synchronize()
             self.update_tracing("start")
         # if self.tracing:
         #     self.update_tracing("fw.starts")
@@ -224,11 +225,18 @@ class LlamaActor:
         #         with_stack=True) as prof:
         #     with record_function("update"):
     
+        if self.tracing:
+            self.update_tracing("up.starts")
+
         self.num_batches_updated += 1
         if self.num_batches_updated == self.num_batches:
             self.optimizer.step()
             self.optimizer.zero_grad()
             self.update_tracing("end")
+
+        if self.tracing:
+            torch.cuda.synchronize()
+            self.update_tracing("up.ends")
 
         # prof.export_chrome_trace(f"update_rank{self.rank}.json")
         return data

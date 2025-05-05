@@ -59,7 +59,7 @@ def init_actors(args: Dict[str, Any]) -> List[LlamaActor]:
         for i in range(num_actors)
     ]
 
-    return actors, model_args
+    return actors
 
 
 def build_1f1b_dag(actors: List[LlamaActor], num_microbatches=4, num_lead_microbatches=4):
@@ -90,7 +90,7 @@ def build_1f1b_dag(actors: List[LlamaActor], num_microbatches=4, num_lead_microb
             if fwd_counter[k] > 0 and fwd_queues[k]:
                 idx, mb = fwd_queues[k].pop(0) 
                 if k < num_workers - 1:
-                    mb = worker.forward.bind(idx, mb) #.with_tensor_transport(transport="nccl")
+                    mb = worker.forward.bind(idx, mb).with_tensor_transport(transport="nccl")
                     fwd_queues[k + 1].append([idx, mb])
                 else:  
                     mb = worker.forward.bind(idx, mb)
@@ -100,7 +100,7 @@ def build_1f1b_dag(actors: List[LlamaActor], num_microbatches=4, num_lead_microb
                 idx, mb = bwd_queues[k].pop()
                 if k > 0:
                     mb = worker.backward.bind(idx, mb)
-                    mb = worker.update.bind(idx, mb) #.with_tensor_transport(transport="nccl")
+                    mb = worker.update.bind(idx, mb).with_tensor_transport(transport="nccl")
                     bwd_queues[k - 1].append([idx, mb])
                 else:
                     mb = worker.backward.bind(idx, mb)
@@ -108,14 +108,11 @@ def build_1f1b_dag(actors: List[LlamaActor], num_microbatches=4, num_lead_microb
                     done.append(mb)
                 fwd_counter[k] += 1
       dag = ray.dag.MultiOutputNode(done)
-    return dag.experimental_compile()
+    return dag.experimental_compile(_overlap_gpu_communication=True)
 
 
 def train(
     actors: List[LlamaActor],
-    model_args,
-    batch_size,
-    seq_len,
     num_microbatches: int,
     num_partitions: int,
     num_iters: int,
@@ -128,17 +125,15 @@ def train(
     compiled_dag = build_1f1b_dag(actors, num_microbatches=num_microbatches, num_lead_microbatches=num_microbatches)
     compiled_dag.visualize(filename="compiled_graph",channel_details=True)
 
-    assert len(actors) == 2
-    actor1, actor2 = actors[0], actors[1]
-
     total_elapses: List[int] = []
     for iter in range(num_iters):
         for actor in actors:
             ray.get(actor.init_training.remote())
         
+        torch.cuda.synchronize()
         start = get_start_time()
         out = compiled_dag.execute(None)
-        ray.get(out)
+        ray.get(out, timeout=600)
         # mb1_fw = actor1.forward.remote(0, None)
         # mb2_fw = actor1.forward.remote(1, None)
         # mb1_bw = actor2.backward.remote(0, actor2.forward.remote(0, mb1_fw))
@@ -166,13 +161,10 @@ def train(
 
 def main(args: Dict[str, Any]) -> None:
     ray.init()
-    actors, model_args = init_actors(args)
+    actors = init_actors(args)
 
     train(
         actors,
-        model_args,
-        args["batch_size"],
-        args["seq_len"],
         args["num_batches"],
         args["num_partitions"],
         args["num_iters"],
@@ -190,4 +182,5 @@ def main(args: Dict[str, Any]) -> None:
 
 if __name__ == "__main__":
     args = parse_args()
+    assert args["num_partitions"] == args["num_actors"]
     main(args)
