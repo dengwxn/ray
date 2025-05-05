@@ -86,7 +86,6 @@ class TorchDistCommunicator(Communicator):
         recv_buf: "torch.Tensor",
         op: ReduceOp = ReduceOp.SUM,
     ) -> None:
-        # [TODO] Use this for ray dag coll api.
         dist.all_reduce(send_buf)
         recv_buf.copy_(send_buf)
 
@@ -172,6 +171,7 @@ class Actor:
 def run_coll(
     devices: str = "1,2",
     world_size: int = 2,
+    comm: str = "create",
 ):
     logger.info(f"Running with CUDA devices {devices}...")
     os.environ["CUDA_VISIBLE_DEVICES"] = devices
@@ -179,14 +179,22 @@ def run_coll(
 
     actors = [Actor.remote(i, world_size) for i in range(world_size)]
     ray.get([actor.init_process_group.remote() for actor in actors], timeout=120)
-    communicator = TorchDistCommunicator(world_size, actors)
+    if comm == "create":
+        communicator = None
+    elif comm == "distributed":
+        communicator = TorchDistCommunicator(world_size, actors)
+    else:
+        raise ValueError(f"Unknown communicator: {comm}")
 
     with InputNode() as inp:
         tensors = [actor.run_send.bind(inp) for actor in actors]
         coll_tensors = collective.allreduce.bind(tensors, transport=communicator)
         dag = MultiOutputNode(coll_tensors)
 
-    compiled_dag = dag.experimental_compile(_default_communicator=communicator)
+    if comm == "distributed":
+        compiled_dag = dag.experimental_compile(_default_communicator=communicator)
+    else:
+        compiled_dag = dag.experimental_compile()
 
     ray.get(compiled_dag.execute(None), timeout=120)
     ray.get([actor.get_time.remote() for actor in actors], timeout=120)
@@ -194,23 +202,23 @@ def run_coll(
     ray.shutdown()
 
 
-def run_coll_bench_w2():
+def run_coll_bench_w2(comm: str):
     for devices in ["0,1", "1,2", "2,3", "3,4", "4,5", "5,6", "6,7"]:
-        run_coll(devices, world_size=2)
+        run_coll(devices, world_size=2, comm=comm)
 
 
-def run_coll_bench_w4():
+def run_coll_bench_w4(comm: str):
     for devices in ["0,1,2,3", "4,5,6,7"]:
-        run_coll(devices, world_size=4)
+        run_coll(devices, world_size=4, comm=comm)
 
 
-def main(name: str):
+def main(name: str, comm: str):
     if name == "coll":
-        run_coll()
+        run_coll(comm=comm)
     elif name == "coll_bench_w2":
-        run_coll_bench_w2()
+        run_coll_bench_w2(comm=comm)
     elif name == "coll_bench_w4":
-        run_coll_bench_w4()
+        run_coll_bench_w4(comm=comm)
     else:
         logger.error(f"Unknown name: {name}")
 

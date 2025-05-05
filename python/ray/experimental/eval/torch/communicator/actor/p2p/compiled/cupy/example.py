@@ -1,5 +1,8 @@
 import logging
 import os
+
+os.environ["RAY_DEDUP_LOGS"] = "0"
+
 import time
 
 import fire
@@ -25,13 +28,11 @@ class Actor:
 
     def run_send(self, _):
         tensor = torch.zeros(1).to("cuda:0")
-        assert self.rank == 0
         tensor.fill_(1.0)
         self.end = get_time_perf_counter(sync=True)
         return tensor
 
     def run_recv(self, tensor: torch.Tensor):
-        assert self.rank == 1
         tensor += 1
         self.end = get_time_perf_counter(sync=True)
         return tensor
@@ -42,7 +43,9 @@ class Actor:
         time.sleep(1)
 
 
-def run_p2p():
+def run_p2p(devices: str = "1,2"):
+    logger.info(f"Running with CUDA devices {devices}...")
+    os.environ["CUDA_VISIBLE_DEVICES"] = devices
     ray.init()
 
     actors = [Actor.remote(i, 2) for i in range(2)]
@@ -50,20 +53,20 @@ def run_p2p():
     with InputNode() as inp:
         dag = actors[0].run_send.bind(inp).with_tensor_transport(transport="nccl")
         dag = actors[1].run_recv.bind(dag)
+        dag = actors[1].run_send.bind(dag).with_tensor_transport(transport="nccl")
+        dag = actors[0].run_recv.bind(dag)
 
     compiled_dag = dag.experimental_compile()
 
-    ray.get(compiled_dag.execute(None))
-    ray.get([actor.get_time.remote() for actor in actors])
+    ray.get(compiled_dag.execute(None), timeout=120)
+    ray.get([actor.get_time.remote() for actor in actors], timeout=120)
 
     ray.shutdown()
 
 
 def run_p2p_bench():
-    for devices in ["1,2", "2,3"]:
-        logger.info(f"Running with CUDA devices {devices}...")
-        os.environ["CUDA_VISIBLE_DEVICES"] = devices
-        run_p2p()
+    for devices in ["0,1", "1,2", "2,3", "3,4", "4,5", "5,6", "6,7"]:
+        run_p2p(devices)
 
 
 def main(name: str):

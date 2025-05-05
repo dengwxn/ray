@@ -1,5 +1,8 @@
 import logging
 import os
+
+os.environ["RAY_DEDUP_LOGS"] = "0"
+
 import time
 from typing import List, Optional, Tuple
 
