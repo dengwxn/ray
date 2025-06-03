@@ -173,7 +173,7 @@ class TestSelectNextNodes:
         set_sync_idxs_p2p(mock_graph, task_idx_1, task_idx_2)
         mock_actor_to_candidates = {
             fake_actor_1: [mock_graph[task_idx_1]],
-            fake_actor_2: [mock_graph[task_idx_2]],
+            fake_actor_2: [],
         }
         next_nodes = _select_next_nodes(mock_actor_to_candidates, mock_graph)
         assert next_nodes == [
@@ -246,11 +246,9 @@ class TestSelectNextNodes:
             mock_actor_to_candidates = {
                 fake_actor_1: [
                     mock_graph[task_idx_1_0],
-                    mock_graph[task_idx_1_1],
                 ],
                 fake_actor_2: [
                     mock_graph[task_idx_2_0],
-                    mock_graph[task_idx_2_1],
                 ],
             }
 
@@ -258,6 +256,12 @@ class TestSelectNextNodes:
             assert next_nodes == [
                 mock_graph[task_idx_1_0],
                 mock_graph[task_idx_2_1],
+            ]
+
+            next_nodes = _select_next_nodes(mock_actor_to_candidates, mock_graph)
+            assert next_nodes == [
+                mock_graph[task_idx_2_0],
+                mock_graph[task_idx_1_1],
             ]
 
     def test_only_one_nccl_collective(self, monkeypatch):

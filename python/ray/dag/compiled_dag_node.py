@@ -23,6 +23,7 @@ from ray.dag.dag_node_operation import (
     _build_dag_node_operation_graph,
     _DAGNodeOperation,
     _DAGOperationGraphNode,
+    _NcclOperationType,
     _extract_execution_schedule,
     _generate_actor_to_execution_schedule,
     _generate_overlapped_execution_schedule,
@@ -2066,7 +2067,15 @@ class CompiledDAG:
                 dag_node = self.idx_to_task[task_idx].dag_node
                 method_name = exec_task.method_name
                 actor_handle = dag_node._get_actor_handle()
-                nccl_op_type = dag_node.nccl_op_type
+                if dag_node.nccl_op_type == _P2POp.SEND:
+                    nccl_op_type = _NcclOperationType.WRITE
+                elif isinstance(dag_node.nccl_op_type, _CollectiveOp):
+                    nccl_op_type = _NcclOperationType.COMPUTE
+                elif dag_node.nccl_op_type == _P2POp.RECV:
+                    nccl_op_type = _NcclOperationType.READ
+                else:
+                    nccl_op_type = None
+                # [DEBUG]
 
                 compute_node = _DAGOperationGraphNode(
                     _DAGNodeOperation(exec_task_idx, method_name),
@@ -2112,6 +2121,7 @@ class CompiledDAG:
         graph = _build_dag_node_operation_graph(
             self.idx_to_task, actor_to_operation_nodes
         )
+
         # Step 2: Generate an execution schedule for each actor using topological sort
         actor_to_execution_schedule = _generate_actor_to_execution_schedule(graph)
 
