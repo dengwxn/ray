@@ -2,12 +2,13 @@
 import logging
 import os
 import sys
-from typing import Callable, List, Optional, Tuple, TYPE_CHECKING
+from typing import Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 import pytest
 
 import ray
 import ray.experimental.collective as collective
-from ray.dag import InputNode, MultiOutputNode
+from ray.dag import InputNode, InputAttributeNode, MultiOutputNode, ClassMethodNode
+from ray.dag.compiled_dag_node import CompiledDAG
 from ray.experimental.channel import CPUCommunicator
 from ray.experimental.collective.conftest import (
     AbstractNcclGroup,
@@ -98,6 +99,20 @@ class DDPWorker:
 
     def backward(self, _):
         return 0
+
+
+@ray.remote
+class P2PWorker:
+    def __init__(self):
+        pass
+
+    def send(self, _) -> "torch.Tensor":
+        import torch
+
+        return torch.ones(10)
+
+    def recv(self, tensor: "torch.Tensor") -> int:
+        return tensor[0]
 
 
 @pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
@@ -400,6 +415,116 @@ def test_exec_schedules_ddp(ray_start_regular, num_workers):
     expected_schedule = actor_to_execution_schedule[0]
     for schedule in actor_to_execution_schedule[1:]:
         assert schedule == expected_schedule
+
+
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_add_p2p_nodes(ray_start_regular):
+    p2p_worker = P2PWorker.options(num_cpus=1).remote()
+    input_node = InputNode()
+    with input_node:
+        send_node = p2p_worker.send.bind(input_node)
+        send_node.with_tensor_transport(transport="nccl")
+        recv_node = p2p_worker.recv.bind(send_node)
+
+    compiled_dag = CompiledDAG()
+    node_to_p2p_send_node: Dict["ray.dag.DAGNode", "ray.dag.P2PSendNode"] = {}
+    compiled_dag._add_p2p_recv_nodes(input_node, node_to_p2p_send_node)
+    compiled_dag._add_node(input_node)
+    compiled_dag._add_p2p_send_node(input_node, node_to_p2p_send_node)
+    # The input node is added, so there is 1 task in the compiled DAG.
+    assert len(compiled_dag.idx_to_task) == 1
+    assert node_to_p2p_send_node == {}
+
+    compiled_dag._add_p2p_recv_nodes(send_node, node_to_p2p_send_node)
+    compiled_dag._add_node(send_node)
+    assert len(compiled_dag.idx_to_task) == 2
+    assert node_to_p2p_send_node == {}
+    compiled_dag._add_p2p_send_node(send_node, node_to_p2p_send_node)
+    # A P2PSendNode is added.
+    assert len(compiled_dag.idx_to_task) == 3
+    # The dictionary becomes {send_node: P2PSendNode}.
+    assert len(node_to_p2p_send_node) == 1
+    assert send_node in node_to_p2p_send_node
+
+    compiled_dag._add_p2p_recv_nodes(recv_node, node_to_p2p_send_node)
+    # A P2PRecvNode is added.
+    assert len(compiled_dag.idx_to_task) == 4
+    compiled_dag._add_node(recv_node)
+    compiled_dag._add_p2p_send_node(recv_node, node_to_p2p_send_node)
+    assert len(compiled_dag.idx_to_task) == 5
+    # Adding the recv node and its P2PRecvNode does not change the dictionary.
+    assert len(node_to_p2p_send_node) == 1
+
+    compiled_dag.teardown()
+
+
+@pytest.mark.parametrize("ray_start_regular", [{"num_cpus": 4}], indirect=True)
+def test_add_p2p_nodes_exceptions(ray_start_regular):
+    p2p_worker = P2PWorker.options(num_cpus=1).remote()
+    compiled_dag = CompiledDAG()
+
+    # InputNode cannot be a P2P sender.
+    input_node = InputNode()
+    input_node.with_tensor_transport(transport="nccl")
+    with pytest.raises(
+        ValueError,
+        match="DAG inputs cannot be transferred via NCCL because the driver "
+        "cannot participate in the NCCL group",
+    ):
+        compiled_dag._add_p2p_send_node(input_node, {})
+
+    # Dag output node cannot be a P2P sender.
+    output_node = p2p_worker.recv.bind(None)
+    output_node.with_tensor_transport(transport="nccl")
+    output_node.is_cgraph_output_node = True
+    with pytest.raises(
+        ValueError,
+        match="Outputs cannot be transferred via NCCL because the driver "
+        "cannot participate in the NCCL group",
+    ):
+        compiled_dag._add_p2p_send_node(output_node, {})
+
+    @ray.remote
+    def fn(*args):
+        return 0
+
+    # Non-ClassMethodNode cannot be a P2P sender.
+    function_node = fn.bind().with_tensor_transport(transport="nccl")
+    with pytest.raises(
+        ValueError,
+        match="NCCL P2P operation is only supported with ClassMethodNode",
+    ):
+        compiled_dag._add_p2p_send_node(function_node, {})
+
+    # MultiOutputNode cannot be a P2P receiver.
+    send_node = p2p_worker.send.bind(None)
+    send_node.with_tensor_transport(transport="nccl")
+    multi_output_node = MultiOutputNode([send_node])
+    # Adding the send node does not error.
+    node_to_p2p_send_node: Dict["ray.dag.DAGNode", "ray.dag.P2PSendNode"] = {}
+    compiled_dag._add_p2p_send_node(send_node, node_to_p2p_send_node)
+    # Adding the MultiOutputNode as a P2P receiver errors.
+    with pytest.raises(
+        ValueError,
+        match="Outputs cannot be transferred via NCCL because the driver "
+        "cannot participate in the NCCL group",
+    ):
+        compiled_dag._add_p2p_recv_nodes(multi_output_node, node_to_p2p_send_node)
+    compiled_dag.teardown()
+
+    # Non-ClassMethodNode cannot be a P2P receiver.
+    send_node = p2p_worker.send.bind(None)
+    send_node.with_tensor_transport(transport="nccl")
+    function_node = fn.bind(send_node)
+    compiled_dag = CompiledDAG()
+    node_to_p2p_send_node: Dict["ray.dag.DAGNode", "ray.dag.P2PSendNode"] = {}
+    compiled_dag._add_p2p_send_node(send_node, node_to_p2p_send_node)
+    with pytest.raises(
+        ValueError,
+        match="NCCL P2P operation is only supported with ClassMethodNode",
+    ):
+        compiled_dag._add_p2p_recv_nodes(function_node, node_to_p2p_send_node)
+    compiled_dag.teardown()
 
 
 if __name__ == "__main__":
